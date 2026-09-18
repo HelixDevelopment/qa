@@ -43,7 +43,9 @@
 #         --base-url http://127.0.0.1:8099 \
 #         --login-path /api/auth/login \
 #         --admin-user rami --admin-pass '<seeded rami password — see
-#         specs/007-decouple-modules-auth/spec.md>' --verbose
+#         $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md, where $VASIC_ROOT
+#         is the umbrella project root; this path does not resolve from either
+#         submodules/qa/ or ai_interviewing/ on their own>' --verbose
 #     (--login-path is required: ai_interviewing's real route is
 #     /api/auth/login, not HTTPExecutor's catalog-api-shaped default
 #     /api/v1/auth/login. --token-field is NOT needed: ai_interviewing's
@@ -107,7 +109,7 @@ test_cases:
         expect_status: 200
         expect_json_path: "$.user.username"
         expect_body_contains: "\"role\":\"user\""
-        expected: "200 OK; authenticated identity is rami with role \"user\", not admin"
+        expected: "200 OK; a username field is present in the response ($.user.username — expect_json_path is presence-only in this HelixQA build, it does not pin a specific value, see pkg/autonomous/http_executor.go's jsonPathExists), and the role is separately, genuinely pinned to \"user\" (not admin) via expect_body_contains"
       - name: "Request an admin-only module's data while authenticated as rami"
         action: "http: GET /api/modules/41"
         auth: "admin"
