@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Curriculum — SPA routing
+# Pins the 2026-09-17 fix for webHandler's dotted-client-route 404 bug
+# (path.Ext("/chapters/02.02") was misread as a file extension) against
+# silent regression.
+#
+# NOTE on action format (deviation from the task-3 brief's literal draft):
+# the brief's own draft used prose actions ("HTTP GET http://...") on the
+# `web` platform. Verified against this repo's own orchestrator
+# (pkg/orchestrator/definition_challenge.go): `helixqa run --platform web`
+# NEVER dispatches a real network request for any platform other than
+# `desktop` (`shell:` steps) — a prose/description step on `web` is
+# promoted straight from SKIPPED to PASSED via crash-absence alone
+# (promoteSkippedToPassed), with the HTTP endpoint never actually called.
+# That would make this bank a PASS-bluff identical to the ones
+# BLUFF-HELIXQA-BANKS-REWRITE-001 closed elsewhere in this module, and it
+# would not be capable of catching the golden-bad regression this bank
+# exists to pin. Using the structured `http: METHOD PATH` action type
+# (with `expect_status` / `expect_body_contains`) instead makes every step
+# genuinely executable via `bin/helixqa http --banks banks/workshop/
+# --base-url <workshop base url>`, which drives pkg/autonomous.HTTPExecutor
+# to issue a real HTTP request and assert on the real response — the run
+# FAILs for real against the pre-fix binary (see task-3-report.md). Base
+# URL is supplied at run time via --base-url, never hardcoded into the
+# executor; paths below are relative, matching that contract.
+
+version: "1.0"
+name: "Workshop Curriculum SPA Routing"
+description: "Direct-navigation routing checks for the Angular SPA fallback, including dotted chapter slugs"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-ROUTE-001
+    name: "Direct navigation to a dotted chapter slug reaches the SPA, not a 404"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET /chapters/02.02 directly (no prior client-side navigation)"
+        action: "http: GET /chapters/02.02"
+        expect_status: 200
+        expect_body_contains: "Workshop Curriculum"
+        expected: "200 OK, HTML body containing the app shell title, not the raw '404 page not found' text"
+      - name: "GET /chapters/02.01 directly"
+        action: "http: GET /chapters/02.01"
+        expect_status: 200
+        expect_body_contains: "Workshop Curriculum"
+        expected: "200 OK, HTML body containing the app shell title"
+    tags: [routing, spa, regression, dotted-slug]
+    estimated_duration: "5s"
+    expected_result: "Both dotted chapter slugs resolve to the Angular app on a fresh page load"
+
+  - id: WK-ROUTE-002
+    name: "A genuinely missing static asset still 404s"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET a nonexistent hashed asset"
+        action: "http: GET /main-ZZZZZZZZ.js"
+        expect_status: 404
+        expected: "404 Not Found"
+    tags: [routing, spa, regression, negative-control]
+    estimated_duration: "5s"
+    expected_result: "The SPA fallback does not swallow every 404 — a real missing asset still 404s"
