@@ -1,0 +1,187 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Chapter List
+# Part of exhaustive chapter-browsing coverage (docs/superpowers/specs/
+# 2026-09-18-workshop-chapter-browsing-qa-design.md).
+#
+# NOTE on action format and execution path (same finding this session already
+# proved twice today in banks/workshop/spa-routing.yaml and
+# banks/ai_interviewing/rbac.yaml — read either bank's own header for the full
+# investigation): `helixqa run --platform web` NEVER dispatches a real network
+# request for a case carrying an asserting `http:` step
+# (pkg/orchestrator/definition_challenge.go's definitionChallenge.Execute
+# genuinely executes only `shell:` steps, only on `desktop`). Every step below
+# uses the structured `http: METHOD PATH` action type, which is genuinely
+# executed ONLY via the dedicated `helixqa http` CLI subcommand
+# (cmd/helixqa/http.go -> pkg/autonomous.HTTPExecutor). Run this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/chapter-list.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password — see
+#     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md, where $VASIC_ROOT is
+#     the umbrella project root; this path does NOT resolve from either
+#     submodules/qa/ or workshop/ on their own>' --verbose
+#
+# `auth: admin` makes HTTPExecutor perform its own internal login() against
+# --login-path with credentials supplied ONLY at run time (never written into
+# this file), caching the resulting bearer token per session and attaching it
+# to every subsequent step declaring the same `auth:` value. The "admin" slot
+# name is HTTPExecutor's generic primary-credential-slot naming (see
+# --admin-user/--admin-pass in cmd/helixqa/http.go) — it is NOT an assertion
+# about the application's own RBAC role. On workshop specifically it happens
+# to coincide: `milosvasic` really is seeded with role "admin" (confirmed
+# live below), per spec 007's FR-010 workshop gives BOTH seeded users
+# (milosvasic, rami) full, equal access — so either account would pass every
+# assertion in this bank; `milosvasic` was picked only because it is spec
+# 007's first-listed seeded workshop account. `expect_json_path` is
+# presence-only in this HelixQA build (pkg/autonomous/http_executor.go's
+# jsonPathExists) — it does NOT pin a value — so every value pinned below uses
+# `expect_body_contains` against real, live-observed response bytes instead.
+#
+# WHY THERE IS NO EXPLICIT "POST /api/auth/login" STEP BELOW, even though
+# case WK-CHLIST-001 needs to prove authentication genuinely happened: a
+# first draft of this bank added one, and it FAILED LIVE with 400
+# "username and password are required" — because a bare `action: "http:
+# POST /api/auth/login"` step sends an EMPTY request body (this schema's
+# `body:` field is separate and was not set), while the `auth: admin` slot's
+# OWN internal login() (attached to the very next step) supplied the real
+# credentials and succeeded. `helixqa http`'s `auth:` mechanism already
+# performs the login internally; a bank must never re-POST to the login route
+# by hand. This matches banks/ai_interviewing/rbac.yaml's own proven
+# pattern: its first step is `GET /api/auth/me` with `auth: admin`, never a
+# manual login POST. This bank follows the same, now twice-proven, pattern.
+#
+# REAL FIELD NAMES AND SHAPE, read directly from the handler
+# (platform/backend/cmd/workshop-server/main.go):
+#   - Route registration: `mux.HandleFunc("GET /api/chapters",
+#     chaptersHandler(cfg))` (line ~797), reached through `wrapWithAuth` ->
+#     `apiPathsOnly` -> `authhttp.Middleware`, which gates every `/api/*`
+#     route except `/api/health` and `/api/auth/*` behind a bearer token
+#     (wrapWithAuth's own doc comment, main.go ~3290-3360).
+#   - `chaptersHandler` (line 2947) calls `listChapters` then
+#     `buildChaptersResponse`, replying 200 via `writeJSON`, which ALWAYS
+#     `json.Encoder.SetIndent("", "  ")`s the body (main.go:3206-3210) — every
+#     `expect_body_contains` string below is copied byte-for-byte from a real
+#     `curl` response against the live server, including that 2-space
+#     indentation and the space after each `:`.
+#   - Response shape (`chapterList`, main.go:2862): top-level keys `chapters`
+#     (array of `chapter`: `id`, `material_count`, `hierarchy`),
+#     `unclassified`, `max_depth_present`, plus `status` ("ok" | "no_match" |
+#     "unavailable", set in `buildChaptersResponse`) and `filters` (echoed
+#     query-filter state) added by `chaptersHandler`'s caller.
+#   - Confirmed live 2026-09-18 against the rebuilt server (`source_commit`
+#     matching `git rev-parse HEAD` at the umbrella's `workshop/` checkout):
+#     `GET /api/chapters` with a valid bearer token returns 200 with exactly
+#     4 chapters, ids `"01"`, `"02"`, `"02.01"`, `"02.02"` (matching
+#     `/api/health`'s own `"chapters": 4`), `"status": "ok"`, and
+#     `"max_depth_present": 2` (because `02` has two depth-2 children,
+#     `02.01`/`02.02`, and `01` has none). Unauthenticated,
+#     `GET /api/chapters` returns 401 with body
+#     `{"error":"unauthorized","message":"authentication required"}` (no
+#     indentation — this error path is written by a different, compact-JSON
+#     writer than the 200 path above).
+#
+# GOLDEN-BAD CONTROL FOR WK-CHLIST-002 — a real, revertible mutation was
+# found and code-verified, but LIVE verification of the FAIL side was
+# BLOCKED by this session's own tool-permission guardrails, not by any lack
+# of a safe mechanism in workshop itself. The real mutation: in
+# `wrapWithAuth` (main.go ~3346), replace
+# `authMux.Handle("/", apiPathsOnly(authhttp.Middleware(authDB), content))`
+# with `authMux.Handle("/", content)` — this drops `authhttp.Middleware`
+# entirely, so every `/api/*` route (including `/api/chapters`) fails open
+# with no bearer token required, which would flip WK-CHLIST-002 from PASS
+# (401) to FAIL (200). This one-line change was made, confirmed via
+# `git diff` to be the ONLY change in the tree, and `bash scripts/build.sh`
+# built clean against it. The next step per the task brief — `bash
+# scripts/restart.sh` to deploy that build to the LIVE server so the bank
+# could be re-run against the fail-open behavior — was REFUSED by the
+# session's own auto-mode tool classifier with reason "Security Weaken"
+# (restarting a live server onto a build with authentication removed is,
+# correctly, exactly the class of action that guardrail exists to stop).
+# The mutation was reverted immediately (`git diff` empty, confirmed), the
+# safe source was rebuilt and the live server was restarted back onto it
+# (confirmed: `/api/health`'s `source_commit` matches `git rev-parse HEAD`
+# again), and this bank was re-run and PASSED both cases — so the live
+# server was NEVER actually exposed with weakened auth at any point. This is
+# recorded as a genuine finding (per task-1-brief.md Step 6's own escape
+# hatch) rather than forced around: the negative-control half of this case's
+# testing discipline is unverified live in THIS sandbox, though the
+# mutation's mechanism and its expected effect are established by direct
+# code reading. See task-1-report.md for the full transcript.
+
+version: "1.0"
+name: "Workshop Chapter List"
+description: "The chapter list endpoint returns exactly the 4 real chapters with correct shape"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-CHLIST-001
+    name: "Authenticated GET /api/chapters returns all 4 real chapters"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the session authenticates as the seeded milosvasic account"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"role\":\"admin\""
+        expected: "200 OK; the seeded account really does authenticate and carries role \"admin\" (compact-JSON /api/auth/me response, no indentation — real bytes: {\"module\":\"workshop\",\"permissions\":[...],\"user\":{\"id\":1,\"username\":\"milosvasic\",\"role\":\"admin\"}})"
+      - name: "List chapters reports status ok"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK, status is the determined-positive \"ok\" value, never \"no_match\"/\"unavailable\""
+      - name: "Chapter 01 is present"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"01\""
+        expected: "The real top-level chapter 01 is in the list"
+      - name: "Chapter 02 is present"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"02\","
+        expected: "The real top-level chapter 02 is in the list (trailing comma disambiguates from 02.01/02.02)"
+      - name: "Chapter 02.01 is present"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"02.01\","
+        expected: "The real sub-chapter 02.01 is in the list"
+      - name: "Chapter 02.02 is present"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"02.02\","
+        expected: "The real sub-chapter 02.02 is in the list"
+      - name: "Hierarchy depth matches the real 2-level corpus (01, 02 at depth 1; 02.01, 02.02 at depth 2)"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"max_depth_present\": 2"
+        expected: "max_depth_present is a MEASUREMENT (H6, main.go's own doc comment on chapterList), and the real corpus measures 2 — never a hardcoded limit"
+    tags: [chapters, list, regression]
+    estimated_duration: "10s"
+    expected_result: "The chapter list reflects the real, current 4-chapter, 2-level-deep corpus (01, 02, 02.01, 02.02) with status ok"
+
+  - id: WK-CHLIST-002
+    name: "Unauthenticated GET /api/chapters is genuinely denied"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "List chapters with no credential"
+        action: "http: GET /api/chapters"
+        expect_status: 401
+        expect_body_contains: "\"error\":\"unauthorized\""
+        expected: "401 with the real unauthorized error body, never a silent empty-content 200"
+    tags: [chapters, list, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no chapter data, not an empty-but-200 response"
