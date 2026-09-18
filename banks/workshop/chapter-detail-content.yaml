@@ -1,0 +1,693 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Chapter Detail — Knowledge Content Sections
+# Part of exhaustive chapter-browsing coverage (docs/superpowers/specs/
+# 2026-09-18-workshop-chapter-browsing-qa-design.md).
+#
+# NOTE on action format and execution path — same finding as
+# banks/workshop/chapter-list.yaml and chapter-detail-recording.yaml (read
+# either bank's header for the full investigation): every step below uses the
+# structured `http: METHOD PATH` action type, genuinely executed ONLY via
+# `helixqa http` (cmd/helixqa/http.go -> pkg/autonomous.HTTPExecutor). Run
+# this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/chapter-detail-content.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password — see
+#     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
+#     from either submodules/qa/ or workshop/ on their own>' --verbose
+#
+# See chapter-list.yaml's header for why there is no explicit
+# "POST /api/auth/login" step (the `auth: admin` slot performs its own
+# internal login()) and why `expect_json_path` is never used here
+# (presence-only in this HelixQA build — does not pin a value — so every
+# value below is pinned via `expect_body_contains` against real, live-observed
+# response bytes).
+#
+# ===========================================================================
+# THE FOUR ROUTES, READ DIRECTLY FROM THE HANDLER
+# ===========================================================================
+#
+# `platform/backend/internal/api/session_sections.go` registers ONE handler
+# (`SessionSectionHandler`) for all four routes, wired in
+# `platform/backend/cmd/workshop-server/main.go` (~line 1157):
+#
+#   for _, section := range []string{"open-questions", "todo", "next-meeting", "meeting-notes"} {
+#       mux.HandleFunc("GET /api/chapters/{chapter}/"+section, api.SessionSectionHandler(chapterDeps, section))
+#   }
+#
+# So the exact route names — including "next-meeting", which the task brief
+# for this bank flagged as needing to be found rather than assumed — are:
+#   GET /api/chapters/{chapter}/meeting-notes
+#   GET /api/chapters/{chapter}/open-questions
+#   GET /api/chapters/{chapter}/todo
+#   GET /api/chapters/{chapter}/next-meeting
+#
+# All four share ONE derivation (`deriveSessionRecord` ->
+# `sessionrecord.Store.Derive`), the same derivation `GET /api/chapters/
+# {chapter}`'s embedded `session_record` key uses — "two derivations of one
+# record is the defect class that produced this platform's 819-vs-817
+# catalogue bug" (session_sections.go's own header).
+#
+# THE REAL `state` ENUM (read from pkg/sessionrecord/sessionrecord.go, NOT
+# assumed): exactly three values, `authored` / `empty` / `unwritten`
+# (constants `StateAuthored`, `StateEmpty`, `StateUnwritten` at lines ~118-124).
+# `finish()` (sessionrecord.go:845-892) is the ONE place that decides them:
+#   - `unwritten`: the producer's knowledge/*.jsonl file for this chapter+
+#     section does NOT EXIST at all — "nobody has looked", not "nothing was
+#     found".
+#   - `empty`: the file EXISTS and holds 0 rows — the extraction stage ran and
+#     recognised nothing, a MEASURED absence.
+#   - `authored`: the file has rows (its own, or carried forward — see below).
+#
+# CUMULATIVE VS OWN — THE FINDING THAT SHAPES THIS BANK'S SYNTHETIC CASE.
+# Every response carries BOTH `state`/`count` (cumulative: this chapter's own
+# items plus every carried-forward unresolved item from every earlier chapter,
+# for the three CUMULATIVE sections) and `own_state`/`own_count` (this
+# chapter's own producer file alone, never carried). `meeting-notes` is NOT
+# cumulative by repetition (a meeting note is a fact about the session it was
+# made in — session_sections.go's own header) so for that ONE section
+# `state` and `own_state` are always equal. For `open-questions`, `todo` and
+# `next-meeting`, they can differ, and DO differ for two of the four real
+# chapters below (02.01's `todo` and `next-meeting`), live-verified, not a
+# synthetic case: `own_state: "empty"` (0 rows produced by 02.01 itself) while
+# `state` stays `"authored"` (carried-forward items from 01/02 keep the
+# cumulative section non-empty). This is why the bank pins BOTH fields.
+#
+# ===========================================================================
+# REAL LIVE RESPONSES, ALL 16 (chapter × section) COMBINATIONS — CONFIRMED
+# 2026-09-18 against the rebuilt server (`source_commit` ==
+# `git rev-parse HEAD` at the umbrella's `workshop/` checkout,
+# `9a319209eeaee4476321e27761f70998e874185e`), via authenticated `curl`,
+# NEVER assumed from the design doc's own table (which predates this task's
+# own live re-verification and is confirmed, not merely trusted, below):
+# ===========================================================================
+#
+#   chapter | section         | state    | own_state | count | own_count
+#   --------|------------------|----------|-----------|-------|----------
+#   01      | meeting_notes    | authored | authored  | 10    | 10
+#   01      | open_questions   | authored | authored  | 14    | 14
+#   01      | todo             | authored | authored  | 27    | 27
+#   01      | next_meeting     | authored | authored  | 19    | 19
+#   02      | meeting_notes    | authored | authored  | 50    | 50
+#   02      | open_questions   | authored | authored  | 56    | 45
+#   02      | todo             | authored | authored  | 62    | 35
+#   02      | next_meeting     | authored | authored  | 30    | 17
+#   02.01   | meeting_notes    | authored | authored  | 2     | 2
+#   02.01   | open_questions   | authored | authored  | 45    | 1
+#   02.01   | todo             | authored | empty     | 62    | 0
+#   02.01   | next_meeting     | authored | empty     | 29    | 0
+#   02.02   | meeting_notes    | authored | authored  | 7     | 7
+#   02.02   | open_questions   | authored | authored  | 46    | 2
+#   02.02   | todo             | authored | authored  | 74    | 12
+#   02.02   | next_meeting     | authored | authored  | 30    | 1
+#
+# Every real chapter's `state` is `"authored"` for every section — matching
+# the design doc's table (all 4 chapters were populated by this session's own
+# earlier work) — which is exactly why NO real chapter can exercise
+# `"unwritten"` and a synthetic fixture is required for that one value (Step
+# 4 below). `02.01`'s `todo` and `next_meeting` own_state=`"empty"` rows are a
+# genuine, REAL (not synthetic) example of the `own_state != state` carry
+# divergence documented above.
+#
+# Byte-for-byte real response, `GET /api/chapters/01/meeting-notes`
+# (authenticated) — keys are alphabetically sorted (Go's `json.Marshal` on
+# `map[string]any`, same as chapter-list.yaml's response):
+#
+#   {
+#     "carried_count": 0,
+#     "chapter": "01",
+#     "count": 10,
+#     "cumulative_availability": "...",
+#     "derivation": { ... },
+#     "entries": [ ... ],
+#     "heading_availability": "...",
+#     "own_count": 10,
+#     "own_reason": null,
+#     "own_state": "authored",
+#     "prior_chapters": [],
+#     "privacy": "...",
+#     "reason": null,
+#     "reason_source": null,
+#     "section": "meeting_notes",
+#     "source": "curriculum/chapter-01/knowledge/meeting-notes.jsonl",
+#     "state": "authored"
+#   }
+#
+# `state` is the alphabetically LAST key for meeting-notes/open-questions/
+# next-meeting (nothing in their `extra()` keys sorts after it), so it has NO
+# trailing comma in those three; `todo`'s `extra()` adds `status_availability`,
+# which DOES sort after `state`, so `todo` responses have `"state": "...",`
+# with a trailing comma. `expect_body_contains` is substring matching, so
+# every assertion below omits the comma — it matches either way and does not
+# accidentally depend on this formatting detail.
+#
+# ===========================================================================
+# STEP 4 — THE SYNTHETIC FIXTURE CHAPTER: EXACT SETUP/TEARDOWN PROCEDURE
+# ===========================================================================
+#
+# WHY IT IS NEEDED: no real chapter currently has `state: "unwritten"` for any
+# section (all 4 were populated by this session's own earlier work — see the
+# table above, live-reconfirmed, not merely trusted from the design doc). FR-
+# 004's `unwritten`-vs-`empty` distinction is a real, load-bearing contract
+# (asserted on the wire by `platform/gates/verify-session-record.sh` R1/R1b)
+# and this bank must exercise it, so a temporary fixture chapter is required.
+#
+# WHAT WAS READ FIRST, BEFORE CREATING ANYTHING (per this task's own
+# instruction — genuinely minimal, not guessed):
+#   - `curriculum.ScanChapterDirs` (platform/backend/pkg/curriculum/
+#     chapterid.go:293-322) requires ONLY: a directory directly under
+#     `chaptersDir`, not dotfile-prefixed, whose NAME matches
+#     `ChapterIDGrammar` = `^[0-9]{2,}(\.[0-9]{2,})*$` (chapterid.go:59). A
+#     name like the brief's own illustrative `99-qa-fixture` does NOT match
+#     this grammar (letters and a hyphen) and would be filed as
+#     `UnclassifiedDir`, never registered as a chapter — this was verified by
+#     reading the grammar, not guessed. The genuinely minimal valid name is a
+#     bare two-digit numeral: `99`.
+#   - `chaptersDir` (`WORKSHOP_CHAPTERS_DIR`) is `/opt/workshop/chapters`
+#     inside the container, bind-mounted `:ro` from `../chapters` (host
+#     `workshop/chapters/`) per `platform/compose.yml` line ~594.
+#   - `sessionrecord.Store.load` (sessionrecord.go:444-473): "No curriculum
+#     directory for this chapter at all. Every section is unwritten; that is
+#     a determined fact, not a failure to read." — i.e. the fixture needs NO
+#     corresponding `curriculum/chapter-99/` directory; its ABSENCE is exactly
+#     what the `unwritten` state requires. Creating one would defeat the
+#     fixture's own purpose.
+#   - `curriculum/chapter_roster.go`'s `ChapterRoster` (used for the
+#     UNRELATED video-anchor-linking surface, not this bank's routes) IS
+#     scanned once at server boot and would need a restart to observe a new
+#     chapter. This bank's own routes (`chapterExists` in chapters.go and
+#     `curriculum.ScanChapterDirs` inside `SessionSectionHandler` itself) are
+#     BOTH called freshly on every request — LIVE-VERIFIED below, no restart
+#     was needed for this bank's fixture to appear or disappear.
+#
+# EXACT PROCEDURE (a future re-run of this bank must repeat this, not find it
+# already done):
+#
+#   1. mkdir -p workshop/chapters/99          # the ENTIRE fixture: one empty
+#                                              # directory, nothing inside it
+#   2. Run this bank (`--banks
+#      banks/workshop/chapter-detail-content.yaml`) — case WK-CHDETCONT-017
+#      exercises it.
+#   3. rmdir workshop/chapters/99             # delete completely
+#   4. `git -C workshop status --short` — MUST show no `chapters/99` trace
+#      (an empty directory is untracked by git either way, so this is
+#      expected to show NOTHING for `chapters/99` both before creation and
+#      after deletion — git simply never sees an empty directory; this is not
+#      a false negative, it is git's own documented behaviour, confirmed
+#      live in this task's own report).
+#   5. Confirm the LIVE SERVER no longer reports chapter `99` — LIVE-VERIFIED
+#      in this task WITHOUT any rebuild/restart (see report): `GET
+#      /api/chapters` no longer lists `"id": "99"`, `/api/health`'s
+#      `"chapters"` count returns to 4, and
+#      `GET /api/chapters/99/meeting-notes` answers 404 `chapter_not_found`
+#      again. A rebuild/restart was NOT required because this fixture never
+#      touched server source and both routes this bank exercises scan the
+#      chapters directory fresh on every request (unlike the separate,
+#      boot-time-cached `ChapterRoster` named above, which this bank's routes
+#      never call).
+#
+# REAL LIVE RESPONSES FOR THE FIXTURE (confirmed 2026-09-18, `chapters/99`
+# present, no restart, all four routes hit against slug `99`):
+#
+#   GET /api/chapters/99/meeting-notes -> 200, "own_state": "unwritten",
+#     "state": "unwritten" (EQUAL — meeting-notes is not cumulative), "count":
+#     0, "own_count": 0, "entries": null (not `[]` — FR-004's unwritten-serves-
+#     null rule, live-confirmed on the one section where cumulative and own
+#     genuinely agree).
+#   GET /api/chapters/99/open-questions -> 200, "own_state": "unwritten"
+#     (chapter 99 itself produced nothing), but "state": "authored" (count 46
+#     — IDENTICAL to chapter 02.02's own cumulative count) because 99 sorts
+#     LAST in chapter order (OrdinalPath [99] sorts after 02.02's [2,2]) and
+#     its predecessor's carried-forward unresolved items still populate the
+#     CUMULATIVE section even though 99 wrote nothing of its own. This is a
+#     real, live-discovered consequence of the cumulative/own distinction
+#     documented above, not a bank authoring mistake — the bank pins
+#     `own_state` here, which IS "unwritten", rather than the cumulative
+#     `state`, which correctly is not.
+#   GET /api/chapters/99/todo -> 200, "own_state": "unwritten", "state":
+#     "authored" (count 74, same carry-forward reasoning).
+#   GET /api/chapters/99/next-meeting -> 200, "own_state": "unwritten",
+#     "state": "authored" (count 30, same carry-forward reasoning).
+#
+# ===========================================================================
+# GOLDEN-BAD CONTROL FOR WK-CHDETCONT-001 (chapter 01's meeting-notes state)
+# ===========================================================================
+#
+# A real, revertible, NON-CODE mutation, LIVE-VERIFIED both ways, requiring NO
+# rebuild and NO restart (unlike chapter-list.yaml's WK-CHLIST-002 control,
+# which the sandbox's auth-weakening guardrail blocked, and unlike chapter-
+# detail-recording.yaml's WK-CHDETREC-003 control, which needed a full Go
+# rebuild+restart cycle): `sessionrecord.Store.load` reads
+# `curriculum/chapter-01/knowledge/meeting-notes.jsonl` FRESH on every
+# request via `os.ReadFile`, so renaming that one file away and back is
+# genuinely live, both directions, with no server lifecycle event at all.
+#
+# Mutation: `mv curriculum/chapter-01/knowledge/meeting-notes.jsonl
+# curriculum/chapter-01/knowledge/meeting-notes.jsonl.bak`. Effect: the file
+# no longer EXISTS at its expected path, so `sessionrecord.finish()`'s
+# `!f.present` branch fires: chapter 01's meeting-notes flips from
+# `"state": "authored"` (count 10) to `"state": "unwritten"` (count 0,
+# "entries": null) — exactly the same transition the synthetic fixture
+# exercises, but on REAL content this time, proving the bank's assertion
+# genuinely discriminates the two states rather than trivially matching
+# whatever the server returns. WK-CHDETCONT-001's `state: authored` step
+# FAILS against the mutated tree; restoring the file
+# (`mv ... .bak curriculum/chapter-01/knowledge/meeting-notes.jsonl`) restores
+# the PASS. `sha256sum` of the file before the mutation and after the restore
+# is IDENTICAL (byte-for-byte, confirmed in the report), and
+# `git diff --stat` across the mutation+restore cycle is empty. Full
+# transcript in task-3-report.md.
+
+version: "1.0"
+name: "Workshop Chapter Detail — Knowledge Content"
+description: "Each of the four knowledge sub-sections (meeting-notes, open-questions, todo, next-meeting) reports the real, current, live-verified state for every real chapter, and genuinely distinguishes authored/empty/unwritten"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-CHDETCONT-001
+    name: "Chapter 01's meeting-notes section is authored with the real count"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the session authenticates as the seeded milosvasic account"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"role\":\"admin\""
+        expected: "200 OK; the seeded account really does authenticate and carries role \"admin\""
+      - name: "meeting-notes state is authored"
+        action: "http: GET /api/chapters/01/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 01's meeting-notes.jsonl exists and has rows, so state is authored, never unwritten/empty"
+      - name: "meeting-notes own_state equals state (non-cumulative section)"
+        action: "http: GET /api/chapters/01/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "meeting-notes is not cumulative by repetition, so own_state and state always agree"
+    tags: [chapters, detail, content, meeting-notes, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 01's meeting-notes section reports authored, matching its real 10-row producer file"
+
+  - id: WK-CHDETCONT-002
+    name: "Chapter 01's open-questions section is authored with the real count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "open-questions state is authored"
+        action: "http: GET /api/chapters/01/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 01's open-questions.jsonl exists and has 14 rows"
+      - name: "open-questions own_state is authored"
+        action: "http: GET /api/chapters/01/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 01 (the first chapter) produced its own 14 rows; no carry-forward exists yet"
+    tags: [chapters, detail, content, open-questions, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 01's open-questions section reports authored"
+
+  - id: WK-CHDETCONT-003
+    name: "Chapter 01's todo section is authored with the real count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "todo state is authored"
+        action: "http: GET /api/chapters/01/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 01's todos.jsonl exists and has 27 rows"
+      - name: "todo own_state is authored"
+        action: "http: GET /api/chapters/01/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 01 produced its own 27 rows"
+    tags: [chapters, detail, content, todo, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 01's todo section reports authored"
+
+  - id: WK-CHDETCONT-004
+    name: "Chapter 01's next-meeting section is authored with the real count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "next-meeting state is authored"
+        action: "http: GET /api/chapters/01/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 01's next-meeting-points.jsonl exists and has 19 rows"
+      - name: "next-meeting own_state is authored"
+        action: "http: GET /api/chapters/01/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 01 produced its own 19 rows"
+    tags: [chapters, detail, content, next-meeting, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 01's next-meeting section reports authored"
+
+  - id: WK-CHDETCONT-005
+    name: "Chapter 02's meeting-notes section is authored with the real count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "meeting-notes state is authored"
+        action: "http: GET /api/chapters/02/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 02's meeting-notes.jsonl exists and has 50 rows"
+      - name: "meeting-notes own_state equals state"
+        action: "http: GET /api/chapters/02/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "non-cumulative section: own_state agrees with state"
+    tags: [chapters, detail, content, meeting-notes, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02's meeting-notes section reports authored"
+
+  - id: WK-CHDETCONT-006
+    name: "Chapter 02's open-questions section is authored, own_count differs from cumulative count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "open-questions state is authored"
+        action: "http: GET /api/chapters/02/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 02's open-questions.jsonl exists; cumulative count is 56 (45 own + 11 carried from chapter 01)"
+      - name: "open-questions own_state is authored"
+        action: "http: GET /api/chapters/02/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02 produced its own 45 rows (real, live-measured own_count)"
+    tags: [chapters, detail, content, open-questions, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02's open-questions section reports authored with cumulative carry-forward"
+
+  - id: WK-CHDETCONT-007
+    name: "Chapter 02's todo section is authored, own_count differs from cumulative count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "todo state is authored"
+        action: "http: GET /api/chapters/02/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 02's todos.jsonl exists; cumulative count is 62 (35 own + 27 carried from chapter 01)"
+      - name: "todo own_state is authored"
+        action: "http: GET /api/chapters/02/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02 produced its own 35 rows"
+    tags: [chapters, detail, content, todo, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02's todo section reports authored with cumulative carry-forward"
+
+  - id: WK-CHDETCONT-008
+    name: "Chapter 02's next-meeting section is authored, own_count differs from cumulative count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "next-meeting state is authored"
+        action: "http: GET /api/chapters/02/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 02's next-meeting-points.jsonl exists; cumulative count is 30 (17 own + 13 carried from chapter 01)"
+      - name: "next-meeting own_state is authored"
+        action: "http: GET /api/chapters/02/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02 produced its own 17 rows"
+    tags: [chapters, detail, content, next-meeting, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02's next-meeting section reports authored with cumulative carry-forward"
+
+  - id: WK-CHDETCONT-009
+    name: "Chapter 02.01's meeting-notes section is authored (transcript-sourced, pre-existing)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "meeting-notes state is authored"
+        action: "http: GET /api/chapters/02.01/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 02.01's meeting-notes.jsonl exists and has 2 rows — this chapter is transcript-sourced, not PDF-sourced, and still authors real content"
+      - name: "meeting-notes own_state equals state"
+        action: "http: GET /api/chapters/02.01/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "non-cumulative section: own_state agrees with state"
+    tags: [chapters, detail, content, meeting-notes, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.01's meeting-notes section reports authored"
+
+  - id: WK-CHDETCONT-010
+    name: "Chapter 02.01's open-questions section is authored with a small own contribution"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "open-questions state is authored"
+        action: "http: GET /api/chapters/02.01/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "cumulative count 45 (1 own + 44 carried from 01/02)"
+      - name: "open-questions own_state is authored"
+        action: "http: GET /api/chapters/02.01/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02.01 produced its own 1 row — small but real, not zero"
+    tags: [chapters, detail, content, open-questions, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.01's open-questions section reports authored"
+
+  - id: WK-CHDETCONT-011
+    name: "Chapter 02.01's todo section is authored cumulatively but empty on its own (REAL, not synthetic)"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "todo state is authored (cumulative carry keeps it non-empty)"
+        action: "http: GET /api/chapters/02.01/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "cumulative count 62, entirely carried forward from 01/02 — 02.01 itself produced zero"
+      - name: "todo own_state is empty — a REAL, live-measured example of own_state != state"
+        action: "http: GET /api/chapters/02.01/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"empty\""
+        expected: "chapter 02.01's todos.jsonl EXISTS (the extraction stage ran for this chapter) and holds 0 rows — a MEASURED absence, own_count 0, distinct from unwritten (which requires the file not to exist at all)"
+    tags: [chapters, detail, content, todo, edge-case, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.01's todo section demonstrates the real, live own_state=empty / state=authored divergence — proof the two fields genuinely differ on real data, not only in the synthetic fixture"
+
+  - id: WK-CHDETCONT-012
+    name: "Chapter 02.01's next-meeting section is authored cumulatively but empty on its own (REAL, not synthetic)"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "next-meeting state is authored (cumulative carry keeps it non-empty)"
+        action: "http: GET /api/chapters/02.01/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "cumulative count 29, entirely carried forward from 01/02"
+      - name: "next-meeting own_state is empty — a REAL, live-measured example of own_state != state"
+        action: "http: GET /api/chapters/02.01/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"empty\""
+        expected: "chapter 02.01's next-meeting-points.jsonl EXISTS and holds 0 rows — a MEASURED absence, own_count 0"
+    tags: [chapters, detail, content, next-meeting, edge-case, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.01's next-meeting section demonstrates the real, live own_state=empty / state=authored divergence"
+
+  - id: WK-CHDETCONT-013
+    name: "Chapter 02.02's meeting-notes section is authored (freshly ASR-transcribed today)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "meeting-notes state is authored"
+        action: "http: GET /api/chapters/02.02/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 02.02's meeting-notes.jsonl exists and has 7 rows — this chapter's transcript was ASR-transcribed earlier this session, and the section still authors real content"
+      - name: "meeting-notes own_state equals state"
+        action: "http: GET /api/chapters/02.02/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "non-cumulative section: own_state agrees with state"
+    tags: [chapters, detail, content, meeting-notes, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.02's meeting-notes section reports authored"
+
+  - id: WK-CHDETCONT-014
+    name: "Chapter 02.02's open-questions section is authored with the real cumulative count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "open-questions state is authored"
+        action: "http: GET /api/chapters/02.02/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "cumulative count 46 (2 own + 44 carried from 01/02, since 02.01 contributed 0 new unresolved questions)"
+      - name: "open-questions own_state is authored"
+        action: "http: GET /api/chapters/02.02/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02.02 produced its own 2 rows"
+    tags: [chapters, detail, content, open-questions, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.02's open-questions section reports authored"
+
+  - id: WK-CHDETCONT-015
+    name: "Chapter 02.02's todo section is authored with the real cumulative count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "todo state is authored"
+        action: "http: GET /api/chapters/02.02/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "cumulative count 74 (12 own + 62 carried from 01/02/02.01)"
+      - name: "todo own_state is authored"
+        action: "http: GET /api/chapters/02.02/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02.02 produced its own 12 rows"
+    tags: [chapters, detail, content, todo, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.02's todo section reports authored"
+
+  - id: WK-CHDETCONT-016
+    name: "Chapter 02.02's next-meeting section is authored with the real cumulative count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "next-meeting state is authored"
+        action: "http: GET /api/chapters/02.02/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "cumulative count 30 (1 own + 29 carried from 01/02/02.01)"
+      - name: "next-meeting own_state is authored"
+        action: "http: GET /api/chapters/02.02/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"authored\""
+        expected: "chapter 02.02 produced its own 1 row"
+    tags: [chapters, detail, content, next-meeting, regression]
+    estimated_duration: "10s"
+    expected_result: "Chapter 02.02's next-meeting section reports authored"
+
+  - id: WK-CHDETCONT-017
+    name: "SYNTHETIC — a fixture chapter with no producer output exercises the real unwritten state"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Fixture chapter 99 is present in the live chapter roster (proves the setup step took effect with no server restart)"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"99\""
+        expected: "the fixture directory workshop/chapters/99/ (created per this bank's own header procedure, immediately before this run) is picked up live by curriculum.ScanChapterDirs with no rebuild/restart, because this route scans fresh on every request"
+      - name: "meeting-notes state is genuinely unwritten (non-cumulative: state equals own_state here)"
+        action: "http: GET /api/chapters/99/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"unwritten\""
+        expected: "no curriculum/chapter-99/ directory exists at all, so sessionrecord.Store.load's kd==\"\" branch fires and every section is unwritten by definition — meeting-notes is non-cumulative, so this is the one section where the SYNTHETIC case reaches unwritten at the cumulative level, not only at own_state"
+      - name: "meeting-notes entries is null, never an empty list (FR-004)"
+        action: "http: GET /api/chapters/99/meeting-notes"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"entries\": null"
+        expected: "unwritten serves null and empty serves [] — an unwritten section must never be indistinguishable from a genuinely-processed-but-empty one"
+      - name: "open-questions own_state is unwritten even though the cumulative state is not"
+        action: "http: GET /api/chapters/99/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"unwritten\""
+        expected: "chapter 99 produced no open-questions.jsonl of its own — a genuine unwritten own_state, live-measured on the fixture"
+      - name: "open-questions cumulative state stays authored (carry-forward from chapter 02.02, a REAL discovered nuance)"
+        action: "http: GET /api/chapters/99/open-questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "chapter 99 sorts LAST in ordinal order (OrdinalPath [99] > 02.02's [2,2]), so 02.02's carried-forward unresolved open-questions still populate the cumulative section even though 99 wrote nothing of its own — cumulative unwritten is therefore NOT reachable for a cumulative section whose predecessor has unresolved items, which is why this bank pins own_state (genuinely unwritten) rather than state (correctly not) for this section on the fixture"
+      - name: "todo own_state is unwritten"
+        action: "http: GET /api/chapters/99/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"unwritten\""
+        expected: "chapter 99 produced no todos.jsonl of its own"
+      - name: "todo cumulative state stays authored (same carry-forward reasoning)"
+        action: "http: GET /api/chapters/99/todo"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "carried forward from chapter 02.02"
+      - name: "next-meeting own_state is unwritten"
+        action: "http: GET /api/chapters/99/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"own_state\": \"unwritten\""
+        expected: "chapter 99 produced no next-meeting-points.jsonl of its own"
+      - name: "next-meeting cumulative state stays authored (same carry-forward reasoning)"
+        action: "http: GET /api/chapters/99/next-meeting"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"authored\""
+        expected: "carried forward from chapter 02.02"
+    tags: [chapters, detail, content, edge-case, synthetic, fixture, regression]
+    estimated_duration: "15s"
+    expected_result: "A fixture chapter with genuinely no producer output reports unwritten at the own_state level on every section, and at the cumulative state level on the one non-cumulative section (meeting-notes) — the real behavior of the unwritten state, live-verified rather than assumed, with the fixture created and torn down per this file's own documented procedure"
