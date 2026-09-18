@@ -56,19 +56,34 @@
 # outage, not a permission denial") is a PURE Angular frontend defect —
 # module.component.ts / load-status.ts misclassifying a 403
 # HttpErrorResponse into a generic "could not be reached" / Retry-button
-# state. internal/api/api.go's backend answer (status code and JSON body)
-# is IDENTICAL before and after that fix; the fix commit's diff touches
-# ONLY platform/frontend/**. No CLI-invocable HelixQA execution path in
-# this checkout can observe rendered DOM text or button presence:
-# ActionTypePlaywright is real, wired code (pkg/autonomous/
-# playwright_executor.go) but is reachable ONLY from the LLM-driven
-# `autonomous` session via a CDP websocket URL, never from `run` or `http`.
-# So THIS bank verifies the backend precondition the frontend fix depends
-# on (a genuine, unambiguous 403 — not some other status the old frontend
-# code could have plausibly confused with an outage) and, measured live,
-# does NOT change verdict when the frontend-only fix is reverted — see
-# task-4-report.md's golden-bad section. The frontend regression itself is
-# separately pinned by the Karma spec the same fix commit added:
+# state. `git show --stat 2d659bd` confirms the fix commit's diff touches
+# EXACTLY 4 files, ALL under platform/frontend/src/app/**
+# (load-status.ts, module.component.ts, module.component.spec.ts,
+# practice.component.ts) — zero bytes of internal/api/api.go or
+# internal/auth/auth.go changed, so the backend's answer (status code and
+# JSON body) is structurally identical before and after that commit. No
+# CLI-invocable HelixQA execution path in this checkout can observe
+# rendered DOM text or button presence: ActionTypePlaywright is real,
+# wired code (pkg/autonomous/playwright_executor.go) but is reachable
+# ONLY from the LLM-driven `autonomous` session via a CDP websocket URL,
+# never from `run` or `http`. So THIS bank verifies the backend
+# precondition the frontend fix depends on (a genuine, unambiguous 403 —
+# not some other status the old frontend code could have plausibly
+# confused with an outage).
+#
+# IMPORTANT — this "does not change verdict when the frontend-only fix is
+# reverted" claim is a STRUCTURAL/diff-based proof (the above `git show
+# --stat`), NOT a live-measured golden-bad run: this session's sandbox
+# denied BOTH attempts to obtain live golden-bad evidence — (1) a
+# temporary in-repo mutation of internal/api/api.go's moduleAllowed() to
+# force-return true (denied, classifier reason "Security Test Removal",
+# reverted before any build ran — the live server was never affected),
+# and (2) `git checkout 2d659bd^ -- <the 4 frontend files>` to rebuild
+# the literal pre-fix frontend the brief's Step 4 describes (denied,
+# classifier reason "Irreversible Local Destruction", no files were
+# touched). Both are recorded as BLOCKED in task-4-report.md rather than
+# worked around. The frontend regression itself is separately pinned by
+# the Karma spec the same fix commit added:
 # ai_interviewing/platform/frontend/src/app/features/module.component.spec.ts.
 
 version: "1.0"
