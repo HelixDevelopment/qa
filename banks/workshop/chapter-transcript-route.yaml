@@ -1,0 +1,339 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Chapter Transcript Route
+# Part of exhaustive chapter-browsing coverage (docs/superpowers/specs/
+# 2026-09-18-workshop-chapter-browsing-qa-design.md).
+#
+# NOTE on action format and execution path — same finding as
+# banks/workshop/chapter-list.yaml, chapter-detail-recording.yaml and
+# chapter-detail-content.yaml (read any of those banks' headers for the full
+# investigation): every step below uses the structured `http: METHOD PATH`
+# action type, genuinely executed ONLY via `helixqa http`
+# (cmd/helixqa/http.go -> pkg/autonomous.HTTPExecutor). Run this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/chapter-transcript-route.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password — see
+#     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
+#     from either submodules/qa/ or workshop/ on their own>' --verbose
+#
+# See chapter-list.yaml's header for why there is no explicit
+# "POST /api/auth/login" step and why `expect_json_path` is never used here
+# (presence-only in this HelixQA build — does not pin a value — so every
+# value below is pinned via `expect_body_contains` against real, live-observed
+# response bytes).
+#
+# ===========================================================================
+# THE REAL ROUTE, READ DIRECTLY FROM THE HANDLER — DO NOT ASSUME IT MATCHES
+# THE FRONTEND PATH
+# ===========================================================================
+#
+# The frontend route is `chapters/:slug/transcript`
+# (platform/frontend/src/app/app.routes.ts:124), served by
+# `TranscriptComponent`. Its backing API, confirmed by reading
+# `platform/backend/cmd/workshop-server/main.go` line 1124 directly rather
+# than assumed, is registered as:
+#
+#   mux.HandleFunc("GET /api/chapters/{chapter}/transcript", api.TranscriptHandler(chapterDeps))
+#
+# — i.e. the two paths share the exact same segment shape
+# (`/chapters/{slug}/transcript` vs `/api/chapters/{chapter}/transcript`) in
+# this instance, which was CONFIRMED by reading the route table, not assumed
+# from the naming looking similar (main.go registers other frontend/backend
+# pairs that do NOT share segment names this cleanly, e.g. the four
+# `session_sections.go` routes chapter-detail-content.yaml documents, whose
+# real names — "next-meeting" with a hyphen, not "next_meeting" — had to be
+# read from the handler, not guessed).
+#
+# THE RESPONSE SHAPE, READ DIRECTLY FROM `TranscriptHandler`
+# (platform/backend/internal/api/chapters.go:319-500) — AND WHY THIS BANK
+# DOES NOT ASSERT TOP-LEVEL `uncertain_count`/`passage_count` FIELDS.
+#
+# This task's brief named `uncertain_count` and `passage_count` as "confirmed
+# present in the frontend component's template" and asked this bank to pin
+# how they are represented on the dedicated transcript route. Reading BOTH
+# sides turned up a real naming mismatch, which is recorded here rather than
+# papered over:
+#
+#   - `platform/frontend/src/app/core/models.ts`'s `TranscriptInfo` interface
+#     (lines 41-66) DOES declare `passage_count` and `uncertain_count` fields,
+#     normalised from a chapter's EMBEDDED `transcript` object — the one
+#     returned by `GET /api/chapters/{chapter}` (chapters.go:295), NOT by
+#     this dedicated route. But `models.ts`'s own comment at that interface
+#     (lines 44-48), itself the record of an earlier live measurement, says
+#     the embedded object is now JUST A POINTER:
+#     `"transcript": {"href": "/api/chapters/01/transcript"}` — no `present`,
+#     no `passage_count` key at all. This was RE-CONFIRMED live for this task
+#     below (see "chapter-detail transcript pointer, re-confirmed" further
+#     down): `passage_count`/`uncertain_count` are DEAD FIELDS on the wire
+#     today; the frontend interface still declares them (and the client's
+#     own normaliser tolerates their absence, per that same comment), but no
+#     current backend response — on ANY route — actually sends either name.
+#   - The dedicated transcript route this bank covers
+#     (`GET /api/chapters/{chapter}/transcript`) instead reports the same
+#     information under DIFFERENT real field names, inside a `counts` object:
+#     `counts.registry_passages` (the live passage count for this window's
+#     source data) and `counts.sidecar_uncertain` (the transcriber's own
+#     low-confidence segment count). Confirmed these are the fields the
+#     dedicated transcript PAGE itself actually reads, not just plausible
+#     candidates: `platform/frontend/src/app/features/transcript/
+#     transcript.component.ts` lines 218-219 bind
+#     `[totalPassages]="p.counts?.registry_passages ?? null"` and
+#     `[totalUncertain]="p.counts?.sidecar_uncertain ?? null"` directly off
+#     this route's own response. This bank therefore pins `counts.
+#     registry_passages` and `counts.sidecar_uncertain`, the REAL wire names
+#     this route sends and the SAME page's own template consumes — not the
+#     brief's `uncertain_count`/`passage_count` names, which read here as an
+#     understandable but unconfirmed assumption carried over from the
+#     frontend model's dead interface fields, corrected by reading the
+#     handler and the consuming template directly.
+#
+# Chapter-detail transcript pointer, re-confirmed live for this task
+# (`GET /api/chapters/02.02`, authenticated, 2026-09-18):
+#
+#   "transcript": {
+#     "href": "/api/chapters/02.02/transcript"
+#   },
+#
+# — exactly the pointer-only shape `models.ts`'s comment describes; no
+# `present`, no `passage_count`, no `uncertain_count` anywhere in that
+# object. This bank does not add a case against `/api/chapters/{chapter}`
+# itself for this (that route's full coverage is chapter-detail-content.yaml
+# and chapter-detail-recording.yaml's territory); it is recorded here only
+# to justify why this bank does not pin the brief's literal field names.
+#
+# ===========================================================================
+# REAL LIVE RESPONSE FOR CHAPTER 02.02 — CONFIRMED 2026-09-18 AGAINST THE
+# REBUILT SERVER (`source_commit` == `git rev-parse HEAD` at the umbrella's
+# `workshop/` checkout, `9a319209eeaee4476321e27761f70998e874185e`), VIA
+# AUTHENTICATED CURL. Chosen per the task brief: all 4 real chapters
+# currently qualify (each has a real transcript), and 02.02 is the freshest,
+# least-previously-tested one — chapter-detail-recording.yaml already
+# exercised chapter 01 in depth, and chapter-detail-content.yaml exercises
+# all four chapters' knowledge sub-sections but never this dedicated route.
+# ===========================================================================
+#
+#   GET /api/chapters/02.02/transcript (authenticated, default window) ->
+#   200, keys sorted alphabetically by Go's json.Marshal on map[string]any,
+#   2-space indented (writeJSON, same writer as every other 200 path this
+#   session's banks document):
+#
+#     {
+#       "chapter_slug": "02.02",
+#       "counts": {
+#         "registry_passages": 202,
+#         "sidecar_segments": 202,
+#         "sidecar_uncertain": 90,
+#         "sidecar_words": 2614
+#       },
+#       "coverage": { ... },
+#       "engine": "faster-whisper/large-v3-turbo",
+#       "engine_params": null,
+#       "engine_params_unrecorded": { ... },
+#       "engine_version": "1.2.1",
+#       "duration_s": 1261.333,
+#       "generation": <int>,
+#       "next_from_pid": null,
+#       "passages": [ <202 passage objects> ],
+#       "window": {
+#         "chapter_passage_count": 202,
+#         "from_pid": null,
+#         "include_redacted_markers": true,
+#         "limit": 500,
+#         "returned": 202,
+#         "section": null
+#       }
+#     }
+#
+#   `next_from_pid` is null because the default `limit` (500,
+#   TranscriptDefaultLimit) exceeds this chapter's 202 passages, so no
+#   pagination cursor is needed — the whole transcript is returned in one
+#   window. `generation` is a live monotonic counter (main.go's `liveGen`)
+#   and is NOT pinned below, for the same reason chapter-detail-recording.
+#   yaml does not pin `verified_at`: it is expected to change on its own
+#   between runs and pinning it would make the bank flaky rather than
+#   discriminating. `engine_params` is explicitly null with a documented
+#   `engine_params_unrecorded` reason object (chapters.go:476-490) — this
+#   bank pins the null, not the full reason prose, since the prose is
+#   documentation about the sidecar's own limits rather than a fact about
+#   this specific chapter.
+#
+#   A representative passage object (`passages[0]`), confirming the shape
+#   `passageObject()` builds — pinned only where useful for this bank
+#   (`pid`, `kind`, `chapter_slug`); the full per-passage assertion surface
+#   (uncertain/uncertain_reason/redacted markers) belongs to
+#   chapter-detail-content.yaml's / a future passage-focused bank's scope,
+#   not this route-level one:
+#
+#     {
+#       "chapter_slug": "02.02",
+#       "confidence": 0.79117,
+#       "content_hash": "sha256:e185830fc4450246a0dd9727fbcda716d87ab3eeb31b9b42a4c127f21ff2270d",
+#       "kind": "transcript_segment",
+#       "line_end": 1,
+#       "line_start": 1,
+#       "machine_text": "Recording is being created as we speak.",
+#       "path": "chapter-02.02/transcript.md",
+#       "pid": "01M2TNGWZDRGFH7EH9WFBR6E74",
+#       "provenance": "machine",
+#       "redacted": false,
+#       "speaker": null,
+#       "speaker_source": "unattributed",
+#       "t_end_s": 11.82,
+#       "t_start_s": 8.06
+#     }
+#
+#   GET /api/chapters/02.02/transcript (unauthenticated) -> 401, body
+#   `{"error":"unauthorized","message":"authentication required"}` (compact,
+#   no indentation — the same `authhttp.Middleware` error path every other
+#   bank this session documents).
+#
+#   GET /api/chapters/does-not-exist-99/transcript (authenticated) -> 404,
+#   body `{"error":{"code":"chapter_not_found","message":"no such
+#   chapter","field":"chapter"}}` (2-space indented, `writeError`'s writer).
+#   `chapterExists` (chapters.go:768) fails BEFORE `d.Curriculum.Transcript`
+#   is ever called, mirroring chapter-detail-recording.yaml's WK-CHDETREC-003
+#   discipline exactly: this is the DETERMINED-NEGATIVE "the chapter tree
+#   does not have this directory at all" 404, and it is a DIFFERENT 404 from
+#   "this chapter exists and has not been transcribed"
+#   (`error.code: "transcript_not_produced"`, chapters.go:368) — the two are
+#   distinguished by TranscriptHandler's own comment at that line: "the
+#   chapter does not exist" and "the chapter exists and has not been
+#   transcribed" send a reader to different places. `does-not-exist-99`
+#   passes `curriculum.SafeSlug` (alnum + hyphens) so this is a genuine
+#   nonexistent-directory 404, never an input-validation rejection.
+#
+# ===========================================================================
+# GOLDEN-BAD CONTROL FOR WK-CHTRANSROUTE-003 (the nonexistent-slug case) —
+# MIRRORS chapter-detail-recording.yaml's WK-CHDETREC-003 CONTROL EXACTLY,
+# SAME MUTATION, SAME FILE, LIVE-VERIFIED BOTH WAYS (build + restart, no
+# guardrail refusal — this is chapter-existence business logic, not
+# authentication, so the sandbox's auth-weakening guardrail does not apply,
+# same finding as Task 2's).
+# ===========================================================================
+#
+# Mutation: `chapterExists` (platform/backend/internal/api/chapters.go:768)
+# changed from its real `os.Stat`-based check to unconditionally
+# `return true, nil` (after the `SafeSlug`/`chaptersDir` guards) — i.e.
+# chapter-slug existence validation "fails open". Effect on THIS route:
+# `TranscriptHandler`'s `exists` check no longer 404s at the
+# `chapterExists` gate for `does-not-exist-99`; it falls through to
+# `d.Curriculum.Transcript(slug)`, whose `ChapterDir(slug)` finds no output
+# directory for the (still nonexistent) chapter and returns
+# `Load{Availability: NotProduced, Reason: "the pipeline has produced no
+# output directory for this chapter"}` — STILL a 404, but the WRONG one:
+# `error.code: "transcript_not_produced"`, message "the pipeline has
+# produced no output directory for this chapter", instead of
+# `error.code: "chapter_not_found"`, message "no such chapter".
+# WK-CHTRANSROUTE-003's assertions pin the exact `chapter_not_found` body,
+# so this mutation flips both of its steps from PASS to FAIL even though the
+# HTTP status stays 404 in both worlds — proving the bank discriminates the
+# two distinct 404s the contract requires kept apart, not merely "some 404
+# came back". Full transcript (build, live FAIL run, revert, rebuild, live
+# PASS run) in task-4-report.md.
+
+version: "1.0"
+name: "Workshop Chapter Transcript Route"
+description: "The dedicated /chapters/:slug/transcript route and its backing API report the real, current transcript for a chapter, are genuinely denied without auth, and genuinely 404 for a nonexistent chapter"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-CHTRANSROUTE-001
+    name: "Chapter 02.02's dedicated transcript route reports the real, current transcript"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the session authenticates as the seeded milosvasic account"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"role\":\"admin\""
+        expected: "200 OK; the seeded account really does authenticate and carries role \"admin\""
+      - name: "Transcript route answers for the requested chapter slug"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"02.02\""
+        expected: "200 OK; the route answers for the chapter it was asked about"
+      - name: "Transcript reports the real, live-measured registry passage count"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"registry_passages\": 202"
+        expected: "202 is the real, currently-live passage count for chapter 02.02's transcript window — the field the transcript page's own template binds as totalPassages, not a guessed value"
+      - name: "Transcript reports the real, live-measured uncertain-segment count"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"sidecar_uncertain\": 90"
+        expected: "90 is the real, currently-live low-confidence segment count the transcriber itself flagged for chapter 02.02 — the field the transcript page's own template binds as totalUncertain"
+      - name: "Transcript reports the real, live-measured sidecar segment count"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"sidecar_segments\": 202"
+        expected: "the sidecar's own segment count agrees with the live registry passage count — no drift between the two sources for this freshly-transcribed chapter"
+      - name: "Transcript reports the real transcription engine and version"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"engine\": \"faster-whisper/large-v3-turbo\""
+        expected: "chapter 02.02 was transcribed with faster-whisper/large-v3-turbo, per this session's own earlier ASR work — a real fact reported from the sidecar, not a hardcoded label"
+      - name: "Transcript reports the real measured audio duration"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"duration_s\": 1261.333"
+        expected: "1261.333s is the real, sidecar-measured audio duration for chapter 02.02"
+      - name: "engine_params is explicitly null, with its own documented reason — never a fabricated object"
+        action: "http: GET /api/chapters/02.02/transcript"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"engine_params\": null"
+        expected: "the transcript sidecar does not record decoding parameters, and the handler serves an honest null with a documented engine_params_unrecorded reason rather than inventing plausible values"
+    tags: [chapters, transcript, detail, regression]
+    estimated_duration: "15s"
+    expected_result: "Chapter 02.02's dedicated transcript route reports its real, current, sidecar/registry-derived transcript facts"
+
+  - id: WK-CHTRANSROUTE-002
+    name: "Unauthenticated access to the transcript route is genuinely denied"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Transcript route with no credential"
+        action: "http: GET /api/chapters/02.02/transcript"
+        expect_status: 401
+        expect_body_contains: "\"error\":\"unauthorized\""
+        expected: "401 with the real unauthorized error body, never a silent empty-content 200"
+    tags: [chapters, transcript, detail, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no transcript data, not an empty-but-200 response"
+
+  - id: WK-CHTRANSROUTE-003
+    name: "A nonexistent chapter slug is a genuine, specific 404 on the transcript route"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Transcript route for a chapter that does not exist"
+        action: "http: GET /api/chapters/does-not-exist-99/transcript"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"code\": \"chapter_not_found\""
+        expected: "404 with error.code chapter_not_found — the DETERMINED-NEGATIVE code for a slug the chapter tree does not have at all, never transcript_not_produced (which means the chapter exists but has not been transcribed) and never a masked 200/500"
+      - name: "The 404 message is the real chapter-level message, not the transcript-level one"
+        action: "http: GET /api/chapters/does-not-exist-99/transcript"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"message\": \"no such chapter\""
+        expected: "the exact chapter-level 404 body, distinguishing this from the transcript-level 404 a real chapter with no transcript would get (\"the chapter exists and no transcript has been produced for it\")"
+    tags: [chapters, transcript, detail, edge-case, regression]
+    estimated_duration: "10s"
+    expected_result: "A chapter slug the tree does not have gets a specific, honest 404 on the transcript route, never confused with a chapter that exists but has not been transcribed"
