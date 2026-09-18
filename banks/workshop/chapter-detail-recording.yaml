@@ -1,0 +1,265 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Chapter Detail — Recording Surface
+# Part of exhaustive chapter-browsing coverage (docs/superpowers/specs/
+# 2026-09-18-workshop-chapter-browsing-qa-design.md).
+#
+# NOTE on action format and execution path — same finding as
+# banks/workshop/chapter-list.yaml (read that bank's header for the full
+# investigation): every step below uses the structured `http: METHOD PATH`
+# action type, genuinely executed ONLY via `helixqa http`
+# (cmd/helixqa/http.go -> pkg/autonomous.HTTPExecutor). Run this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/chapter-detail-recording.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password — see
+#     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md, where $VASIC_ROOT is
+#     the umbrella project root; this path does NOT resolve from either
+#     submodules/qa/ or workshop/ on their own>' --verbose
+#
+# See chapter-list.yaml's header for the full explanation of why there is no
+# explicit "POST /api/auth/login" step (the `auth: admin` slot performs its
+# own internal login()) and why `expect_json_path` is never used here
+# (presence-only in this HelixQA build — pkg/autonomous/http_executor.go's
+# jsonPathExists does not pin a value — so every value pinned below uses
+# `expect_body_contains` against real, live-observed response bytes).
+#
+# REAL ROUTES AND HANDLERS, read directly from the source
+# (platform/backend/internal/api/recording.go, registered in
+# platform/backend/cmd/workshop-server/main.go ~line 1181-1184):
+#   - `GET /api/chapters/{chapter}/recording/probe` -> RecordingProbeHandler.
+#     Reports what is known about the recording (size, digest, verified_at,
+#     container/media fields) without streaming the file. Every field is
+#     "served from the thing that measured it" per the handler's own doc
+#     comment: `size_bytes`/`sha256` from the committed `*.sha256` manifest,
+#     media fields from the verification sidecar written by
+#     scripts/extract-videos.sh's prober, never re-measured per request.
+#   - `GET|HEAD /api/chapters/{chapter}/recording` -> RecordingHandler.
+#     Byte-serves the recording via `http.ServeContent` (Accept-Ranges,
+#     206/416, strong ETag, conditional requests). BOTH routes share one
+#     `resolveRecording` function (recording.go:338-425) so the probe and the
+#     byte-serve can never disagree about a chapter's recording state — this
+#     bank deliberately exercises both routes against the SAME chapter for
+#     that reason.
+#   - Auth wiring is identical to chapter-list.yaml: every `/api/*` route
+#     except `/api/health` and `/api/auth/*` requires a bearer token
+#     (`wrapWithAuth` -> `apiPathsOnly(authhttp.Middleware(authDB), content)`,
+#     main.go ~3339-3348).
+#
+# THE TWO-STAGE 404, AND WHY THIS BANK PINS THE EXACT BODY, NOT JUST THE
+# STATUS. `resolveRecording` (recording.go:348-425) answers a nonexistent
+# chapter and "chapter exists but has no recording" with the SAME status
+# (404) but DIFFERENT bodies:
+#   - chapter does not exist at all: chapterExists() (chapters.go:768) fails
+#     first -> `writeError(404, ErrChapterNotFound, "no such chapter",
+#     "chapter")` -> `{"error":{"code":"chapter_not_found", ...}}`.
+#   - chapter exists but findRecording() (recording.go:201-234) finds no
+#     `*.sha256` manifest -> `writeError(404, ErrMaterialNotFound, "this
+#     chapter has no recording", "chapter")` ->
+#     `{"error":{"code":"material_not_found", ...}}`.
+# A bank asserting only `expect_status: 404` cannot tell these apart, which
+# is exactly the discrimination the golden-bad control below exercises (see
+# GOLDEN-BAD CONTROL section).
+#
+# REAL LIVE RESPONSES, confirmed 2026-09-18 against the rebuilt server
+# (`source_commit` == `git rev-parse HEAD` at the umbrella's `workshop/`
+# checkout, `9a319209eeaee4476321e27761f70998e874185e`):
+#
+#   GET /api/chapters/01/recording/probe  (authenticated) -> 200, keys sorted
+#   alphabetically by Go's json.Marshal on map[string]any:
+#     {
+#       "audio": "aac 48000 stereo",
+#       "available": true,
+#       "chapter_slug": "01",
+#       "container": "isom",
+#       "container_demuxer": "mov,mp4,m4a,3gp,3g2,mj2",
+#       "derivation": {...},
+#       "duration_s": 6928.75,
+#       "etag": "\"sha256-345a74398a440e2d-1871981557\"",
+#       "generation": <int>,
+#       "href": "/api/chapters/01/recording",
+#       "overall_bitrate_kbps": 2161,
+#       "parts_archived": 36,
+#       "sha256": "345a74398a440e2df3a8cacf8422e7712c3e5bab19147594811b44787dbed03f",
+#       "size_bytes": 1871981557,
+#       "verified_at": "2026-09-18T16:55:38Z",
+#       "video": "h264 High 1920x1080 24fps"
+#     }
+#   `verified_at` is NOT pinned below — it is the instant
+#   scripts/extract-videos.sh last verified the file, which legitimately
+#   changes when that script re-runs; every OTHER field pinned above is a
+#   manifest-derived or sidecar-derived fact that does not change on its own.
+#
+#   All 4 real chapters (01, 02, 02.01, 02.02) were confirmed LIVE to have
+#   `"available": true` right now — none is in a not-reassembled or
+#   integrity-fault state. Chapter "01" was picked because it is the
+#   design doc's first-listed, authoritative chapter (feature 009's PDF
+#   source), not because it is the only one that qualifies.
+#
+#   HEAD /api/chapters/01/recording (authenticated) -> 200, headers only
+#   (Content-Length: 1871981557, Accept-Ranges: bytes, ETag matching the
+#   probe's `etag`). This bank uses HEAD, never a bare GET, on the byte-serve
+#   route specifically to avoid transferring a 1.8 GB file per test run —
+#   `expect_status` is all this schema can assert on a header-only response
+#   in this HelixQA build (no header-assertion field exists — see
+#   pkg/testbank's TestStep struct).
+#
+#   GET /api/chapters/01/recording with `Range: bytes=0-15` (authenticated)
+#   -> 206 Partial Content, Content-Length: 16, Content-Range:
+#   bytes 0-15/1871981557 — confirms the real range-serving path
+#   (`http.ServeContent`) genuinely engages rather than always returning the
+#   full entity. The 16-byte body is binary MP4 header bytes, not asserted
+#   by content (no reliable text substring), only by status.
+#
+#   GET /api/chapters/01/recording/probe (unauthenticated) -> 401, body
+#   `{"error":"unauthorized","message":"authentication required"}` (compact,
+#   no indentation — same `authhttp.Middleware` error path chapter-list.yaml
+#   already documented; different writer than the 200/404 paths above).
+#
+#   GET /api/chapters/does-not-exist-99/recording/probe (authenticated) ->
+#   404, body `{"error":{"code":"chapter_not_found","message":"no such
+#   chapter","field":"chapter"}}` (2-space indented, same `writeError` writer
+#   as the 200 `writeJSON` path — both use `json.Encoder.SetIndent("", "
+#   ")`). `does-not-exist-99` passes `curriculum.SafeSlug` (alnum + hyphens)
+#   so this is a genuine "chapter tree does not have this directory" 404, not
+#   an input-validation rejection.
+#
+# GOLDEN-BAD CONTROL FOR WK-CHDETREC-003 (the nonexistent-slug case) — a
+# real, revertible, NON-AUTH mutation, LIVE-VERIFIED both ways (unlike
+# chapter-list.yaml's WK-CHLIST-002 control, which the session's own
+# tool-permission guardrail blocked because it weakened auth — this
+# mutation touches chapter-existence business logic, not authentication, so
+# the guardrail did not apply and the full FAIL/PASS cycle was completed
+# live). The mutation: `chapterExists` (chapters.go:768-783) was changed to
+# `return true, nil` unconditionally (after the SafeSlug/chaptersDir guards),
+# skipping the `os.Stat` call entirely — i.e. chapter-slug existence
+# validation "fails open". Effect on THIS bank: `resolveRecording` no longer
+# 404s at the `chapterExists` check for `does-not-exist-99`; it falls through
+# to `findRecording`, whose `os.ReadDir` on the (still nonexistent) directory
+# fails with `fs.ErrNotExist`, so `found` is false and the handler instead
+# emits `writeError(404, ErrMaterialNotFound, "this chapter has no
+# recording", "chapter")` — STILL a 404, but the WRONG one:
+# `{"error":{"code":"material_not_found",...}}` instead of
+# `{"error":{"code":"chapter_not_found",...}}`. WK-CHDETREC-003's assertions
+# pin the exact `chapter_not_found` body, so this mutation flips both of its
+# steps from PASS to FAIL even though the HTTP status stays 404 in both
+# worlds — proving the bank discriminates the two distinct 404s the contract
+# requires kept apart (recording.go:370-385's own comment: "an unreadable
+# chapter directory is a fact about the deployment and 'this chapter was
+# never given a recording' is a fact about the curriculum"), not merely
+# "some 404 came back". Full transcript (build, live FAIL run, revert,
+# rebuild, live PASS run) in task-2-report.md.
+
+version: "1.0"
+name: "Workshop Chapter Detail — Recording"
+description: "The recording probe and byte-serve routes report the real, current recording state for a chapter, and both are genuinely denied without auth and genuinely 404 for a nonexistent chapter"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-CHDETREC-001
+    name: "Chapter 01's recording is available and correctly probed"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the session authenticates as the seeded milosvasic account"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"role\":\"admin\""
+        expected: "200 OK; the seeded account really does authenticate and carries role \"admin\""
+      - name: "Recording probe reports available"
+        action: "http: GET /api/chapters/01/recording/probe"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"available\": true"
+        expected: "200 OK, the resolved recording state is positively available, not a fault"
+      - name: "Recording probe echoes the requested chapter slug"
+        action: "http: GET /api/chapters/01/recording/probe"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"01\""
+        expected: "The probe answers for the chapter it was asked about"
+      - name: "Recording probe reports the real committed manifest digest"
+        action: "http: GET /api/chapters/01/recording/probe"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"sha256\": \"345a74398a440e2df3a8cacf8422e7712c3e5bab19147594811b44787dbed03f\""
+        expected: "sha256 is read from the committed *.sha256 manifest (H1's own basis), never computed per request"
+      - name: "Recording probe reports the real measured video codec/resolution/fps"
+        action: "http: GET /api/chapters/01/recording/probe"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"video\": \"h264 High 1920x1080 24fps\""
+        expected: "video is measured by the verifying host's ffprobe/ffmpeg fallback at extraction time and recorded in the sidecar"
+      - name: "Recording probe reports the real archive part count"
+        action: "http: GET /api/chapters/01/recording/probe"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"parts_archived\": 36"
+        expected: "parts_archived is a measurement from the committed manifest, not a hardcoded limit"
+      - name: "Byte-serve route resolves this chapter's recording (HEAD, no body transferred)"
+        action: "http: HEAD /api/chapters/01/recording"
+        auth: "admin"
+        expect_status: 200
+        expected: "200 OK on HEAD proves the byte-serve route independently resolves the SAME chapter the probe just reported available — resolveRecording is shared by both routes"
+      - name: "Byte-serve route honours a real byte-range request"
+        action: "http: GET /api/chapters/01/recording"
+        auth: "admin"
+        headers:
+          Range: "bytes=0-15"
+        expect_status: 206
+        expected: "206 Partial Content proves http.ServeContent's real range-serving path engages, not just a full-entity 200"
+    tags: [chapters, detail, recording, regression]
+    estimated_duration: "15s"
+    expected_result: "Chapter 01's recording is reported available with its real, current, manifest/sidecar-derived facts, and the byte-serve route independently agrees and honours ranges"
+
+  - id: WK-CHDETREC-002
+    name: "Unauthenticated access to the recording surface is genuinely denied"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Recording probe with no credential"
+        action: "http: GET /api/chapters/01/recording/probe"
+        expect_status: 401
+        expect_body_contains: "\"error\":\"unauthorized\""
+        expected: "401 with the real unauthorized error body, never a silent empty-content 200"
+      - name: "Recording byte-serve with no credential"
+        action: "http: HEAD /api/chapters/01/recording"
+        expect_status: 401
+        expected: "401 on the byte-serve route too — auth is enforced before resolveRecording runs on either route, so a missing recording is never distinguishable from a missing credential"
+    tags: [chapters, detail, recording, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no recording data or bytes on either route, not an empty-but-200 response"
+
+  - id: WK-CHDETREC-003
+    name: "A nonexistent chapter slug is a genuine, specific 404 on both recording routes"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Recording probe for a chapter that does not exist"
+        action: "http: GET /api/chapters/does-not-exist-99/recording/probe"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"code\": \"chapter_not_found\""
+        expected: "404 with error.code chapter_not_found — the DETERMINED-NEGATIVE code for a slug the chapter tree does not have at all, never material_not_found (which means the chapter exists but has no recording) and never a masked 200/500"
+      - name: "The 404 message is the real chapter-level message, not the recording-level one"
+        action: "http: GET /api/chapters/does-not-exist-99/recording/probe"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"message\": \"no such chapter\""
+        expected: "the exact chapter-level 404 body, distinguishing this from the recording-level 'this chapter has no recording' 404 that a chapter WITH no manifest would get"
+      - name: "Byte-serve route agrees: same nonexistent chapter, same chapter-level 404"
+        action: "http: HEAD /api/chapters/does-not-exist-99/recording"
+        auth: "admin"
+        expect_status: 404
+        expected: "HEAD still resolves through resolveRecording, so the byte-serve route 404s for the same reason the probe did, with the same status"
+    tags: [chapters, detail, recording, edge-case, regression]
+    estimated_duration: "10s"
+    expected_result: "A chapter slug the tree does not have gets a specific, honest 404 on both recording routes, never confused with a chapter that exists but has no recording"
