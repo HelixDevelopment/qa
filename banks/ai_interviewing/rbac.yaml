@@ -1,0 +1,104 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: AI Interviewing — RBAC
+#
+# NOTE on action format and scope (read submodules/qa/pkg/navigator AND
+# pkg/orchestrator/definition_challenge.go before assuming this bank runs
+# via `helixqa run --platform web` — it does not):
+#
+#   - `helixqa run --platform web` NEVER dispatches a real HTTP request for
+#     a case that carries an asserting `http:` step. definitionChallenge.
+#     Execute (pkg/orchestrator/definition_challenge.go) genuinely executes
+#     ONLY `shell:` steps, and only on the `desktop` platform. A case with
+#     an `http:` step stays honestly SKIPPED under `run`; the
+#     promoteSkippedToPassed shortcut is explicitly blocked for any case
+#     carrying an asserting step (caseHasUnrunAssertingStep) so a bank like
+#     this one can never bluff a PASS via crash-absence alone.
+#   - `pkg/navigator`'s ActionExecutor family (APIExecutor, PlaywrightExecutor,
+#     X11Executor, ADBExecutor, CLIExecutor) backs the LLM-driven `autonomous`
+#     session, not `run`/`http`. APIExecutor itself has no "METHOD /path"
+#     concept at all: Type() POSTs a raw body to one fixed baseURL and
+#     KeyPress() GETs baseURL+"/"+key — neither performs a login-then-request
+#     sequence from a step list.
+#   - The structured `ActionTypeHTTP` step type (pkg/testbank/schema.go) IS
+#     genuinely executed, but only via the dedicated `helixqa http` CLI
+#     subcommand (cmd/helixqa/http.go -> pkg/autonomous.HTTPExecutor), which
+#     `helixqa run` never calls into. `helixqa http` IS capable of a real,
+#     stateful login-then-request sequence from YAML: an `auth:` value of
+#     "admin" or "as:<user>" makes HTTPExecutor perform its OWN internal
+#     login() against --login-path with credentials supplied ONLY at run
+#     time, caches the resulting bearer token per session, and attaches it
+#     to every subsequent step that declares the same `auth:` value — no
+#     credential is written into this file. There is no CLI flag exposing
+#     "as:<user>" for an arbitrary username in this build, so the "admin"
+#     slot (--admin-user / --admin-pass) is used to carry the seeded
+#     user-role account's credentials; that flag name is HTTPExecutor's
+#     generic "primary credential slot" naming and is NOT an assertion that
+#     rami holds the application's admin role (step 1 below asserts the
+#     opposite: role "user").
+#
+#     Run as:
+#       bin/helixqa http --banks banks/ai_interviewing/ \
+#         --base-url http://127.0.0.1:8099 \
+#         --login-path /api/auth/login \
+#         --admin-user rami --admin-pass '<seeded rami password — see
+#         specs/007-decouple-modules-auth/spec.md>' --verbose
+#     (--login-path is required: ai_interviewing's real route is
+#     /api/auth/login, not HTTPExecutor's catalog-api-shaped default
+#     /api/v1/auth/login. --token-field is NOT needed: ai_interviewing's
+#     login response carries the bearer at top-level "token", which is
+#     already in HTTPExecutor's built-in fallback list.)
+#
+# Known limitation, recorded rather than hidden (§11.4.6): the ACTUAL
+# 2026-09-17 regression this bank was commissioned to help pin
+# (ai_interviewing commit 2d659bd, "a 403 was mislabeled as a backend
+# outage, not a permission denial") is a PURE Angular frontend defect —
+# module.component.ts / load-status.ts misclassifying a 403
+# HttpErrorResponse into a generic "could not be reached" / Retry-button
+# state. internal/api/api.go's backend answer (status code and JSON body)
+# is IDENTICAL before and after that fix; the fix commit's diff touches
+# ONLY platform/frontend/**. No CLI-invocable HelixQA execution path in
+# this checkout can observe rendered DOM text or button presence:
+# ActionTypePlaywright is real, wired code (pkg/autonomous/
+# playwright_executor.go) but is reachable ONLY from the LLM-driven
+# `autonomous` session via a CDP websocket URL, never from `run` or `http`.
+# So THIS bank verifies the backend precondition the frontend fix depends
+# on (a genuine, unambiguous 403 — not some other status the old frontend
+# code could have plausibly confused with an outage) and, measured live,
+# does NOT change verdict when the frontend-only fix is reverted — see
+# task-4-report.md's golden-bad section. The frontend regression itself is
+# separately pinned by the Karma spec the same fix commit added:
+# ai_interviewing/platform/frontend/src/app/features/module.component.spec.ts.
+
+version: "1.0"
+name: "AI Interviewing RBAC"
+description: "Role-based access checks at the API layer — a permission denial must be a genuine, unambiguous 403, never a status a client could mistake for an outage"
+metadata:
+  author: "vasic-digital"
+  app: "ai_interviewing"
+  version: "1.0.0"
+
+test_cases:
+  - id: AI-RBAC-001
+    name: "A user-role account (rami) is authenticated but denied access to an admin-only module with a genuine 403, not a 401/404/5xx"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the session authenticates as the seeded user-role account"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_json_path: "$.user.username"
+        expect_body_contains: "\"role\":\"user\""
+        expected: "200 OK; authenticated identity is rami with role \"user\", not admin"
+      - name: "Request an admin-only module's data while authenticated as rami"
+        action: "http: GET /api/modules/41"
+        auth: "admin"
+        expect_status: 403
+        expect_body_contains: "forbidden"
+        expected: "403 Forbidden with a permission-denial JSON body ({\"error\":\"forbidden\",...}), never 401/404/5xx"
+    tags: [security, rbac, regression, permission-denied]
+    estimated_duration: "10s"
+    expected_result: "A user-role visitor gets a genuine, unambiguous 403 for an admin-only module — the backend precondition the frontend's permission-denied (not outage) rendering depends on"
