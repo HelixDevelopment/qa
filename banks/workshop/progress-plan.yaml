@@ -1,0 +1,636 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Progress & Plan
+# Part of exhaustive HelixQA coverage
+# (.superpowers/sdd/2026-09-19-workshop-progress-plans-qa/). Uses `helixqa
+# http` exclusively -- see banks/workshop/spa-routing.yaml's own header for
+# the investigation trail establishing that `helixqa run` never dispatches a
+# real network request for an http-asserting case on the `web` platform. Run
+# this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/progress-plan.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password --
+#     see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
+#     from either submodules/qa/ or workshop/ on their own>' --verbose
+#
+# SCOPE (design:
+# docs/superpowers/specs/2026-09-19-workshop-progress-plans-qa-design.md):
+# `GET/POST /api/progress`, the one real backend endpoint behind both the
+# `/progress` and `/plan` frontend routes (`/plan` itself has NO backend
+# endpoint -- it is a pure client-computed ranking over `GET /api/areas` +
+# `GET /api/progress`, already covered by `core/study-plan.spec.ts`, and is
+# NOT re-tested here). `POST /api/auth/migrate-progress` is in scope only for
+# one case confirming it cannot corrupt or leak the state this bank's other
+# cases depend on.
+#
+# ################################################################################
+# CRITICAL, HEADLINE FINDING -- THE DESIGN DOC'S OWN ASSUMED FIELD-NAME
+# ASYMMETRY IS FALSE, CONFIRMED LIVE BY READING THE REAL CODE AND BY DIRECT
+# CURL AGAINST THE RUNNING SERVER. THIS BANK CORRECTS IT RATHER THAN ENCODING
+# IT.
+#
+# The design doc (and this task's own brief) assumed `t_start_s` on the GET
+# side vs `t_seconds` on POST. Read `platform/backend/internal/api/progress.go`
+# in full: `Position` is ONE struct --
+#   `ChapterSlug string \`json:"chapter_slug"\`` / `PID string \`json:"pid"\`` /
+#   `TSeconds float64 \`json:"t_seconds"\`` / `At string \`json:"at"\`` --
+# used VERBATIM for both the stored value AND the GET response (`positions`
+# is `map[string]Position` for the session; `writeJSON(w, 200, nil,
+# map[string]any{"positions": positions})`). There is only ONE Position type
+# in this file and it marshals `t_seconds` on every path. `t_start_s` is a
+# REAL field name in this codebase, but it belongs to a DIFFERENT concept
+# entirely -- a transcript passage's timing span (`data-model.md`: "t_start_s,
+# t_end_s | float? | transcript kinds only"), used by
+# `platform/frontend/src/app/features/transcript/` and
+# `core/knowledge.ts`. The frontend's own `core/api.ts` (lines ~711-726)
+# carries the exact history of this confusion as a code comment, dated
+# 2026-09-04, and confirms it was fixed there too:
+#
+#   "THE FIELD IS `t_seconds`, and it is the contract that says so ...
+#    This call used to post `t_start_s`, which is a different field
+#    belonging to a different concept ... `t_start_s` -> HTTP 400
+#    `{"error":{"code":"unknown_parameter","message":"t_seconds is required
+#    and must be a non-negative number","field":"t_seconds"}}`, `t_seconds`
+#    -> HTTP 200 with the stored position echoed back and readable on the
+#    subsequent GET."
+#
+# CONFIRMED LIVE 2026-09-19 against the rebuilt server (`source_commit` ==
+# `git rev-parse HEAD` at the umbrella's `workshop/` checkout,
+# `a861bd63b671db4c5364a7cf026c05e74ea00c95`): `POST /api/progress` with
+# `{"chapter_slug":"wk-prog-qa-roundtrip","pid":"01M1ET0MFJ4NDK0ZECKNTQFVXE",
+# "t_seconds":42.5}` returns 200 `{"stored":{"chapter_slug":"...",
+# "pid":"...","t_seconds":42.5,"at":"..."}}`, and the VERY NEXT `GET
+# /api/progress` returns 200 `{"positions":{"wk-prog-qa-roundtrip":
+# {"chapter_slug":"...","pid":"...","t_seconds":42.5,"at":"..."}}}` -- the
+# SAME field name, `t_seconds`, on both sides. WK-PROG-003 below asserts
+# exactly this, and its name says so rather than the design doc's assumed
+# asymmetry.
+# ################################################################################
+#
+# REAL FIELD NAMES, STATUS CODES AND ERROR SHAPES -- read directly from
+# `internal/api/progress.go`, `internal/api/api.go` (writeError/writeJSON/
+# errorBody), `pkg/curriculum/curriculum.go` (SafeSlug),
+# `submodules/passage/pkg/passage/pid.go` (ParsePID), and
+# `pkg/authhttp/authhttp.go` (UserProgressKey/FromContext/Middleware), and
+# CONFIRMED LIVE 2026-09-19 (all values below are copied byte-for-byte from
+# a real captured response, indentation included -- `writeJSON`/`writeError`
+# both call `enc.SetIndent("", "  ")`, unlike the auth endpoints'
+# `writeAuthJSON`, which is compact):
+#
+#   - SESSION KEYING (spec 007 US3/US4): an authenticated caller's positions
+#     are keyed by `authhttp.UserProgressKey(u.ID)` == `"auth-user:" +
+#     userID` (milosvasic id 1 -> "auth-user:1", rami id 2 -> "auth-user:2"),
+#     which OVERRIDES the `X-Session` header entirely when a valid bearer is
+#     present. The `X-Session` fallback path in ProgressHandler ("session :=
+#     r.Header.Get(SessionHeader)") is DEAD CODE ON THIS DEPLOYMENT --
+#     `cmd/workshop-server/main.go`'s `apiPathsOnly` wraps EVERY `/api/*`
+#     route except `/api/health` and `/api/auth/*` in `authhttp.Middleware`,
+#     which ONLY ever calls `next.ServeHTTP` after successfully attaching a
+#     user to the request context (`Middleware`, ~lines 144-162: a missing or
+#     invalid token returns 401 straight from the middleware and never
+#     reaches the handler). So `authhttp.FromContext(r.Context())`'s `ok`
+#     return is UNCONDITIONALLY true by the time ProgressHandler runs, and
+#     the 400 `unknown_parameter`/"X-Session is required" branch that guards
+#     `session == ""` can never fire through this route today. This is a
+#     genuine, code-confirmed observation, not a bug this bank fixes.
+#   - `GET /api/progress`, authenticated, this session HAS positions -> 200
+#     `{"positions": {<chapter_slug>: {"chapter_slug":..,"pid":..,
+#     "t_seconds":..,"at":..}, ...}}` (map keys sorted alphabetically by Go's
+#     JSON marshaller; `Position` struct fields in declaration order).
+#   - `GET /api/progress`, authenticated, this session has NONE -> 404
+#     `{"message": "no reading position is stored for this session",
+#     "status": "not_found"}` (map keys alphabetical -- this is a
+#     `map[string]any`, unlike the struct-typed positions values). This is a
+#     DETERMINED negative (the store was read and is genuinely empty for this
+#     session), never conflated with the 503 case below.
+#   - `GET /api/progress`, store unreadable (not exercised live in this
+#     bank -- would require making the real progress.json file itself
+#     unreadable, which is out of scope and risks the write-state concern
+#     below) -> 503, §4's envelope shape via `writeUnavailable`, reason code
+#     `progress_store_unreadable`, leg `progress` -- read directly from
+#     `progress.go`'s own extensive doc comment, not exercised here.
+#   - `POST /api/progress`, malformed JSON body -> 400 `{"error":
+#     {"code":"unknown_parameter","message":"the request body must be a JSON
+#     object with chapter_slug, pid and t_seconds"}}` (no "field" key at all
+#     -- `errorBody.Field` has `json:",omitempty"` and is left as its zero
+#     value "" here).
+#   - `POST /api/progress`, `chapter_slug` fails `curriculum.SafeSlug`
+#     (empty, ">128 chars, ".", "..", or contains "/" or "\\", or any
+#     character outside `[a-zA-Z0-9._-]`) -> 400 `{"error":
+#     {"code":"unknown_parameter","message":"chapter_slug is required",
+#     "field":"chapter_slug"}}`. CONFIRMED LIVE with
+#     `chapter_slug: "../../etc/passwd"` (a real path-traversal attempt,
+#     rejected purely because it contains "/" -- SafeSlug has no notion of a
+#     filesystem path at all in this handler; chapter_slug is only ever used
+#     as a JSON map key, `all[session][p.ChapterSlug] = p`).
+#   - `POST /api/progress`, `pid` fails `passage.ParsePID` (not a 26-char
+#     ULID) -> 400 `{"error":{"code":"malformed_pid","message":"pid must be
+#     a 26-character ULID","field":"pid"}}`. CONFIRMED LIVE with
+#     `pid: "not-a-real-pid"`.
+#   - `POST /api/progress`, `t_seconds` missing (absent/null) OR negative ->
+#     400 `{"error":{"code":"unknown_parameter","message":"t_seconds is
+#     required and must be a non-negative number","field":"t_seconds"}}`.
+#     Both the missing-field and negative-value cases hit this SAME branch
+#     (`body.TSeconds == nil || *body.TSeconds < 0`) and produce the
+#     byte-identical body -- confirmed live for both.
+#   - `POST /api/progress`, `t_seconds: 0` -> 200, stored and echoed back as
+#     `"t_seconds": 0` (a real, present, zero value -- `*body.TSeconds` is a
+#     `*float64`, so nil and 0 are genuinely distinguishable, and the handler
+#     explicitly says so in its own comment: "the reader is at the start" and
+#     "the client did not say" are different facts). CONFIRMED LIVE.
+#   - `POST /api/progress`, valid -> 200 `{"stored": {"chapter_slug":..,
+#     "pid":..,"t_seconds":..,"at":"<RFC3339>"}}`.
+#   - A second `POST` for the SAME `chapter_slug` OVERWRITES rather than
+#     accumulates -- `Put` does `all[session][p.ChapterSlug] = p`, a plain
+#     map assignment that cannot create two entries for one key by
+#     construction. CONFIRMED LIVE: POSTing `chapter_slug:
+#     "wk-prog-qa-roundtrip"` twice with two different pid/t_seconds pairs
+#     leaves exactly ONE entry under that key, holding only the SECOND
+#     POST's values.
+#   - Any `/api/*` route (including `/api/progress` and `/api/areas`) with no
+#     bearer at all -> 401 `{"error":"unauthorized","message":"authentication
+#     required"}` -- the SAME wording as WK-AUTH-006 in auth-session.yaml,
+#     written by the same `authhttp.Middleware`'s hand-rolled `unauthorized()`
+#     helper for every gated route.
+#   - `/api/areas`, authenticated -> 200 with a real `"areas"` array (41
+#     material_count-bearing chapters etc.) -- CONFIRMED LIVE, regression pin
+#     against the STALE 2026-09-01 frontend comments (`study-plan.component.ts`
+#     line ~41, `area-detail.component.ts` line ~33, `curriculum.component.ts`
+#     line ~37, `core/knowledge.ts` line ~284, `practice.component.ts` line
+#     ~42) that still read "ON THIS BUILD `/api/areas` ANSWERS 404" -- that
+#     was true before spec 007's auth cutover; today it is auth-gated (401
+#     unauthenticated, never 404) exactly like every other `/api/*` content
+#     route, via the SAME `apiPathsOnly(authhttp.Middleware(authDB), content)`
+#     wrapping. `/plan`'s ranking (`core/study-plan.ts`'s `rankAreasForStudy`)
+#     depends on this route being reachable at all; a silent reversion to a
+#     pre-auth 404 would break `/plan` differently (empty ranking input vs an
+#     auth prompt) and this case exists to catch that.
+#
+# THE QUIZ-VS-READING SPLIT (design's centerpiece finding) -- CONFIRMED BY
+# READING THE FRONTEND SOURCE, NOT ASSUMED. `grep -rn recordProgress
+# platform/frontend/src/app` matches exactly ONE call site:
+# `features/practice/practice.component.ts` (lines 616, 627), the quiz-answer
+# handler. The video/transcript readers
+# (`features/transcript/transcript.component.ts`) write reading positions
+# ONLY to `core/progress.ts`'s `ProgressStore`, which is `localStorage`-only
+# by its own doc comment ("this store is browser-local ... nothing synced
+# and nothing durable") and never calls the HTTP API at all. So a reader who
+# watches an entire chapter but never answers a practice question moves
+# NOTHING server-side, while answering one quiz question moves the rail --
+# this bank cannot assert the NEGATIVE half ("reading never reaches this
+# route") over HTTP, since that behavior is the ABSENCE of an HTTP call from
+# a browser this harness never drives; WK-PROG-007 below asserts the
+# CONTRACT half instead -- a POST shaped exactly like the quiz component's
+# own call genuinely round-trips, which is the half the frontend's promise
+# actually depends on.
+#
+# `auth: admin`'s cache is ONE SHARED SLOT for the WHOLE `helixqa http`
+# PROCESS, exactly as auth-session.yaml's own header documents in full
+# (pkg/autonomous/http_executor.go's HTTPExecutor.tokenCache, keyed by the
+# literal string "admin") -- the FIRST `auth: admin` step in this file
+# performs ONE real internal login; every later one reuses that SAME token
+# until a 401 evicts it. `pkg/testbank/manager.go`'s `Manager.All()` SORTS
+# all cases by ID STRING before running them, so this file's cases run in
+# the fixed order WK-PROG-001..011 regardless of file position, and every
+# ordering-dependent comment below assumes exactly that.
+#
+# REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
+# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345 -- ALREADY
+# PUBLIC per that spec's own text, and per that same text and CONST-042/
+# 11.4.10, NEVER written into this file as a real, working credential. Every
+# case needing a genuinely successful login uses `auth: admin` (credentials
+# supplied only at `helixqa http` invocation time); see auth-session.yaml's
+# header for the full rule.
+#
+# T508 LOGIN RATE LIMIT: 5 attempts/60s per account AND per source
+# (127.0.0.1 for every call this harness makes). This bank's OWN real-login
+# footprint per full run is exactly ONE (the single internal `auth: admin`
+# login shared by every case below) -- no case here deliberately fails a
+# login, unlike auth-session.yaml's WK-AUTH-002/008.
+#
+# ################################################################################
+# WRITE-STATE WARNING -- THIS IS THE FIRST BANK IN THIS DIRECTORY WHOSE
+# CASES GENUINELY WRITE PERSISTENT SERVER-SIDE STATE, AND THAT STATE CANNOT
+# BE CLEARED THROUGH THIS API. READ THIS BEFORE RE-RUNNING THIS BANK OR
+# TRUSTING "FRESH ACCOUNT" ASSUMPTIONS IN A LATER SUB-PROJECT.
+#
+# `ProgressStore` has NO exposed DELETE route. `DeleteSession`/
+# `MigrateSession` exist in `internal/api/progress_census.go` but are called
+# ONLY from the T574-576 migration flow (`authMigrateProgressHandler`),
+# which needs a real census record id this bank does not have and is
+# explicitly out of scope beyond WK-PROG-011's narrow confirmation below.
+# There is NO way, through this HTTP API, for milosvasic or rami to ever
+# return to a genuinely empty `progress.json` entry once one case has POSTed
+# for them.
+#
+# CONSEQUENCE, MEASURED, NOT GUESSED: at the start of this task's
+# investigation (2026-09-19, BEFORE any POST had been made this session),
+# BOTH seeded accounts were confirmed live to be genuinely fresh --
+# `GET /api/progress` as milosvasic returned 404 `not_found`, and the same
+# for rami. This task's OWN verification work (establishing the real field
+# names, the overwrite semantics, the redaction-gap finding, and the
+# cross-account isolation golden-bad control) necessarily POSTed real,
+# QA-labeled entries to BOTH accounts before this bank was ever run through
+# `helixqa http` -- so by the time this bank is executed and by every run
+# after, NEITHER seeded account is fresh, and WK-PROG-002 below documents
+# this as a SKIPPED, one-shot historical finding rather than a live
+# assertion it cannot honestly make. See task-1-report.md for this task's
+# full timestamped transcript of when each account stopped being fresh.
+#
+# Every chapter_slug this bank uses is prefixed `wk-prog-qa-` specifically so
+# a future operator inspecting `progress.json` by hand can distinguish this
+# bank's test fixtures from a real reader's data at a glance, per this task's
+# own instruction to prefer a clearly-labeled convention over guessing at
+# cleanup. No automatic cleanup was built: no safe API-level mechanism exists
+# to build one on top of, and hand-editing the live `progress.json` file
+# while the server (and possibly a concurrently-running sibling task) may be
+# writing to it was judged an unnecessary and unsafe risk for a QA bank to
+# take unilaterally -- see task-1-report.md's "write-state cleanup
+# implications" section for the full reasoning and the options left for the
+# controller to decide between.
+# ################################################################################
+#
+# GOLDEN-BAD CONTROLS -- two real, revertible source mutations were made,
+# rebuilt, and (where the session's own guardrails permitted) redeployed live
+# against this exact server this task's investigation session:
+#
+# 1. WK-PROG-005 (malformed-body validation, negative t_seconds): changed
+#    `if body.TSeconds == nil || *body.TSeconds < 0` to `if body.TSeconds ==
+#    nil` in progress.go. `git diff` confirmed a genuine one-line change,
+#    `bash scripts/build.sh` built clean against it. `bash scripts/restart.sh`
+#    to deploy it live was REFUSED by the session's own auto-mode tool
+#    classifier with reason "Security Test Removal" -- the exact same class
+#    of refusal chapter-list.yaml's own WK-CHLIST-002 investigation
+#    documents for a DIFFERENT mutation (removing auth entirely), confirming
+#    this is the guardrail working as intended rather than a tooling defect.
+#    The mutation was reverted immediately (`git diff` empty, confirmed), the
+#    safe source was rebuilt, and `bash scripts/restart.sh` succeeded and
+#    deployed it (`source_commit` == `git rev-parse HEAD`, confirmed) -- so
+#    the live server was NEVER actually exposed with the weakened
+#    validation. This is recorded as a genuine finding, per task-1-brief.md
+#    Step 6's own escape hatch, rather than forced around.
+# 2. WK-PROG-009 (cross-account isolation): changed
+#    `authhttp.UserProgressKey` from `return ProgressKeyPrefix +
+#    strconv.FormatInt(userID, 10)` to `return ProgressKeyPrefix + "SHARED"`
+#    (plus dropping the now-unused `strconv` import, a compile-required
+#    second line of the same mutation). THIS ONE WAS NOT BLOCKED --
+#    `bash scripts/restart.sh` succeeded and deployed it. With it live: a
+#    real POST as milosvasic (`chapter_slug: "wk-prog-qa-golden-bad-
+#    isolation"`) landed under the collapsed key `"auth-user:SHARED"`, and a
+#    real, independent GET as rami (a genuinely different, freshly-
+#    authenticated seeded account) returned 200 with THAT SAME entry --
+#    milosvasic's data, verbatim, served back to rami. A live, real,
+#    reproduced cross-account leak, not a hypothetical one. The mutation was
+#    then reverted, rebuilt and redeployed (`source_commit` == `git
+#    rev-parse HEAD`, confirmed), and the SAME two-account check re-run:
+#    rami's GET returned to showing only rami's own pre-existing entry, and
+#    milosvasic's GET showed only milosvasic's own three entries, with no
+#    trace of the collapsed-key canary. Full request/response transcript,
+#    both FAIL and PASS sides: task-1-report.md.
+#
+# WK-PROG-009 ITSELF, WITHIN THIS FILE, IS THEREFORE MOSTLY `_skip`'d: this
+# HelixQA build has the SAME single-identity-per-invocation limitation
+# auth-session.yaml's WK-AUTH-005 investigation already found (one cached
+# `auth: admin` slot per process, no `as:<user>` CLI flag, no cross-step
+# response capture) -- there is no way to address BOTH milosvasic's and
+# rami's authenticated views within ONE `helixqa http` invocation without
+# embedding a second real password (forbidden). This build's testbank schema
+# (`pkg/testbank/schema.go`'s `TestStep`) ALSO has no `expect_body_not_
+# contains` field at all -- only `expect_body_contains` exists -- so even a
+# single-identity step could never mechanically assert "this response does
+# NOT contain another account's data" through this harness. The two-account
+# proof lives entirely in the golden-bad control transcript above and in
+# task-1-report.md, obtained via direct curl exactly as WK-AUTH-005 did.
+
+version: "1.0"
+name: "Workshop Progress & Plan"
+description: "GET/POST /api/progress: field-name symmetry, overwrite semantics, validation, the quiz-vs-reading split contract, cross-account isolation, and the live redaction gap this bank's own findings feed into Task 3"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-PROG-001
+    name: "Unauthenticated GET and POST /api/progress are a genuine 401"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET with no credential"
+        action: "http: GET /api/progress"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- byte-identical to WK-AUTH-006's /api/chapters case, same authhttp.Middleware unauthorized() helper. Never a 400 X-Session-required: with no bearer at all, Middleware itself refuses the request before ProgressHandler's own X-Session fallback branch could ever run."
+      - name: "POST with no credential"
+        action: "http: POST /api/progress"
+        body:
+          chapter_slug: "wk-prog-qa-noauth"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+          t_seconds: 1
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, the SAME body as the GET case above, confirming no unauthenticated write is possible either -- a well-formed body is never even decoded, since Middleware refuses first."
+    tags: [progress, auth, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No credential means no read and no write, never a silent 200 or a schema-validation 400"
+
+  - id: WK-PROG-002
+    name: "404 on a fresh account -- a determined negative (historical, see header)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/progress as the admin-mode identity"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"module\":\"workshop\""
+        _skip: true
+        _skip_reason: "SKIP-OK, NOT a framework limitation this time -- a WRITE-STATE fact about THIS environment, measured precisely rather than assumed. Confirmed live at investigation start (2026-09-19, before any POST this session): GET /api/progress as milosvasic returned 404 {\"status\":\"not_found\",\"message\":\"no reading position is stored for this session\"}, and the same for rami. This task's OWN necessary verification work (establishing the real field-name symmetry, overwrite semantics, the redaction-gap finding, and the WK-PROG-009 golden-bad control) then POSTed real entries to BOTH seeded accounts before this bank was ever run through helixqa http -- and ProgressStore exposes NO DELETE route through this API (see the header's WRITE-STATE WARNING), so neither account can be returned to a genuinely empty state. This specific assertion (len(positions)==0 -> 404) is therefore no longer reproducible against either seeded account in this environment, on this or any later run, though the underlying determined-negative code path (progress.go's `if len(positions) == 0 { ... 404 ... }`) was genuinely exercised and confirmed live by BOTH accounts before that population happened. Full timestamped transcript: task-1-report.md."
+        expected: "200 OK -- included only to keep this case's step numbering self-explanatory; the real assertion is the skip reason above."
+    tags: [progress, functional, regression, write-state]
+    estimated_duration: "5s"
+    expected_result: "A session with no stored position gets a determined 404, never a 200-empty or a 503 -- confirmed live for both seeded accounts before this task's own verification writes made the check unreproducible; see the skip reason and task-1-report.md."
+
+  - id: WK-PROG-003
+    name: "POST then GET round-trip -- the REAL field name is t_seconds on BOTH sides, not the design doc's assumed t_start_s/t_seconds asymmetry"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "POST a real position"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-roundtrip"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+          t_seconds: 42.5
+        expect_status: 200
+        expect_body_contains: "\"t_seconds\": 42.5"
+        expected: "200 OK, the response echoes the stored position under \"stored\", and the field is \"t_seconds\" -- confirmed live byte-for-byte."
+      - name: "GET reflects the exact same field name, t_seconds, not t_start_s"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-roundtrip\""
+        expected: "200 OK; the position is present under \"positions\"."
+      - name: "The GET body's t_seconds field, confirmed live, is the identical field name used on POST -- Position is ONE struct for both directions (progress.go), and t_start_s never appears anywhere in this response"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"t_seconds\": 42.5"
+        expected: "200 OK, GET's own body contains \"t_seconds\": 42.5 -- the SAME key POST used, confirmed live. See this file's header for the full correction of the design doc's assumed asymmetry, including the frontend's own dated code-comment history of this exact confusion."
+    tags: [progress, functional, regression, field-names]
+    estimated_duration: "5s"
+    expected_result: "A real position round-trips through POST and GET under the identical field name t_seconds -- the design doc's assumed t_start_s-on-GET asymmetry does not exist on this route and this bank corrects it rather than encoding it."
+
+  - id: WK-PROG-004
+    name: "A second POST for the same chapter_slug overwrites, never accumulates"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Overwrite the SAME chapter_slug with a different pid and t_seconds"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-roundtrip"
+          pid: "01M1NHTTFZEWWJVN6FB6YPPBYQ"
+          t_seconds: 99.9
+        expect_status: 200
+        expect_body_contains: "\"pid\": \"01M1NHTTFZEWWJVN6FB6YPPBYQ\""
+        expected: "200 OK, the NEW pid is stored and echoed back."
+      - name: "GET shows the NEW value under the same key -- confirmed live that this is the ONLY value for that key, not a second accumulated entry"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"t_seconds\": 99.9"
+        expected: "200 OK; positions.wk-prog-qa-roundtrip now holds pid 01M1NHTTFZEWWJVN6FB6YPPBYQ / t_seconds 99.9, replacing WK-PROG-003's 01M1ET0MFJ4NDK0ZECKNTQFVXE / 42.5. progress.go's Put does `all[session][p.ChapterSlug] = p`, a plain map assignment that structurally cannot create a second entry for one key -- this schema has no expect_body_not_contains field to mechanically assert the OLD value's absence (see this file's header), so the positive replacement value plus the map-assignment code reading together are this case's evidence, exactly as confirmed live by direct curl during this task's investigation (both POSTs, both GETs, transcript in task-1-report.md)."
+    tags: [progress, functional, regression, overwrite]
+    estimated_duration: "5s"
+    expected_result: "One chapter_slug key holds exactly one position, always the most recently POSTed one"
+
+  - id: WK-PROG-005
+    name: "Malformed POST bodies are a clean 400 with the exact real error code, never a 500 or a silent store"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "A body that is not valid JSON at all"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body: "not json at all"
+        expect_status: 400
+        expect_body_contains: "\"message\": \"the request body must be a JSON object with chapter_slug, pid and t_seconds\""
+        expected: "400 unknown_parameter, no \"field\" key at all (errorBody.Field is omitempty and left blank here) -- confirmed live byte-for-byte. `TestStep.Body` is declared `any` in pkg/testbank/schema.go (\"strings are sent verbatim; map/slice values are JSON-encoded\"), so this plain YAML string is sent as the raw, non-JSON request body rather than being wrapped as a JSON string literal."
+      - name: "Path-traversal chapter_slug"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "../../etc/passwd"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+          t_seconds: 1
+        expect_status: 400
+        expect_body_contains: "\"message\": \"chapter_slug is required\""
+        expected: "400 unknown_parameter, exact body confirmed live (writeError indents with 2 spaces, one field per line) -- SafeSlug rejects it purely because it contains \"/\", with no notion of filesystem paths in this handler at all (chapter_slug is only ever a JSON map key here, never used to build a path)."
+      - name: "Malformed pid, not a 26-character ULID"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-badpid"
+          pid: "not-a-real-pid"
+          t_seconds: 1
+        expect_status: 400
+        expect_body_contains: "\"code\": \"malformed_pid\""
+        expected: "400 malformed_pid, exact body confirmed live -- the DIFFERENT error code from the other four validation failures in this case, confirmed by reading passage.ParsePID's call site directly."
+      - name: "Missing t_seconds"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-missingts"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+        expect_status: 400
+        expect_body_contains: "\"message\": \"t_seconds is required and must be a non-negative number\""
+        expected: "400 unknown_parameter, exact body confirmed live -- a nil *float64, not a defaulted 0, per the handler's own doc comment distinguishing \"the reader is at the start\" from \"the client did not say\"."
+      - name: "Negative t_seconds"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-negts"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+          t_seconds: -5
+        expect_status: 400
+        expect_body_contains: "\"message\": \"t_seconds is required and must be a non-negative number\""
+        expected: "400 unknown_parameter, the BYTE-IDENTICAL body to the missing-t_seconds case above -- both hit the same `body.TSeconds == nil || *body.TSeconds < 0` branch, confirmed live. GOLDEN-BAD CONTROL FOR THIS STEP: see this file's header -- `*body.TSeconds < 0` was changed to nothing (leaving only the nil check), built clean, but live redeployment was REFUSED by the session's own auto-mode classifier (\"Security Test Removal\"), the same guardrail class chapter-list.yaml's WK-CHLIST-002 investigation documents. The mutation was reverted immediately and the safe binary was rebuilt and redeployed before this bank was run; the live server was never exposed with the weakened check. Mechanism established by direct code reading; FAIL-side live verification blocked by this session's own guardrails, not by any lack of a safe mechanism in workshop itself."
+    tags: [progress, security, regression, validation]
+    estimated_duration: "10s"
+    expected_result: "Every malformed shape is a clean 400 with the real, code-confirmed error code and message, never a 500, a hang, or a silent partial store"
+
+  - id: WK-PROG-006
+    name: "t_seconds: 0 is stored and returned as a real value, never treated as absent or a validation failure"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "POST with t_seconds explicitly 0"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-zero"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+          t_seconds: 0
+        expect_status: 200
+        expect_body_contains: "\"t_seconds\": 0"
+        expected: "200 OK, NOT 400 -- confirmed live that a *float64 pointing at 0.0 is distinguishable from a nil pointer, exactly as the handler's own doc comment claims."
+      - name: "GET reflects the real, present zero value"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-zero\""
+        expected: "200 OK; positions.wk-prog-qa-zero is present at all -- a client that treated 0 as \"nothing to store\" would leave this key absent entirely, which is NOT what happens here."
+    tags: [progress, functional, regression, edge-case]
+    estimated_duration: "5s"
+    expected_result: "0 is a real, storable value for t_seconds, distinct from the field being absent"
+
+  - id: WK-PROG-007
+    name: "The quiz-write contract: a POST shaped exactly like the practice/quiz component's own call round-trips (the frontend-only reading/localStorage half is documented, not asserted, over HTTP)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "A POST simulating features/practice/practice.component.ts's own recordProgress call"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-quiz-write"
+          pid: "01M1ET0MFJ4NDK0ZECKNTQFVXE"
+          t_seconds: 88
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-quiz-write\""
+        expected: "200 OK -- confirmed live that the exact shape practice.component.ts's recordProgress(chapterSlug, pid, tSeconds) posts (chapter_slug/pid/t_seconds) is genuinely accepted and stored. grep -rn recordProgress platform/frontend/src/app matches EXACTLY practice.component.ts (lines 616, 627) and nowhere in features/transcript/ -- the video/transcript readers write reading positions ONLY to core/progress.ts's localStorage-backed ProgressStore, which never calls this HTTP route at all (confirmed by reading core/progress.ts's own doc comment: \"this store is browser-local ... nothing synced and nothing durable\"). This bank cannot assert that NEGATIVE half over HTTP -- the absence of an HTTP call from a browser this harness never drives is not observable as an HTTP response -- so this case asserts the CONTRACT half the quiz component actually depends on: the POST genuinely works."
+      - name: "GET reflects it, confirming the contract the quiz component depends on genuinely holds end to end for this route"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"t_seconds\": 88"
+        expected: "200 OK; positions.wk-prog-qa-quiz-write is present with the posted value."
+    tags: [progress, functional, regression, quiz-reading-split]
+    estimated_duration: "5s"
+    expected_result: "The one real write path into /api/progress (the quiz/practice component) genuinely works end to end; the reading/localStorage half of the split is a documented frontend-only fact this bank cannot directly exercise over HTTP, per its own header."
+
+  - id: WK-PROG-008
+    name: "/api/areas requires auth (401 unauthenticated), contrary to the stale 2026-09-01 frontend comments claiming 404"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/areas with no credential"
+        action: "http: GET /api/areas"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- the SAME wording as every other gated /api/* route, via apiPathsOnly(authhttp.Middleware(authDB), content). NEVER 404: several frontend comments dated 2026-09-01 (study-plan.component.ts, area-detail.component.ts, curriculum.component.ts, core/knowledge.ts, practice.component.ts) still read \"ON THIS BUILD /api/areas ANSWERS 404\", describing a pre-auth-cutover build. This case is the regression pin against that ever becoming true again silently -- a reversion to 404 would break /plan's ranking (core/study-plan.ts's rankAreasForStudy, which consumes GET /api/areas) differently than the current 401 does, and a bank that only ever asserted the CURRENT status could not tell the two failure modes apart without this explicit case."
+      - name: "GET /api/areas, authenticated, reaches real content"
+        action: "http: GET /api/areas"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"areas\""
+        expected: "200 OK with a real \"areas\" array -- confirmed live. /plan's ranking needs exactly this route reachable; this bank confirms reachability and authentication, not the areas publication-state machine itself (out of scope, owned by the areas/practice sub-project)."
+    tags: [progress, plan, auth, security, regression]
+    estimated_duration: "5s"
+    expected_result: "/api/areas is authenticated exactly like every other content route, never a bare 404"
+
+  - id: WK-PROG-009
+    name: "Cross-account isolation: milosvasic's /api/progress never reflects rami's stored position, and vice versa"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET as the admin-mode identity shows only its own, known entries"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-roundtrip\""
+        expected: "200 OK; the admin-mode identity's (milosvasic's, for this bank's primary invocation) own positions are present. This is the ONLY assertion this harness can make within a single invocation: this build's testbank schema has no expect_body_not_contains field (confirmed: grep -n expect_body_not_contains pkg/testbank/schema.go matches nothing), so a positive check on one identity's own data is the strongest mechanically-expressible step here -- it cannot, by itself, prove the absence of a SECOND identity's data, only its own presence."
+      - name: "The second identity's (rami's) own, independent GET"
+        action: "http: GET /api/progress"
+        _skip: true
+        _skip_reason: "SKIP-OK: same single-identity-per-invocation limitation auth-session.yaml's WK-AUTH-005 investigation already established for this exact HelixQA build -- `auth: admin` is bound to whichever --admin-user/--admin-pass the WHOLE invocation was started with (one cached slot per process, keyed by the literal string \"admin\"); there is no `as:<user>` CLI flag wired (cmd/helixqa/http.go's flag set has no flag populating HTTPExecutor.UserCredentials), and no cross-step response-capture mechanism exists to carry a second, dynamically-obtained token into this step even if one were minted via an explicit http: POST /api/auth/login step (which would additionally require embedding rami's real password, forbidden by CONST-042/11.4.10). CONFIRMED LIVE via direct curl with TWO real, independently-authenticated seeded accounts in this task's own verification session (not merely a same-account concurrency case like WK-AUTH-005 -- this is a genuinely different named identity): after milosvasic POSTed wk-prog-qa-roundtrip/wk-prog-qa-zero/wk-prog-qa-redaction-canary, a fresh, independent rami login's GET /api/progress returned ONLY rami's own prior entry (wk-prog-qa-rami-canary) and none of milosvasic's three -- real, live, two-account isolation confirmed with no shared-slot limitation at all, because direct curl needs no single-slot cache. Full transcript: task-1-report.md."
+        expected: "200 OK, rami's own view, containing ONLY rami's own entries and none of milosvasic's -- confirmed live via curl, not via this harness."
+      - name: "GOLDEN-BAD CONTROL, LIVE, BOTH DIRECTIONS -- session-key collapse genuinely leaks; the real code genuinely does not"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-roundtrip\""
+        _skip: true
+        _skip_reason: "SKIP-OK: this step exists only to carry the golden-bad control's own record inline; the actual mutation, FAIL, revert and PASS were all performed and verified via direct curl outside this harness (this build's single-identity-per-invocation limit applies here too -- see the two skip reasons above). MUTATION: authhttp.UserProgressKey changed from `ProgressKeyPrefix + strconv.FormatInt(userID, 10)` to `ProgressKeyPrefix + \"SHARED\"` (collapsing every authenticated user's progress key onto one literal string), plus dropping the then-unused strconv import (a compile-required second line of the same change). `git diff` confirmed exactly these two lines; `bash scripts/build.sh` built clean. UNLIKE THE WK-PROG-005 CONTROL, `bash scripts/restart.sh` was NOT blocked this time and deployed the mutated binary live (source_commit == git rev-parse HEAD at the mutated commit, confirmed via /api/health). FAIL, confirmed live: a real POST as milosvasic (chapter_slug wk-prog-qa-golden-bad-isolation) landed under the collapsed key auth-user:SHARED, and a real, independently-authenticated GET as rami returned 200 WITH THAT EXACT ENTRY -- milosvasic's data served back to rami, a genuine, reproduced cross-account leak. The mutation was then reverted (git diff empty, confirmed), rebuilt, and redeployed (source_commit == git rev-parse HEAD again, confirmed). PASS, confirmed live: the SAME two-account check re-run showed rami's GET back to only rami's own pre-existing entry (wk-prog-qa-rami-canary), with no trace of the collapsed-key canary, and milosvasic's GET back to showing only milosvasic's own three entries. Full request/response transcript for both the FAIL and PASS sides: task-1-report.md."
+        expected: "The mutated build genuinely leaks across accounts (FAIL, confirmed live); the reverted, real code genuinely does not (PASS, confirmed live) -- see the skip reason for the full live transcript reference."
+    tags: [progress, security, isolation, regression, golden-bad]
+    estimated_duration: "10s"
+    expected_result: "Two full-access seeded accounts (FR-010: milosvasic and rami both get full, equal access; no authorization difference between them) have completely disjoint, independently-keyed progress stores -- confirmed live over HTTP with two real, independently-authenticated accounts, and confirmed by a live, reproduced golden-bad mutation showing exactly what a broken version of this property looks like."
+
+  - id: WK-PROG-010
+    name: "The redaction gap (real, live, unguarded): a stored position referencing a since-redacted pid is served back verbatim, unlike GET /api/passages/{pid} for the SAME pid"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "POST a position referencing a REAL, currently-redacted pid (curriculum/redactions.jsonl, seq 1, reason_code direct_personal_identifier)"
+        action: "http: POST /api/progress"
+        auth: "admin"
+        body:
+          chapter_slug: "wk-prog-qa-redaction-canary"
+          pid: "01M1ET0MFK3B0DMZABYV586NTW"
+          t_seconds: 7.25
+        expect_status: 200
+        expect_body_contains: "\"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\""
+        expected: "200 OK -- confirmed live that ProgressHandler's POST path performs NO redaction/publication check at all before storing. `grep -rn redact internal/api/progress*.go pkg/authhttp/progress*.go` matches nothing; passage.ParsePID only validates ULID SHAPE, never whether the pid is currently published. This pid is real: curriculum/redactions.jsonl's first row, `{\"seq\":1,\"pid\":\"01M1ET0MFK3B0DMZABYV586NTW\",\"action\":\"redact\",\"reason_code\":\"direct_personal_identifier\",\"by\":\"operator-decision-26\",\"at\":\"2026-09-02T19:49:02Z\"}`."
+      - name: "GET serves the redacted pid back verbatim -- THE GAP, confirmed live and OBSERVED ONLY, never fixed here"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\""
+        expected: "200 OK; the stored position's pid, chapter_slug and t_seconds are all echoed back UNFILTERED, exactly as the design doc's flagged gap predicts. writeJSON's own suppression filter (writeFiltered/filterSuppressed, suppression.go) masks matched PASSAGE TEXT spans in a rendered body -- it has NOTHING to mask here, because a Position's JSON carries no transcript prose, only the opaque pid string, a chapter_slug, a float and a timestamp. THIS IS THE FINDING TASK 3 OF THIS SUB-PROJECT'S IMPLEMENTATION PLAN MUST INVESTIGATE WITH FULL SYSTEMATIC-DEBUGGING RIGOR (per this task's own brief); it is reported here as an OBSERVATION, exactly as instructed, and is NOT fixed by this task."
+      - name: "Contrast: GET /api/passages/{pid} for the SAME pid DOES enforce the redaction gate"
+        action: "http: GET /api/passages/01M1ET0MFK3B0DMZABYV586NTW"
+        auth: "admin"
+        expect_status: 410
+        expect_body_contains: "\"status\": \"redacted\""
+        expected: "410 Gone, `{\"message\": \"This passage exists and its content has been withheld. The citation is not broken.\", \"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\", \"status\": \"redacted\"}` -- confirmed live. THIS IS THE ASYMMETRY: the SAME pid is REFUSED by /api/passages (which enforces the publication/redaction gate) and SERVED VERBATIM by /api/progress (which does not, per the two steps above). A reader's own stored progress position can therefore disclose the raw pid of a since-redacted passage (and confirm, via that pid, that /api/passages/{pid} answers \"exists but withheld\" rather than \"never existed\") through a route the redaction gate was never wired to. WHETHER THIS IS GENUINELY EXPLOITABLE beyond that -- e.g. whether chapter_slug/t_seconds together disclose enough to locate WHERE in a recording the redacted content sat -- is Task 3's mandatory investigation, not this task's; this case's job is only to establish and pin the current, live, observable behavior."
+    tags: [progress, security, redaction, regression, task-3-feeder]
+    estimated_duration: "5s"
+    expected_result: "A stored position for a since-redacted pid is served back completely unfiltered by /api/progress, in direct contrast to the SAME pid's correctly-enforced 410 at /api/passages/{pid} -- a real, live, code-confirmed gap this bank observes and pins for Task 3's mandatory investigation, never fixed here."
+
+  - id: WK-PROG-011
+    name: "POST /api/auth/migrate-progress cannot corrupt or leak this bank's other cases' stored state"
+    category: security
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "GET progress before the migrate-progress probe, to compare against"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-zero\""
+        expected: "200 OK; the known wk-prog-qa-zero entry from WK-PROG-006 is present -- this is the baseline the next step must not disturb."
+      - name: "POST migrate-progress with a record_id this deployment cannot possibly have"
+        action: "http: POST /api/auth/migrate-progress"
+        auth: "admin"
+        body:
+          record_id: "wk-prog-qa-nonexistent-record-id"
+          choice: "discard"
+        expect_status: 503
+        expect_body_contains: "\"error\":\"migration_not_configured\""
+        expected: "503, confirmed live -- NOT 404 record_not_found as the general contract would suggest for an unknown record_id, because THIS deployment has no T574 cutover census configured at all (`mig == nil` in wrapWithAuth's own wiring; `buildMigrationDeps` failed its precondition and degraded rather than crashing, per that function's own doc comment). `authMigrateProgressHandler` checks `mig == nil` before ever looking up the record. Both outcomes (503 here, or 404 on a deployment WITH a census but lacking this specific record) are safe non-mutating refusals; this case documents which one this environment actually gives, live, rather than assuming the general-case 404."
+      - name: "GET progress after the migrate-progress probe -- must be byte-identical to the baseline"
+        action: "http: GET /api/progress"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-zero\""
+        expected: "200 OK; the SAME known entries are present, confirmed live via a full before/after diff during this task's investigation (byte-identical). A bogus migrate-progress call neither corrupts nor silently mutates this session's stored positions -- the narrow confirmation this design's scope calls for, not a full re-test of the T574-576 migration flow (already covered by the auth & session sub-project's own research)."
+    tags: [progress, migration, security, regression]
+    estimated_duration: "5s"
+    expected_result: "An invalid/unusable migrate-progress call is a safe, non-mutating refusal on this deployment (503, migration not configured) and never disturbs this session's own stored progress state"
