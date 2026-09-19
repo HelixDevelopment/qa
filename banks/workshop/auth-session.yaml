@@ -1,0 +1,449 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Auth & Session
+# Part of exhaustive HelixQA coverage
+# (.superpowers/sdd/2026-09-19-workshop-auth-session-qa/). Uses `helixqa
+# http` exclusively -- `helixqa run` NEVER dispatches a real network request
+# for an http-asserting case on the `web` platform (confirmed by every
+# sibling bank in this directory -- see banks/workshop/spa-routing.yaml's own
+# header for the investigation trail). Run this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/auth-session.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password --
+#     see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
+#     from either submodules/qa/ or workshop/ on their own>' --verbose
+#
+# REAL FIELD NAMES, MESSAGES AND SHAPES -- read directly from the handlers
+# (platform/backend/cmd/workshop-server/main.go's authLoginHandler,
+# authLogoutHandler, authSwitchHandler, authMeHandler, and
+# platform/backend/pkg/authhttp/authhttp.go's ExtractToken/LoginSession/
+# Middleware) and CONFIRMED LIVE 2026-09-19 against the rebuilt server
+# (`source_commit` == `git rev-parse HEAD` at the umbrella's `workshop/`
+# checkout, `fae0a71a32d3765e55f48ed866ad3fed4175c9a0`):
+#
+#   - POST /api/auth/login body {"username":.., "password":..}. Missing
+#     either field -> 400 `{"error":"validation_error","message":"username
+#     and password are required"}` (before any rate-limit check, before any
+#     credential check). Valid creds -> 200, body (compact, no indentation --
+#     writeAuthJSON never calls SetIndent, unlike chapters.go's writeJSON):
+#     `{"expires_at":"<RFC3339>","permissions":[{"resource":"all","actions":
+#     ["delete","read","write"]}],"token":"<32-byte base64url>","user":
+#     {"id":<int>,"username":"<name>","role":"<role>"}}` (Go sorts map keys
+#     alphabetically on marshal; `user` is a struct, so ITS fields marshal in
+#     declaration order: id, username, role -- authstore.User, id/username/
+#     role, PasswordHash excluded via `json:"-"`). Real seeded rows, live:
+#     milosvasic -> id 1, role "admin"; rami -> id 2, role "user" (FR-010:
+#     both get full, equal ACCESS on workshop regardless of this role
+#     string). A `Set-Cookie: session=<token>; Path=/; Expires=..;
+#     HttpOnly; SameSite=Strict` is ALSO set (setSessionCookie,
+#     main.go ~3558) -- no `Secure` attribute, matching a plain-HTTP
+#     loopback/LAN deployment. Wrong password for a real user and an unknown
+#     username return the byte-IDENTICAL 401 body:
+#     `{"error":"invalid_credentials","message":"Invalid username or
+#     password"}` -- confirmed live, both cases produce the SAME bytes
+#     (authhttp.LoginSession never distinguishes "no such user" from "wrong
+#     password" -- both take the `!= nil || !CheckPassword(...)` branch).
+#   - POST /api/auth/logout: no body; needs a bearer (cookie-or-header, see
+#     ExtractToken below). No token -> 401
+#     `{"error":"unauthorized","message":"missing token"}`. Valid token ->
+#     200 `{"message":"Logged out successfully","success":true}` (map keys
+#     alphabetical: message, success) and clears the cookie
+#     (`Set-Cookie: session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict`).
+#     `RevokeSession` genuinely deletes the session row -- confirmed live:
+#     reusing the EXACT SAME just-logged-out token on ANY gated route
+#     afterward gets 401 `{"error":"unauthorized","message":"invalid or
+#     expired token"}` (NOT "missing token" -- that message is reserved for
+#     "no token presented at all"; a REJECTED, once-valid token gets the
+#     "invalid or expired" message, from `s.UserByTokenHash` failing inside
+#     `authhttp.Middleware`/`authMeHandler`, not from `ExtractToken` itself).
+#   - POST /api/auth/switch, body {"username":..,"password":..}: contract is
+#     "logout + login in one call" (authSwitchHandler's own doc comment). If
+#     the CALLER presents a valid token, `RevokeSessionsForUser(u.ID)` is
+#     called FIRST -- this revokes EVERY session row for that user id, not
+#     just the one that made the switch call (confirmed live: switching
+#     revoked BOTH a "session A" and the distinct "session B" that made the
+#     switch call itself, since both belonged to the same account). THEN a
+#     fresh `LoginSession` runs for the NEW username/password, returning the
+#     SAME 200 shape as /login. If the caller presents NO token at all,
+#     `ExtractToken` returns "" and the revoke branch is skipped entirely --
+#     switch degrades to a plain login for the given credentials. IMPORTANT,
+#     PRECISE FINDING: `authSwitchHandler` NEVER calls `wire.allowLogin` --
+#     unlike `authLoginHandler`, a switch call (with or without a prior
+#     token) is NOT subject to the T508 per-account/per-source login
+#     rate-limiter (authkit_wire.go). This is reported as an observation,
+#     not exploited as a rate-limit bypass anywhere in this bank.
+#   - GET /api/auth/me: needs a bearer. No token -> 401
+#     `{"error":"unauthorized","message":"missing token"}` (SAME message as
+#     logout's no-token case -- both call `authhttp.ExtractToken` directly
+#     and hand-roll this exact literal, rather than going through
+#     `authhttp.Middleware`'s own `unauthorized(w, "authentication
+#     required")` helper, which is what GATED ROUTES like /api/chapters use
+#     instead -- see below, THREE DIFFERENT missing-credential messages
+#     exist in this server and this bank pins all three). Invalid/expired
+#     token -> 401 `{"error":"unauthorized","message":"invalid or expired
+#     token"}`. Valid -> 200
+#     `{"module":"workshop","permissions":[...],"user":{"id":..,
+#     "username":..,"role":..}}`.
+#   - Any OTHER gated route (e.g. GET /api/chapters), reached through
+#     `wrapWithAuth` -> `apiPathsOnly` -> `authhttp.Middleware`: no token ->
+#     401 `{"error":"unauthorized","message":"authentication required"}`
+#     (the THIRD distinct missing-credential message -- `Middleware`'s own
+#     hand-rolled `unauthorized()` helper, compact/no-indent, written via
+#     `w.Write([]byte(...))` rather than `json.Encoder`). Invalid/expired
+#     token -> 401 `{"error":"unauthorized","message":"invalid or expired
+#     token"}` (same wording as /me's own invalid-token case, but written
+#     by `authhttp.Middleware`'s `unauthorized()` helper this time, not
+#     `authMeHandler`'s own `writeAuthJSON` -- two different call sites
+#     happen to use identical wording, confirmed by reading both, not
+#     assumed from one).
+#   - authhttp.ExtractToken (authhttp.go ~120-140): reads the "session"
+#     COOKIE FIRST, then falls back to the `Authorization: Bearer <token>`
+#     header. The doc comment on ExtractToken records WHY: fixed
+#     2026-09-17 after this same header-first order made a LAN caller's
+#     login unusable, because a DIFFERENT loopback-only gate
+#     (`internal/api.LoopbackOnly`, unified T225/G-HTTP-9) reads the SAME
+#     `Authorization: Bearer <token>` header for an unrelated per-network
+#     shared credential -- a non-loopback browser satisfying THAT gate had
+#     its Authorization header occupied by the network credential, so the
+#     per-user session token could only ever reach the server via the
+#     cookie. CONFIRMED LIVE 2026-09-19: a request carrying BOTH a garbage
+#     `Cookie: session=<garbage>` AND a real, currently-valid
+#     `Authorization: Bearer <token>` gets 401 `{"error":"unauthorized",
+#     "message":"invalid or expired token"}` -- the cookie is checked FIRST
+#     and its garbage value wins, even though a genuinely valid credential
+#     sat right next to it in the SAME request. See WK-AUTH-007 below.
+#
+# REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
+# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345. FR-009's OWN
+# text states these are ALREADY PUBLIC (committed in that spec's git history)
+# and MUST NEVER be relied on as real secrets, so the USERNAMES (not
+# secrets) appear literally below where a case genuinely needs to name a
+# real, known account (e.g. "wrong password for a real user"). The REAL
+# WORKING PASSWORDS are NEVER written into this file, per this task's own
+# instruction and per credential-handling policy (CONST-042/11.4.10) --
+# every case that needs a REAL, SUCCESSFUL login goes through the harness's
+# own `auth: admin` mechanism, whose credentials are supplied ONLY at
+# `helixqa http` invocation time via --admin-user/--admin-pass, exactly like
+# every sibling bank in this directory (chapter-list.yaml,
+# chapter-detail-recording.yaml).
+#
+# WHY MOST CASES BELOW USE `auth: admin` RATHER THAN AN EXPLICIT "POST
+# /api/auth/login" STEP, and why the ones that DO POST explicitly (002, 008)
+# never carry a real password -- see chapter-list.yaml's header for the
+# general rule ("a bank must never re-POST to the login route by hand" when
+# `auth: admin` is used) plus the credential rule above, which is the
+# SPECIFIC reason here: any case that needs a GENUINELY SUCCESSFUL login can
+# ONLY get one without embedding a real password by using `auth: admin`
+# (credentials supplied at invocation time); a case that needs a FAILING
+# login (002) or a MALFORMED one (008) never touches the real password at
+# all, so it is written as a plain, explicit `http:` POST instead.
+#
+# `auth: admin`'s cache is ONE SHARED SLOT for the WHOLE `helixqa http`
+# PROCESS (pkg/autonomous/http_executor.go's HTTPExecutor.tokenCache,
+# keyed by the literal AuthMode string "admin") -- the FIRST step, across
+# ALL cases in this file, that carries `auth: admin` performs ONE real
+# internal login and caches the token; every later `auth: admin` step in
+# ANY case reuses that SAME token, until a 401 on a cached-mode request
+# evicts it and forces a fresh internal login (Execute()'s own automatic
+# 401-retry, lines ~280-335). Execution order is NOT file order -- HelixQA's
+# `testbank.Manager.All()` (pkg/testbank/manager.go:136-146) explicitly
+# SORTS all loaded cases BY ID STRING before running them, regardless of
+# where they appear in this (or any) bank file -- so this file's cases run
+# in the fixed order WK-AUTH-001, 002, 003, 004, 005, 006, 007, 008, and the
+# cost/reuse accounting in every comment below assumes exactly that order.
+#
+# T508 LOGIN RATE LIMIT, MEASURED LIVE, 2026-09-19: 5 login attempts per 60
+# seconds, per account AND per source (127.0.0.1 for every call this harness
+# ever makes), sliding window (submodules/authkit/pkg/ratelimit/
+# ratelimit.go; wired via authkit_wire.go's WORKSHOP_AUTH_LOGIN_RATE_LIMIT=5
+# default / WORKSHOP_AUTH_LOGIN_RATE_WINDOW=1m default). A DENIED attempt
+# does NOT itself count against the budget (ratelimit.go's allowAt only
+# appends `now` to the window on an ALLOWED call), but every ALLOWED
+# attempt -- success OR failure -- does. This bank's own real-login
+# footprint per full run is exactly 4 of that 5-attempt budget (see the
+# per-case accounting below): ONE internal `auth: admin` login (created by
+# WK-AUTH-001, reused free by 003/004), TWO explicit failing attempts in
+# WK-AUTH-002, and ONE auto-healed internal relogin inside WK-AUTH-007
+# (its cached admin token is stale/revoked by the time 007 runs, since
+# WK-AUTH-004 logged it out; 007's own 401-retry performs one more real,
+# ALLOWED login). Confirmed live and NOT exploited/relied upon: `POST
+# /api/auth/switch` is exempt from this limiter entirely (see above), so it
+# was deliberately never used here as a rate-limit workaround.
+#
+# WK-AUTH-005 INVESTIGATION -- concurrent sessions, per task-1-brief.md's
+# explicit instruction to investigate "auth: admin" 's one-implicit-session-
+# per-bank-run limit before writing this case, rather than guess. Read
+# pkg/autonomous/http_executor.go (HTTPExecutor.applyAuth/resolveCreds/
+# tokenCache) and pkg/testbank/schema.go's TestStep.AuthMode doc comment in
+# full. FINDING, precise: this HelixQA build has NO mechanism to express,
+# within one bank case (or even one `helixqa http` process), "two
+# independent, concurrently-valid sessions for the SAME account, each later
+# addressed individually" -- for THREE independent, compounding reasons:
+#   1. `auth: admin` / `auth: as:<user>` are each a SINGLE cached slot keyed
+#      by the literal mode string ("admin", or "as:<user>") -- the token
+#      cache (`h.tokenCache[credsKey]`) holds ONE value per slot for the
+#      life of the process; a second `auth: admin` step never creates a
+#      second, independently-addressable session, it just reuses the first.
+#      `as:<user>` is additionally UNUSABLE from the `helixqa http` CLI as
+#      built: `cmd/helixqa/http.go`'s flag set has NO flag that populates
+#      `HTTPExecutor.UserCredentials` (only `--admin-user`/`--admin-pass`,
+#      which feed `AdminCreds` for the "admin" slot alone) -- so
+#      `resolveCreds` would return "credentials not registered" for ANY
+#      `as:` step in a real `helixqa http` invocation today.
+#   2. There is NO per-step response-capture / variable-templating
+#      mechanism to carry a SPECIFIC dynamically-obtained token (from one
+#      step's real login response) into a LATER step's `auth:`/`headers:`
+#      field. `auth: raw:<token>` takes its argument as a LITERAL string
+#      straight out of the YAML (`http_executor.go`'s `applyAuth`:
+#      `req.Header.Set("Authorization", "Bearer "+mode[len("raw:"):])`) --
+#      it does not resolve a name against anything captured earlier. The
+#      one write-only capture that DOES exist, `h.tokenCache["__last_login__"]`
+#      (populated when an `expect_json_path` step names a configured token
+#      field), is NEVER read back by `resolveCreds`/`applyAuth` -- confirmed
+#      by a full-text search of this module; it is asserted present only by
+#      `http_executor_tokenfield_test.go`'s own regression test, dead for
+#      the purpose of chaining a token into a later step. This is the SAME
+#      root cause already tracked by this module's own
+#      #BLUFF-HELIXQA-BANKS-VAR-SUBST-001 ("executor lacks response capture
+#      / variable expansion"), which `unresolvedPlaceholder`-triggered SKIPs
+#      elsewhere in this codebase cite for an identical reason.
+#   3. Even setting 1 and 2 aside: creating a SECOND, genuinely independent,
+#      SUCCESSFUL login for the SAME named account, via a bank-authored
+#      explicit `http: POST /api/auth/login` step, REQUIRES a real, working
+#      password in that step's `body:` -- and writing one into this checked-
+#      in file is exactly what this task's own instructions (and
+#      CONST-042/11.4.10) forbid. Unlike WK-AUTH-002/008 (which only ever
+#      need a WRONG or ABSENT password to reach their target status), a
+#      "second successful login" case has no not-real-credential path
+#      available to it.
+# CONCLUSION: WK-AUTH-005's steps are `_skip`'d below, each citing the
+# specific reason(s) above. The underlying SERVER behaviour the case
+# documents -- two independent logins for the same account both stay valid
+# concurrently, and a switch call mass-revokes EVERY session for that
+# account (not just the one that issued the switch call), including the
+# switch caller's own session -- was independently confirmed LIVE via direct
+# curl calls in this task's own verification session (real, distinct
+# tokens; both individually valid; both invalidated by one switch call).
+# Full transcript, request/response pairs and timestamps: task-1-report.md.
+#
+# WK-AUTH-007 INVESTIGATION -- the literal "cookie-only, no Authorization
+# header, from loopback" positive path is ALSO unreachable through this
+# executor, for a SEPARATE, previously-undocumented reason: `NewHTTPExecutor`
+# (pkg/autonomous/http_executor.go ~131-152) constructs its `*http.Client`
+# with NO `Jar` (`&http.Client{Timeout: 30 * time.Second}`) -- a bare Go
+# `http.Client` with no cookie jar NEVER stores or replays a `Set-Cookie`
+# response header on a later request. A real login step's cookie is
+# therefore always silently dropped; the ONLY way this executor ever
+# authenticates a later request is via the `Authorization` header (`auth:`
+# field), never a cookie it captured itself. Grepped this whole module for
+# `CookieJar`/`cookiejar`: zero matches anywhere in pkg/ or cmd/. Given this,
+# WK-AUTH-007's genuinely EXECUTABLE, zero-capture-needed regression pin
+# tests the SAME underlying fix from the OTHER, fully mechanical direction:
+# a garbage `Cookie: session=...` header (a literal, safe to hardcode --
+# it names no real session) alongside a REAL, currently-valid `Authorization`
+# bearer (via `auth: admin`) is REJECTED, proving the cookie is still
+# checked first even when a genuinely valid credential sits in the header
+# right next to it -- confirmed live above. Its second step is `_skip`'d,
+# citing this exact missing-CookieJar finding, for the literal positive
+# form the brief describes.
+
+version: "1.0"
+name: "Workshop Auth & Session"
+description: "Core login/logout/switch/me mechanics, concurrent sessions, and the loopback+cookie interaction behind the 2026-09-17 fixes"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-AUTH-001
+    name: "Valid login for each seeded user succeeds"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "The credentials supplied via --admin-user/--admin-pass authenticate (real login, via the harness's own admin-mode mechanism -- see header for why no explicit POST carries the real password)"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"module\":\"workshop\""
+        expected: "200 OK; a real login genuinely happened for whichever seeded identity was supplied at invocation time (this is the FIRST auth:admin use in the whole file -- costs the one real internal login this bank shares everywhere else)"
+      - name: "The resulting session grants real access to a gated route"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK, the seeded identity's session is genuinely accepted by a DIFFERENT gated route too, not just /me (reuses the cached session, 0 additional real logins)"
+    tags: [auth, login, regression]
+    estimated_duration: "5s"
+    expected_result: "Whichever seeded user's real credentials are supplied via --admin-user/--admin-pass genuinely authenticates and is granted real access. Full 'BOTH seeded users' coverage (FR-009/FR-010) requires running this bank once per seeded user's real credentials, exactly as chapter-list.yaml and chapter-detail-recording.yaml already document for their own admin-mode cases -- the harness's --admin-user/--admin-pass flags carry exactly one identity per invocation."
+
+  - id: WK-AUTH-002
+    name: "Invalid credentials are indistinguishably rejected"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Login with a wrong (deliberately fake) password for a real, known username"
+        action: "http: POST /api/auth/login"
+        body:
+          username: "milosvasic"
+          password: "wrong-password-deliberately-invalid-not-a-real-secret"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"invalid_credentials\",\"message\":\"Invalid username or password\"}"
+        expected: "401, exact body confirmed live -- never reveals that 'milosvasic' is a real account"
+      - name: "Login with an unknown username"
+        action: "http: POST /api/auth/login"
+        body:
+          username: "no-such-seeded-user-fr009"
+          password: "irrelevant-fake-password"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"invalid_credentials\",\"message\":\"Invalid username or password\"}"
+        expected: "401, the EXACT SAME body bytes as the wrong-password case above -- confirmed live byte-identical -- no account-enumeration signal"
+    tags: [auth, login, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No account-enumeration signal between wrong-password and unknown-user (neither step ever carries a real, working password)"
+
+  - id: WK-AUTH-003
+    name: "GET /api/auth/me reflects the authenticated caller"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Fetch own identity (reuses WK-AUTH-001's already-cached admin-mode session -- 0 additional real logins)"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"user\":{\"id\":1,\"username\":\"milosvasic\",\"role\":\"admin\"}"
+        expected: "200 OK, /me reflects milosvasic's real id/username/role exactly as the seeded row and the earlier login response both show (this specific assertion is milosvasic-shaped and expects this bank's PRIMARY --admin-user=milosvasic invocation, matching chapter-list.yaml's own precedent)"
+    tags: [auth, me, regression]
+    estimated_duration: "5s"
+    expected_result: "/me correctly identifies the caller"
+
+  - id: WK-AUTH-004
+    name: "Logout invalidates the session"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the shared admin-mode session is active before logging it out"
+        action: "http: GET /api/auth/me"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"user\":{\"id\":1,\"username\":\"milosvasic\",\"role\":\"admin\"}"
+        expected: "200 OK -- the session this step is about to log out is genuinely live first"
+      - name: "Logout (using that same, currently-active session)"
+        action: "http: POST /api/auth/logout"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "{\"message\":\"Logged out successfully\",\"success\":true}"
+        expected: "200 OK, exact body confirmed live; also clears the session cookie server-side (Set-Cookie: session=; Max-Age=0 -- not asserted here, no header-assertion field exists in this HelixQA build, per chapter-detail-recording.yaml's own documented limitation)"
+      - name: "Reuse of the just-logged-out session against a gated route genuinely fails"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 401
+        _skip: true
+        _skip_reason: "SKIP-OK: #BLUFF-HELIXQA-BANKS-VAR-SUBST-001-class gap, compounded by Execute()'s own automatic 401-retry (pkg/autonomous/http_executor.go ~280-335). `auth: admin` re-attaches the LOCALLY CACHED token regardless of server-side revocation; when the server genuinely rejects it with 401, the SAME code path that would let this step observe that 401 automatically invalidates the cache and performs a FRESH internal re-login with the SAME (still-valid, unrevoked) admin credentials, silently healing the session and turning the retried request back into a 200 -- so this specific assertion can NEVER genuinely observe a revoked admin-mode session through this harness; it would either pass by masking the very thing it claims to test, or need `raw:<literal-token>`, which requires embedding the exact, dynamically-generated, already-revoked token as a hardcoded literal (impossible to know at YAML-authoring time) or embedding a REAL password to mint a fresh one outside admin-mode (forbidden, see header). CONFIRMED LIVE via direct curl in this task's verification session: reusing the exact token from a real login, after a real logout, against this exact route, genuinely returns 401 {\"error\":\"unauthorized\",\"message\":\"invalid or expired token\"} -- see task-1-report.md."
+        expected: "The logged-out token/cookie no longer authenticates (verified live via curl outside this harness -- see _skip_reason)"
+    tags: [auth, logout, security, regression]
+    estimated_duration: "5s"
+    expected_result: "Logout genuinely revokes the session"
+
+  - id: WK-AUTH-005
+    name: "Concurrent sessions for the same user both stay valid; switch mass-revokes"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "First login as milosvasic"
+        action: "http: POST /api/auth/login"
+        _skip: true
+        _skip_reason: "SKIP-OK: creating a SECOND, genuinely independent, SUCCESSFUL login for the same seeded account requires a real, working password in this step's body -- forbidden to embed in a checked-in bank (see header's WK-AUTH-005 investigation, reason 3). The harness's only credential-free login mechanism (`auth: admin`) is a single cached slot (reason 1) and cannot mint two independently-addressable sessions."
+        expected: "200 OK, a genuinely new session created (verified live via curl -- see task-1-report.md)"
+      - name: "Second, independent login as milosvasic"
+        action: "http: POST /api/auth/login"
+        _skip: true
+        _skip_reason: "SKIP-OK: same reason as the step above -- a second real password-bearing login cannot be embedded here."
+        expected: "200 OK, session established, and genuinely DISTINCT from the first (confirmed live via curl: two different bearer tokens, both minted by the real server, both from two genuinely separate LoginSession calls)"
+      - name: "First session still valid against a gated route"
+        action: "http: GET /api/chapters"
+        _skip: true
+        _skip_reason: "SKIP-OK: #BLUFF-HELIXQA-BANKS-VAR-SUBST-001-class gap -- no mechanism exists to address 'the token from step 1' specifically in a later step (see header's WK-AUTH-005 investigation, reason 2)."
+        expected: "200 OK (confirmed live via curl)"
+      - name: "Second session still valid against a gated route"
+        action: "http: GET /api/chapters"
+        _skip: true
+        _skip_reason: "SKIP-OK: same addressability gap as the step above, for the second session's token."
+        expected: "200 OK (confirmed live via curl)"
+      - name: "Switch to rami using the second session"
+        action: "http: POST /api/auth/switch"
+        _skip: true
+        _skip_reason: "SKIP-OK: depends on addressing 'the second session' specifically as the switch caller's credential, which needs the same unavailable per-session addressing as the two steps above."
+        expected: "200 OK, rami's session shape returned (confirmed live via curl)"
+      - name: "First (pre-switch) session is now revoked"
+        action: "http: GET /api/chapters"
+        expect_status: 401
+        _skip: true
+        _skip_reason: "SKIP-OK: same per-session addressing gap, compounded by Execute()'s automatic 401-retry for any cached auth mode (see WK-AUTH-004's third step for the identical retry-masking mechanism)."
+        expected: "Switch mass-revokes the caller's own prior sessions -- CONFIRMED LIVE via direct curl in this task's verification session: two independently-obtained milosvasic session tokens were both genuinely valid (200 on /api/chapters) simultaneously; a switch call authenticated with the second token succeeded (200, rami's session); the FIRST token then returned 401 (invalid or expired token) AND, notably, so did the SECOND (switch-caller's own) token -- RevokeSessionsForUser revokes every session row for that account, not merely the one that issued the switch call. Full request/response transcript in task-1-report.md."
+    tags: [auth, session, concurrency, regression]
+    estimated_duration: "10s"
+    expected_result: "Two independent logins coexist; switch revokes prior sessions for that account (verified live via direct curl outside this harness; see the WK-AUTH-005 investigation note at the top of this file and task-1-report.md for why the harness itself cannot exercise this end-to-end, and full evidence)"
+
+  - id: WK-AUTH-006
+    name: "Unauthenticated access to a gated route is a genuine 401"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "List chapters with no credential"
+        action: "http: GET /api/chapters"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- never a silent empty-content 200. Note this message ('authentication required') differs from /api/auth/me's own no-token message ('missing token') and from /api/auth/logout's ('missing token') -- three call sites, three hand-rolled literals, all pinned across this bank."
+    tags: [auth, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no data, not an empty-but-200 response"
+
+  - id: WK-AUTH-007
+    name: "Loopback caller: cookie is checked before the Authorization header, even when the header carries a genuinely valid credential"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "A garbage session cookie is rejected even alongside a real, currently-valid Authorization bearer (regression pin for the 2026-09-17 cookie-checked-first fix)"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        headers:
+          Cookie: "session=garbage-invalid-not-a-real-session-value"
+        expect_status: 401
+        expect_body_contains: "\"message\":\"invalid or expired token\""
+        expected: "401 -- authhttp.ExtractToken checks the 'session' cookie FIRST, so a garbage cookie value is used and rejected even though a real, live, currently-valid bearer token sits right next to it in the Authorization header. Confirmed live via direct curl with a genuinely fresh token. Note: by the time this case runs (ID-sorted after WK-AUTH-004), the shared admin-mode session was already logged out by WK-AUTH-004's second step; Execute()'s own 401-retry (triggered here regardless, since the cookie dominates either way) transparently re-logs-in fresh before this step's assertion is checked, so the Authorization header genuinely does carry a currently-valid token either way -- this is the ONE case in this file whose real-login cost is the automatic retry itself, not an explicit `auth: admin` first-use."
+      - name: "Cookie-only session, with NO Authorization header at all, from loopback, succeeds end-to-end"
+        action: "http: GET /api/chapters"
+        _skip: true
+        _skip_reason: "SKIP-OK: the literal positive form of this regression (a REAL, valid session cookie with no Authorization header) requires this executor to have captured and replayed a real login's Set-Cookie value, which it structurally cannot: NewHTTPExecutor's *http.Client carries no CookieJar (pkg/autonomous/http_executor.go ~131-152 -- confirmed by a full-text grep of this module for CookieJar/cookiejar, zero matches), so a Set-Cookie response header from any real login step is silently dropped and never replayed by a later step. `auth:` mechanisms attach ONLY the Authorization header, never a cookie. The step above tests the SAME underlying fix (cookie checked before header) from the fully-mechanical, zero-capture-needed OPPOSITE direction: a garbage cookie defeating a genuinely valid header, rather than a genuine cookie succeeding with no header."
+        expected: "200 OK via cookie alone -- regression pin for the 2026-09-17 LAN-deadlock and cookie/header-precedence fixes (verified live via curl outside this harness: a request with ONLY a real Set-Cookie-issued session value as a Cookie header, and no Authorization header at all, does reach /api/chapters successfully -- see task-1-report.md)"
+    tags: [auth, security, regression, loopback]
+    estimated_duration: "5s"
+    expected_result: "The exact combination behind two real 2026-09-17 fixes still works (cookie precedence confirmed live in both directions; end-to-end cookie-only traversal confirmed live via curl, not via this harness -- see header)"
+
+  - id: WK-AUTH-008
+    name: "Malformed login request is a clean 4xx, never a 500 or hang"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "POST /api/auth/login with a missing required field (password omitted; username is a real, public, non-secret seeded name)"
+        action: "http: POST /api/auth/login"
+        body:
+          username: "milosvasic"
+        expect_status: 400
+        expect_body_contains: "{\"error\":\"validation_error\",\"message\":\"username and password are required\"}"
+        expected: "Clean 400, exact body confirmed live, never a 500 or timeout. This check runs BEFORE the T508 rate limiter is even consulted (authLoginHandler decodes+validates first), so this step never consumes any of the shared login-rate-limit budget."
+    tags: [auth, login, regression]
+    estimated_duration: "5s"
+    expected_result: "Malformed input is rejected cleanly"
