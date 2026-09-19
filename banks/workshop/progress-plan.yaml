@@ -573,10 +573,21 @@ test_cases:
     expected_result: "Two full-access seeded accounts (FR-010: milosvasic and rami both get full, equal access; no authorization difference between them) have completely disjoint, independently-keyed progress stores -- confirmed live over HTTP with two real, independently-authenticated accounts, and confirmed by a live, reproduced golden-bad mutation showing exactly what a broken version of this property looks like."
 
   - id: WK-PROG-010
-    name: "The redaction gap (real, live, unguarded): a stored position referencing a since-redacted pid is served back verbatim, unlike GET /api/passages/{pid} for the SAME pid"
+    name: "A stored position referencing a since-redacted pid is now withheld from GET, matching GET /api/passages/{pid} for the SAME pid"
     category: security
     priority: critical
     platforms: [web]
+    # UPDATED 2026-09-19: this case originally documented a real, confirmed
+    # GAP (the redacted pid's position was served back verbatim) as an
+    # OBSERVATION for Task 3 to investigate -- exactly as designed. Task 3
+    # investigated and fixed it for real (workshop commit b83eb2f):
+    # ProgressHandler.Get now takes a PassageResolver and withholds any
+    # position whose pid currently resolves DETERMINED-redacted (never on
+    # `not_in_registry`/`undetermined`, preserving the route's own documented
+    # closed three-state contract -- see internal/api/progress.go's
+    # liveVisiblePositions and the paired regression test
+    # TestProgress_UndeterminedRegistryDoesNotHidePositions). This case is
+    # updated to confirm the FIX, not re-assert the bug.
     steps:
       - name: "POST a position referencing a REAL, currently-redacted pid (curriculum/redactions.jsonl, seq 1, reason_code direct_personal_identifier)"
         action: "http: POST /api/progress"
@@ -587,20 +598,20 @@ test_cases:
           t_seconds: 7.25
         expect_status: 200
         expect_body_contains: "\"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\""
-        expected: "200 OK -- confirmed live that ProgressHandler's POST path performs NO redaction/publication check at all before storing. `grep -rn redact internal/api/progress*.go pkg/authhttp/progress*.go` matches nothing; passage.ParsePID only validates ULID SHAPE, never whether the pid is currently published. This pid is real: curriculum/redactions.jsonl's first row, `{\"seq\":1,\"pid\":\"01M1ET0MFK3B0DMZABYV586NTW\",\"action\":\"redact\",\"reason_code\":\"direct_personal_identifier\",\"by\":\"operator-decision-26\",\"at\":\"2026-09-02T19:49:02Z\"}`."
-      - name: "GET serves the redacted pid back verbatim -- THE GAP, confirmed live and OBSERVED ONLY, never fixed here"
+        expected: "200 OK -- POST still stores unconditionally (write-time is not where this fix checks; a write to a not-yet-redacted pid must still succeed, and a write to an already-redacted pid storing an opaque pid/timestamp is not itself a disclosure). This pid is real: curriculum/redactions.jsonl's first row, `{\"seq\":1,\"pid\":\"01M1ET0MFK3B0DMZABYV586NTW\",\"action\":\"redact\",\"reason_code\":\"direct_personal_identifier\",\"by\":\"operator-decision-26\",\"at\":\"2026-09-02T19:49:02Z\"}`."
+      - name: "GET no longer serves the redacted pid's position -- confirms the fix"
         action: "http: GET /api/progress"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\""
-        expected: "200 OK; the stored position's pid, chapter_slug and t_seconds are all echoed back UNFILTERED, exactly as the design doc's flagged gap predicts. writeJSON's own suppression filter (writeFiltered/filterSuppressed, suppression.go) masks matched PASSAGE TEXT spans in a rendered body -- it has NOTHING to mask here, because a Position's JSON carries no transcript prose, only the opaque pid string, a chapter_slug, a float and a timestamp. THIS IS THE FINDING TASK 3 OF THIS SUB-PROJECT'S IMPLEMENTATION PLAN MUST INVESTIGATE WITH FULL SYSTEMATIC-DEBUGGING RIGOR (per this task's own brief); it is reported here as an OBSERVATION, exactly as instructed, and is NOT fixed by this task."
-      - name: "Contrast: GET /api/passages/{pid} for the SAME pid DOES enforce the redaction gate"
+        expect_body_contains: "\"positions\""
+        expected: "200 OK with a `positions` object present. This schema has no expect_body_not_contains field (confirmed: `grep -n expect_body_not_contains pkg/testbank/schema.go` matches nothing, same documented limitation as WK-PROG-004/WK-PROG-008 elsewhere in this bank), so the mechanical assertion here is necessarily positive-only; the redacted pid's ABSENCE from this response was independently confirmed via direct curl by the controller after the fix landed (both `wk-prog-qa-redaction-canary` and the pre-existing `\"01\"` entry citing this same pid are gone from the live response, while unrelated positions such as wk-prog-qa-quiz-write/roundtrip/zero remain present) -- see the sub-project's own ledger for the full transcript. A future re-run of this case after any regression in the fix would still show `positions` present (this step alone cannot catch a reintroduced leak); the paired Go regression tests `TestProgress_RedactedPidIsWithheldFromGet`/`TestProgress_RedactedPidWithheldAmongOthers` are the mechanically-strong assertion for this property, this HTTP case is the live, black-box corroboration."
+      - name: "Contrast: GET /api/passages/{pid} for the SAME pid still enforces the redaction gate, as before"
         action: "http: GET /api/passages/01M1ET0MFK3B0DMZABYV586NTW"
         auth: "admin"
         expect_status: 410
         expect_body_contains: "\"status\": \"redacted\""
-        expected: "410 Gone, `{\"message\": \"This passage exists and its content has been withheld. The citation is not broken.\", \"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\", \"status\": \"redacted\"}` -- confirmed live. THIS IS THE ASYMMETRY: the SAME pid is REFUSED by /api/passages (which enforces the publication/redaction gate) and SERVED VERBATIM by /api/progress (which does not, per the two steps above). A reader's own stored progress position can therefore disclose the raw pid of a since-redacted passage (and confirm, via that pid, that /api/passages/{pid} answers \"exists but withheld\" rather than \"never existed\") through a route the redaction gate was never wired to. WHETHER THIS IS GENUINELY EXPLOITABLE beyond that -- e.g. whether chapter_slug/t_seconds together disclose enough to locate WHERE in a recording the redacted content sat -- is Task 3's mandatory investigation, not this task's; this case's job is only to establish and pin the current, live, observable behavior."
-    tags: [progress, security, redaction, regression, task-3-feeder]
+        expected: "410 Gone, `{\"message\": \"This passage exists and its content has been withheld. The citation is not broken.\", \"pid\": \"01M1ET0MFK3B0DMZABYV586NTW\", \"status\": \"redacted\"}` -- confirmed live, unchanged by the fix. The asymmetry this case originally found (the same pid refused here but served verbatim via /api/progress) is now closed: both routes agree the pid is withheld."
+    tags: [progress, security, redaction, regression]
     estimated_duration: "5s"
     expected_result: "A stored position for a since-redacted pid is served back completely unfiltered by /api/progress, in direct contrast to the SAME pid's correctly-enforced 410 at /api/passages/{pid} -- a real, live, code-confirmed gap this bank observes and pins for Task 3's mandatory investigation, never fixed here."
 
