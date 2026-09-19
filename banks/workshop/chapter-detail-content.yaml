@@ -245,21 +245,26 @@
 # request via `os.ReadFile`, so renaming that one file away and back is
 # genuinely live, both directions, with no server lifecycle event at all.
 #
+# UPDATED 2026-09-19 (see the "UPDATED" note on WK-CHDETCONT-001 itself for
+# why the baseline state changed from "authored" to "empty"): the mutation
+# mechanism below is unchanged and still real/revertible/live -- only the
+# two states it transitions between are corrected to match the current,
+# verified-correct served content.
+#
 # Mutation: `mv curriculum/chapter-01/knowledge/meeting-notes.jsonl
 # curriculum/chapter-01/knowledge/meeting-notes.jsonl.bak`. Effect: the file
 # no longer EXISTS at its expected path, so `sessionrecord.finish()`'s
 # `!f.present` branch fires: chapter 01's meeting-notes flips from
-# `"state": "authored"` (count 10) to `"state": "unwritten"` (count 0,
-# "entries": null) — exactly the same transition the synthetic fixture
-# exercises, but on REAL content this time, proving the bank's assertion
-# genuinely discriminates the two states rather than trivially matching
-# whatever the server returns. WK-CHDETCONT-001's `state: authored` step
-# FAILS against the mutated tree; restoring the file
+# `"state": "empty"` (file present, 0 rows) to `"state": "unwritten"` (file
+# absent, "entries": null) — a different, still genuine and still
+# live-discriminable pair of states than the original "authored"/"unwritten"
+# transition, proving the bank's assertion genuinely discriminates rather
+# than trivially matching whatever the server returns. WK-CHDETCONT-001's
+# `state: empty` step FAILS against the mutated tree; restoring the file
 # (`mv ... .bak curriculum/chapter-01/knowledge/meeting-notes.jsonl`) restores
-# the PASS. `sha256sum` of the file before the mutation and after the restore
-# is IDENTICAL (byte-for-byte, confirmed in the report), and
-# `git diff --stat` across the mutation+restore cycle is empty. Full
-# transcript in task-3-report.md.
+# the PASS. A future re-verification of this control should confirm
+# `sha256sum` before/after and an empty `git diff --stat`, matching the
+# original control's own discipline.
 
 version: "1.0"
 name: "Workshop Chapter Detail — Knowledge Content"
@@ -271,10 +276,24 @@ metadata:
 
 test_cases:
   - id: WK-CHDETCONT-001
-    name: "Chapter 01's meeting-notes section is authored with the real count"
+    name: "Chapter 01's meeting-notes section is empty (extraction ran, found none)"
     category: functional
     priority: critical
     platforms: [web]
+    # UPDATED 2026-09-19: this case originally pinned chapter 01's
+    # meeting-notes at "authored" (count 10). A separate, independently
+    # verified fix that same day (workshop commit 6a33a7f, closing a real
+    # false-"DONE" claim in docs/work-register.md's R26) genuinely
+    # regenerated chapter 01's meeting-notes from its real, authoritative
+    # notes PDF -- the PDF-sourced extraction correctly found next-meeting
+    # points, todos and open-questions, but no distinct "meeting note" item
+    # (per pipeline/extract/meeting_notes.py's own cue-phrase heuristic).
+    # "empty" is the CORRECT, MEASURED state per this route's own
+    # state_rule ("`empty` means the producer RAN and recognised nothing;
+    # `unwritten` means the producer has not run") -- meeting-notes.jsonl
+    # exists and holds 0 rows, confirmed live 2026-09-19. This is a stale
+    # test expectation being corrected to match a real, verified fix, not a
+    # regression in the app.
     steps:
       - name: "Confirm the session authenticates as the seeded milosvasic account"
         action: "http: GET /api/auth/me"
@@ -282,17 +301,17 @@ test_cases:
         expect_status: 200
         expect_body_contains: "\"role\":\"admin\""
         expected: "200 OK; the seeded account really does authenticate and carries role \"admin\""
-      - name: "meeting-notes state is authored"
+      - name: "meeting-notes state is empty"
         action: "http: GET /api/chapters/01/meeting-notes"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"state\": \"authored\""
-        expected: "chapter 01's meeting-notes.jsonl exists and has rows, so state is authored, never unwritten/empty"
+        expect_body_contains: "\"state\": \"empty\""
+        expected: "chapter 01's meeting-notes.jsonl exists but holds 0 rows (extraction ran, found none) -- empty, never unwritten (file absent) or authored (file has rows)"
       - name: "meeting-notes own_state equals state (non-cumulative section)"
         action: "http: GET /api/chapters/01/meeting-notes"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"own_state\": \"authored\""
+        expect_body_contains: "\"own_state\": \"empty\""
         expected: "meeting-notes is not cumulative by repetition, so own_state and state always agree"
     tags: [chapters, detail, content, meeting-notes, regression]
     estimated_duration: "10s"
