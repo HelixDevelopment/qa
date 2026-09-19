@@ -1,0 +1,454 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Diagnostics / Status
+# Part of exhaustive HelixQA coverage (.superpowers/sdd/
+# 2026-09-19-workshop-diagnostics-status-qa/, design doc
+# docs/superpowers/specs/2026-09-19-workshop-diagnostics-status-qa-design.md).
+# Seventh of 8 planned sub-projects. Uses `helixqa http` exclusively -- see
+# banks/workshop/chapter-list.yaml's own header for the proven finding that
+# `helixqa run --platform web` never dispatches a real network request for an
+# `http:`-asserting case. Run this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/diagnostics-status.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password -- see
+#     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root>' --verbose
+#
+# SCOPE (design doc "Scope of this sub-project"): two genuinely separate
+# surfaces -- GET /api/health (process liveness, UNAUTHENTICATED -- the one
+# route exempt from wrapWithAuth/authhttp.Middleware) and GET /api/index/status
+# (three-valued generation transparency, AUTHENTICATED, consumed only by the
+# curriculum home page's "What is indexed" panel, NOT by /status). This bank
+# does NOT re-test /api/chapters, /api/suggest, /api/search or
+# /api/passages/{pid}/crossrefs themselves -- already covered by
+# chapter-list.yaml / search.yaml / chapter-detail-*.yaml -- it targets only
+# what the diagnostics surface uniquely contributes. `scripts/status.sh`'s CLI
+# lifecycle contract and its `verify-status-*.sh` gates are a CONFIRMED
+# false-friend name collision and are explicitly OUT OF SCOPE -- no case here
+# is that coverage.
+#
+# REAL FIELD NAMES AND SHAPES, read directly from the handlers:
+#   - `healthHandler` (platform/backend/cmd/workshop-server/main.go:2778),
+#     registered UNAUTHENTICATED at `GET /api/health` (main.go:796, ahead of
+#     wrapWithAuth). Response type `healthResponse` (main.go:2750) embeds
+#     `buildIdentity` (build_identity.go:54) and `ollamaStatus` (main.go:2765):
+#     `status`, `http`, `pid`, `chapters`, `web`, `index`, then embedded
+#     `build`, `source_commit`, `source_dirty`, `built_at`, `identity_source`,
+#     then `ollama: {url, configured, reachable, detail}`. Written by
+#     cmd/workshop-server's OWN `writeJSON` (main.go:3221) -- 2-space indent,
+#     NO `X-Workshop-Api-Contract` / `Cache-Control` headers (confirmed live
+#     with `curl -D -`: only `Content-Type`/`Date`/`Content-Length`) -- unlike
+#     `internal/api`'s own `writeJSON` (api.go:361) used by IndexStatusHandler,
+#     which DOES set those two headers plus, on the `ok` branch only,
+#     `X-Workshop-Index-Generation`.
+#   - `probeOllama` (main.go:2798): `Configured = base != ""`; empty base ->
+#     `Detail: "no -ollama endpoint configured"`, Reachable stays false, no
+#     network call made at all; non-empty base -> GETs `<base>/api/tags`
+#     (3s client timeout) and sets `Reachable=true` only on HTTP 200.
+#   - `IndexStatusHandler` (internal/api/router.go:197), registered
+#     AUTHENTICATED at `GET /api/index/status` (router.go:64, via `Register`,
+#     which sits behind `wrapWithAuth`). Three-valued, matching `index.Live`
+#     exactly (generation.go:411-427):
+#       * db == nil                 -> 503 {"status":"unavailable","reason":
+#         {"code":"lexical_index_unavailable","leg":"index","message":"no
+#         index database is configured","retry_after_s":null}}
+#       * index.Live err != nil     -> 503, same code, message "the index
+#         database could not be read", plus an "evidence" field
+#       * index.Live ok == false    -> 503 {"status":"unavailable","reason":
+#         {"code":"index_no_verified_generation","leg":"index","message":"no
+#         verified index generation is live","retry_after_s":null}}
+#       * ok == true                -> 200 {"status":"ok","generation":N,
+#         "state":S,"pid_count":N,"built_at":"...","root_hash":"sha256:..."}
+#         PLUS the `X-Workshop-Index-Generation: N` response header (written
+#         by internal/api's writeJSON when its `generation *int` arg is
+#         non-nil -- api.go:382-384). Note the unavailable branches pass a NIL
+#         generation pointer, so the header is present ONLY on the `ok` 200.
+#   - `index.State` closed vocabulary (pkg/index/generation.go:66-84):
+#     `StateBuilding="building"`, `StateVerified="verified"`,
+#     `StateLive="live"`, `StateDegraded="degraded"` (REPORT-ONLY -- see
+#     below), `StateSuperseded="superseded"`. Five members, confirmed by
+#     reading the const block directly -- no sixth exists.
+#
+# CONFIRMED LIVE 2026-09-19, this session, against the rebuilt server
+# (`source_commit` == `git rev-parse HEAD` at the umbrella's `workshop/`
+# checkout, `b83eb2f199998eddc06ba4a1ca734b1fdd2e5a02`; `source_dirty: true`
+# is a real, unrelated fact about two uncommitted content files elsewhere in
+# that checkout, not evidence of a stale build):
+#   `GET /api/health` (no credential) -> 200, full field set present,
+#   `"chapters": 4`, `"web": true`, `"index": "/var/lib/workshop"`,
+#   `"ollama": {"url":"","configured":false,"reachable":false,"detail":"no
+#   -ollama endpoint configured"}`. `GET /api/chapters` (auth: admin) ->
+#   200, `len(chapters) == 4` (ids 01/02/02.01/02.02, matching
+#   chapter-list.yaml's own established count) -- AGREES with health's
+#   `chapters: 4`. `GET /` -> 200 `text/html`, real Angular index page
+#   (`<title>Workshop Curriculum</title>`), agreeing with `web: true`.
+#   `GET /api/index/status` (auth: admin) -> 200, `X-Workshop-Index-Generation:
+#   15`, body `{"built_at":"2026-09-19T00:55:33Z","generation":15,
+#   "pid_count":33278,"root_hash":"sha256:e54b7493b9a2ebd5849051c4c8aed7d004d
+#   6f593913a165893dcdde873fb5b6a","state":"live","status":"ok"}` -- the LIVE
+#   corpus currently produces the `ok` shape, state `live`, NOT `degraded` or
+#   either `unavailable` reason. `GET /api/index/status` with NO credential ->
+#   401 `{"error":"unauthorized","message":"authentication required"}` --
+#   the SAME message wrapWithAuth's `authhttp.Middleware` uses for every other
+#   gated route (see auth-session.yaml/chapter-list.yaml's own pinned
+#   wording), which is the deliberate CONTRAST with `/api/health`'s exemption
+#   this design doc's case 7 asks for.
+#
+# `expect_json_path` is presence-only in this HelixQA build
+# (pkg/autonomous/http_executor.go's jsonPathExists) and there is NO
+# response-capture / cross-endpoint computed-equality mechanism
+# (#BLUFF-HELIXQA-BANKS-VAR-SUBST-001, already documented in this directory's
+# auth-session.yaml WK-AUTH-005 investigation) and NO header-assertion field
+# (chapter-list.yaml / auth-session.yaml both already record this gap for
+# `Set-Cookie`; the same gap applies here to `X-Workshop-Index-Generation`).
+# So WK-DIAG-002/003 below pin TODAY'S live values as literals on both sides
+# of each cross-check (exactly as chapter-list.yaml pins `max_depth_present`
+# as "a measurement, not a hardcoded limit") rather than a computed diff the
+# harness cannot express; the true cross-check was performed BY HAND in this
+# task's verification session (see task-1-report.md for the exact curl
+# transcript proving `len(/api/chapters.chapters) == /api/health.chapters`
+# and that `GET /` served real HTML while `web` read `true`), and the bank
+# pins the resulting literals as a regression guard.
+#
+# CROSS-CUTTING GAP, DOCUMENTED RATHER THAN TESTED (design doc item 10):
+# `probeOllama`'s OTHER two states (`configured:true, reachable:false` --
+# configured but unreachable; `configured:true, reachable:true` -- a real
+# live Ollama) have NO case in this bank. Exercising either would require
+# configuring a real or fake Ollama endpoint on the shared LIVE deployment,
+# which is an environment change outside a read-mostly QA bank's scope. Only
+# the state the live deployment actually exhibits today
+# (`configured:false`) is asserted, in WK-DIAG-004.
+#
+# WK-DIAG-008 INVESTIGATION -- the `degraded` state, the highest-value case
+# in this bank (design doc case 8). Read `pkg/index/degraded_test.go` in full
+# and `pkg/index/generation.go`'s `MarkDegraded`/`Live` in full before writing
+# anything below.
+#
+# FINDING 1, PRECISE AND CONFIRMED BY CODE READING, NOT GUESSED: R5's
+# `index.MarkDegraded` HAS NO PRODUCTION CALLER ANYWHERE IN THIS MODULE.
+# `grep -rn MarkDegraded --include=*.go` (excluding `_test.go`) over the whole
+# `platform/backend` tree matches ONLY its own declaration and doc comments in
+# `pkg/index/generation.go`. `MarkDegraded`'s own doc comment says so
+# explicitly: "Callers: the redaction pipeline (workshop-redact /
+# internal/redaction), immediately after recording a suppression ... Wiring
+# that call is this package's R5 half of the gap description recorded against
+# 001/T059 (unified T331) and 001/T038 (unified T204); this function is the
+# mechanism the caller needs, not the caller itself." Read `cmd/workshop-redact
+# /main.go` (the real redaction CLI, via `runRatify`) and
+# `cmd/workshop-server/redaction_log.go`'s `syncRedactionLog` (the ONLY thing
+# that runs at boot against the append-only `curriculum/redactions.jsonl`
+# log): the redact tool calls `RedactionLog.SyncDB` (rebuilding the
+# `redactions` metadata table only -- WHY a withheld row is withheld) and
+# NEVER `index.MarkDegraded`. So today, if a real redaction were recorded
+# against the CURRENTLY live generation via the real, established
+# `workshop-redact` workflow, `GET /api/index/status` would keep reporting
+# `state: "live"` through the entire window until the next rebuild -- exactly
+# the silent-continuation failure R5 exists to prevent, per the package's own
+# doc comment ("the previous generation IS still serving, and IS known to
+# contain the redacted passage, which is exactly why the state must say
+# `degraded`"). This is a REAL PRODUCTION GAP, reported here as a finding
+# rather than fixed (fixing it is out of this task's scope -- wiring
+# `internal/redaction`/`cmd/workshop-redact` is Task 3 triage material at
+# minimum, if not a separate fix task).
+#
+# FINDING 2, CONFIRMED BY DIRECT READ-ONLY QUERY AGAINST THE LIVE DATABASE:
+# the `index_generation_degraded` table (created lazily, only by
+# `MarkDegraded`) DOES NOT EXIST in the live served database as of 2026-09-19
+# (`sqlite3 "file:<real live passages.db path>?mode=ro"
+# "SELECT name FROM sqlite_master WHERE type='table' AND
+# name='index_generation_degraded'"` returned zero rows) -- consistent with
+# Finding 1: nothing has ever called MarkDegraded against this deployment, so
+# there is no "already degraded, no action needed" free case to grab (the
+# task brief's own suggested check). Live generation at read time: 15,
+# `built_at` 2026-09-19T00:55:33Z, `pid_count` 33278 -- the SAME values
+# WK-DIAG-005/006 below pin.
+#
+# FINDING 3, THE SAFETY/REVERSIBILITY ANALYSIS THE BRIEF REQUIRES BEFORE
+# ATTEMPTING ANYTHING: a REAL redaction via the established `workshop-redact`
+# workflow was CORRECTLY RULED OUT as the trigger mechanism -- `redaction.go`'s
+# own package doc states the log is "append-only" and every artifact write is
+# all-or-nothing; un-redacting a real passage afterward is NOT an established,
+# clean, tested workflow in this codebase (there is no "un-redact" tool), so
+# that path is NOT safely revertible and was never attempted. The MECHANISM
+# `MarkDegraded` itself uses (`pkg/index/generation.go`'s `degradedDDL` +
+# a single `INSERT ... ON CONFLICT DO UPDATE` into a table nothing else reads
+# except `Live`'s own overlay query) IS narrowly isolated and IS safely
+# revertible by construction: it touches no existing row of `generations`,
+# `passages`, `passages_fts`, `embeddings`, `crossrefs` or `redactions`; it
+# cannot move `root_hash` (computed only from `reg.All()`, never from this
+# table); and MarkDegraded's own doc comment states "It never needs a
+# matching Clear" precisely because a superseded generation number's mark
+# becomes permanently inert. The live database is opened by the server with
+# `_pragma=busy_timeout(30000)&_pragma=journal_mode(wal)` (pkg/index/
+# generation.go's `DSN`), and the volume backing it
+# (`workshop-curriculum_workshop-index`) is a HOST-BIND-MOUNTED podman volume
+# reachable directly from the host filesystem, at a real, absolute path this
+# session located via `podman inspect`. A minimal, transactional, exactly
+# mirrored `BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS ...; INSERT ... VALUES
+# (15, 'HELIXQA-TEST-PROBE ...', ...); COMMIT;` against that real file, using
+# the SAME DSN pragmas the server itself uses, followed IMMEDIATELY by
+# `DELETE`+`DROP TABLE` to restore the exact pre-existing state (table
+# absent), was judged SAFE AND REVERTIBLE by this analysis and was ATTEMPTED.
+#
+# OUTCOME: THE ATTEMPT WAS BLOCKED BY THIS SESSION'S OWN SANDBOX GUARDRAIL,
+# NOT BY ANY DISCOVERED LACK OF SAFETY. The write command was refused before
+# execution with "Permission for this action was denied by the Claude Code
+# auto mode classifier. Reason: [Modify Shared Resources]." -- the identical
+# class of refusal chapter-list.yaml's own header already documents for its
+# WK-CHLIST-002 golden-bad control ("Security Weaken"), and precisely the
+# "Sandbox guardrail behavior has been INCONSISTENT this session -- accept
+# whichever outcome you get" case this task's own briefing named in advance.
+# A read-only re-check immediately after the refusal
+# (`SELECT name FROM sqlite_master WHERE type='table' AND
+# name='index_generation_degraded'`) confirmed ZERO rows -- the command was
+# refused BEFORE any bytes were written, so the shared live corpus was NEVER
+# actually touched at any point; nothing needed reverting.
+#
+# WK-DIAG-008's step is therefore `_skip`'d below with this precise reason
+# (guardrail-blocked-not-code-blocked), and this whole investigation --
+# including Findings 1 and 2, which are real, standing production gaps
+# independent of anything this sandbox did or did not allow -- is Task 3
+# triage material, per this design's own instruction not to silently drop it.
+#
+# WK-DIAG-009 (the two `unavailable` reason codes): the live corpus can only
+# produce the `ok` shape today (generation 15 is genuinely live). Producing
+# EITHER `lexical_index_unavailable` (requires `-index`/DB configured absent
+# or unreadable) or `index_no_verified_generation` (requires no generation
+# ever verified-and-swapped) needs an ENVIRONMENT/CONFIGURATION change to the
+# live, shared deployment -- outside this bank's scope, per the design doc's
+# own case 9 guidance. `_skip`'d below with this reason; neither reason code
+# is exercised live.
+
+version: "1.0"
+name: "Workshop Diagnostics / Status"
+description: "GET /api/health (unauthenticated liveness) and GET /api/index/status (authenticated three-valued generation transparency) -- the diagnostics surface unique contracts, not the /status page's reused feature routes"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-DIAG-001
+    name: "GET /api/health (unauthenticated) returns the full documented field set"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "No credential is required at all -- confirms the one route exempt from wrapWithAuth"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK with NO Authorization header/cookie presented -- the ONE route registered ahead of wrapWithAuth (main.go:796, before authhttp.Middleware wraps everything else)"
+      - name: "pid field is present (value changes per process restart, so only the key is pinned)"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"pid\":"
+        expected: "the pid field exists; its numeric value is process-specific and intentionally NOT pinned"
+      - name: "chapters field is present with today's real, measured count"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"chapters\": 4"
+        expected: "4 is a MEASUREMENT of the real live corpus (confirmed live via GET /api/chapters, matching chapter-list.yaml's own established 01/02/02.01/02.02 count), not a hardcoded expectation -- see WK-DIAG-002 for the explicit cross-check"
+      - name: "web field is present and true"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"web\": true"
+        expected: "the SAME webServable predicate GET / itself uses (main.go's own comment: this flag cannot report a UI that is not actually being served) -- see WK-DIAG-003 for the explicit agreement check"
+      - name: "index field names the real configured index directory"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"index\": \"/var/lib/workshop\""
+        expected: "the real -index value this container was started with (confirmed live, matches the bind-mounted volume this task's own investigation located via `podman inspect`)"
+      - name: "build identity fields are present (build/source_commit/built_at are per-build and intentionally NOT pinned to an exact value)"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"source_commit\":"
+        expected: "the buildIdentity block (build_identity.go) is inlined at top level -- source_commit's key must be present; its value changes on every rebuild and is deliberately not pinned here"
+      - name: "source_dirty key is present"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"source_dirty\":"
+        expected: "present regardless of whether the checkout that built the binary happened to be dirty at build time -- the boolean's value is a build-time fact, not pinned"
+      - name: "built_at key is present"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"built_at\":"
+        expected: "present; an RFC3339 timestamp that changes on every rebuild, so only the key is pinned"
+      - name: "identity_source names how the identity was resolved"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"identity_source\": \"ldflags\""
+        expected: "confirmed live -- this deployment's binary carries a real ldflags-stamped identity (scripts/build.sh), not the vcs-stamp/none fallback"
+      - name: "the ollama sub-object is present with its full field set"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"ollama\": {"
+        expected: "the nested ollamaStatus object (url/configured/reachable/detail) is present at the documented key"
+    tags: [diagnostics, health, regression]
+    estimated_duration: "10s"
+    expected_result: "GET /api/health serves the complete, unauthenticated, documented field set for the live process"
+
+  - id: WK-DIAG-002
+    name: "health.chapters agrees with a real GET /api/chapters row count"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "health reports the real live chapter count"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"chapters\": 4"
+        expected: "confirmed live 2026-09-19 -- see the bank header for the exact curl transcript this pins"
+      - name: "the chapters listing agrees, independently computed (auth required -- this route, unlike /api/health, sits behind wrapWithAuth)"
+        action: "http: GET /api/chapters"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK; this task's own verification session counted len(chapters)==4 on the live response (chapter-list.yaml's own WK-CHLIST-001 already pins the exact 4 real ids/hierarchy in full -- not re-tested here). This step and the one above pin TODAY's two independently-computed values as literals; the harness has no computed cross-endpoint equality mechanism (#BLUFF-HELIXQA-BANKS-VAR-SUBST-001, see bank header), so a genuine 'these two numbers must always agree' assertion is not mechanically expressible here -- the true cross-check was performed by hand and is recorded in task-1-report.md."
+    tags: [diagnostics, health, chapters, cross-check, regression]
+    estimated_duration: "10s"
+    expected_result: "health's chapters count and the real chapter listing agree on a quiescent corpus (verified by hand; pinned here as two literals)"
+
+  - id: WK-DIAG-003
+    name: "health.web:true agrees with GET / actually serving the built bundle"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "health reports web:true"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"web\": true"
+        expected: "the SAME webServable(cfg.webDir) predicate the / handler evaluates per request (main.go's own comment: this flag cannot report a UI that is not actually being served)"
+      - name: "GET / genuinely serves real HTML, not a 342-byte placeholder"
+        action: "http: GET /"
+        expect_status: 200
+        expect_body_contains: "<title>Workshop Curriculum</title>"
+        expected: "confirmed live -- the real built Angular index page, not the placeholder this file's own package comment describes as the historical failure mode ('/api/health advertised web:true over a 342-byte placeholder')"
+    tags: [diagnostics, health, web, cross-check, regression]
+    estimated_duration: "10s"
+    expected_result: "web:true is never a lie -- GET / genuinely serves the real bundle whenever health claims it does"
+
+  - id: WK-DIAG-004
+    name: "ollama.configured reflects the real live state (today: unconfigured)"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "ollama sub-object matches the live, confirmed-unconfigured state exactly"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"configured\": false"
+        expected: "confirmed live 2026-09-19: this deployment runs with no -ollama endpoint configured"
+      - name: "reachable is false when unconfigured (probeOllama never dials out when base is empty)"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"reachable\": false"
+        expected: "probeOllama's own short-circuit: base==\"\" returns immediately with Reachable left at its zero value, no HTTP call attempted"
+      - name: "detail explains why, with the exact real message"
+        action: "http: GET /api/health"
+        expect_status: 200
+        expect_body_contains: "\"detail\": \"no -ollama endpoint configured\""
+        expected: "the exact literal probeOllama sets on the base==\"\" branch (main.go:2801) -- confirmed live byte-for-byte"
+    tags: [diagnostics, health, ollama, regression]
+    estimated_duration: "10s"
+    expected_result: "ollama.configured/reachable/detail together honestly describe the real live deployment's Ollama wiring. The other two probeOllama states (configured:true, reachable:false|true) are a DOCUMENTED, untested gap -- see bank header cross-cutting note; exercising them needs a real or fake Ollama endpoint configured on the shared live deployment, out of this bank's scope."
+
+  - id: WK-DIAG-005
+    name: "Authenticated GET /api/index/status returns the real live ok shape"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "status is ok on the currently-live, verified generation"
+        action: "http: GET /api/index/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "confirmed live 2026-09-19: generation 15 is genuinely live and verified -- the corpus produces the ok shape today, not either unavailable reason (see WK-DIAG-009 for why the two unavailable codes are not exercised live)"
+      - name: "generation/pid_count/built_at/root_hash keys are present (values change on the next rebuild, so only keys are pinned for those; generation's CURRENT real value is pinned in WK-DIAG-006 alongside the state it was measured with)"
+        action: "http: GET /api/index/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"root_hash\":"
+        expected: "present; a real sha256: content hash of the live corpus, confirmed live -- value intentionally not pinned since any real corpus edit changes it"
+    tags: [diagnostics, index-status, regression]
+    estimated_duration: "10s"
+    expected_result: "GET /api/index/status genuinely reports the real live generation's ok shape. The X-Workshop-Index-Generation response header (present only on this ok branch, per internal/api's writeJSON) was confirmed live via curl -i (value 15, matching the body's generation field) but is NOT assertable here -- no header-assertion field exists in this HelixQA build (same documented gap as chapter-list.yaml/auth-session.yaml's Set-Cookie limitation); see task-1-report.md for the header transcript."
+
+  - id: WK-DIAG-006
+    name: "state is a member of the real 5-value closed vocabulary (today: live)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "state pins today's real value, one of the 5 real enum members read directly from pkg/index/generation.go"
+        action: "http: GET /api/index/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"live\""
+        expected: "confirmed live 2026-09-19 against generation 15. The closed vocabulary is building/verified/live/degraded/superseded (index.StateBuilding/StateVerified/StateLive/StateDegraded/StateSuperseded, generation.go:66-84) -- 5 members, no 6th exists, confirmed by reading the const block directly. This HelixQA build has no disjunction/enum-membership assertion primitive (expect_body_contains is exact-substring only), so membership is demonstrated by exact match against the value the live corpus genuinely produces today, plus the exhaustive enum listing here read from source. WK-DIAG-008 investigates the degraded member specifically."
+    tags: [diagnostics, index-status, regression]
+    estimated_duration: "5s"
+    expected_result: "The served state is a genuine member of the real, closed 5-value vocabulary"
+
+  - id: WK-DIAG-007
+    name: "Unauthenticated GET /api/index/status is genuinely denied (the exempt/gated contrast with /api/health)"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "No credential -> 401, unlike /api/health's unconditional 200"
+        action: "http: GET /api/index/status"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- byte-identical to every other wrapWithAuth-gated route's no-token message (chapter-list.yaml/auth-session.yaml pin the same literal for /api/chapters). This is the deliberate CONTRAST case: /api/health (WK-DIAG-001) needs no credential at all; /api/index/status always does."
+    tags: [diagnostics, index-status, security, regression]
+    estimated_duration: "5s"
+    expected_result: "Index status genuinely requires authentication, in contrast with the health route's deliberate exemption"
+
+  - id: WK-DIAG-008
+    name: "The degraded state is genuinely reported after a real R5 mark against the live generation"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET /api/index/status reports state:degraded after MarkDegraded's real mechanism is recorded against the currently-live generation"
+        action: "http: GET /api/index/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"degraded\""
+        _skip: true
+        _skip_reason: "SKIP-OK, guardrail-blocked not code-blocked -- see the bank header's full WK-DIAG-008 investigation. Two REAL findings first: (1) index.MarkDegraded has ZERO production callers anywhere in this module (confirmed by grep across platform/backend excluding _test.go) -- the real workshop-redact/internal/redaction pipeline calls RedactionLog.SyncDB only, never MarkDegraded, so R5's own doc-comment-documented caller was never wired; (2) the live served database's index_generation_degraded table does not exist at all (confirmed by a read-only query against the real live passages.db, located via `podman inspect` at the host-bind-mounted workshop-curriculum_workshop-index volume path), so there is no already-degraded generation to observe for free. A safety/reversibility analysis (bank header Finding 3) judged a minimal, transactional, exactly-MarkDegraded-mirroring SQL write against that real file -- using the server's own WAL/busy_timeout DSN pragmas, isolated to a brand-new table nothing else reads except Live()'s overlay query, immediately followed by a revert -- to be SAFE and REVERTIBLE, and this session ATTEMPTED it. The write was REFUSED before execution by this session's own sandbox guardrail ('Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Modify Shared Resources]') -- the same class of refusal chapter-list.yaml's WK-CHLIST-002 header already documents for a different mutation attempt, and the exact 'guardrail behavior has been INCONSISTENT this session' case this task's own brief named as an acceptable, expected outcome. A read-only re-check immediately afterward confirmed the table still does not exist -- the live shared corpus was NEVER touched, so nothing needed reverting. This is Task 3 triage material: the mechanism is proven safe and ready to build (a follow-up session with the guardrail permitting DB writes, or the redaction-pipeline wiring fix itself, would close this)."
+        expected: "state: degraded, DegradedReason carrying the recorded reason string -- mechanism proven safe/revertible by code reading and a live safety analysis; the live HTTP observation itself is blocked by this session's sandbox, not by any discovered risk. See task-1-report.md for the full investigation, the exact blocked command, and the immediate read-only re-confirmation that no write occurred."
+    tags: [diagnostics, index-status, degraded, regression, triage]
+    estimated_duration: "15s"
+    expected_result: "UNVERIFIED LIVE THIS SESSION (guardrail-blocked, not code-blocked) -- see _skip_reason and task-1-report.md for the full investigation, findings, and precise blocker"
+
+  - id: WK-DIAG-009
+    name: "The two unavailable reason codes are distinguishable"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "lexical_index_unavailable (no index database configured, or unreadable)"
+        action: "http: GET /api/index/status"
+        auth: "admin"
+        expect_status: 503
+        expect_body_contains: "\"code\": \"lexical_index_unavailable\""
+        _skip: true
+        _skip_reason: "SKIP-OK: the live corpus genuinely has a configured, readable index database (generation 15 is live) -- producing this code requires reconfiguring the shared live deployment to run with no -index/DB at all, or corrupting its database file, neither of which is a safe or in-scope action against shared infrastructure other sub-projects depend on. Both branches were confirmed by reading IndexStatusHandler/index.Live directly (see bank header) rather than exercised live."
+        expected: "503, reason.code lexical_index_unavailable -- confirmed by code reading, not exercised live"
+      - name: "index_no_verified_generation (readable database, nothing verified-and-swapped live)"
+        action: "http: GET /api/index/status"
+        auth: "admin"
+        expect_status: 503
+        expect_body_contains: "\"code\": \"index_no_verified_generation\""
+        _skip: true
+        _skip_reason: "SKIP-OK: same reasoning as the step above -- the live corpus already has a verified, live generation (15); reaching this branch needs an environment/configuration change to the shared live deployment (e.g. a fresh, never-built index directory), out of scope for this bank."
+        expected: "503, reason.code index_no_verified_generation -- confirmed by code reading, not exercised live"
+    tags: [diagnostics, index-status, triage]
+    estimated_duration: "10s"
+    expected_result: "Both unavailable reason codes are real, distinct, and confirmed by direct code reading (IndexStatusHandler, router.go:197-238); neither is exercised live against the shared corpus, which today only ever produces the ok shape"
