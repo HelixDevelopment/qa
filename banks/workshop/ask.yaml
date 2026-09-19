@@ -1,0 +1,354 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Ask / Q&A
+# Part of exhaustive HelixQA coverage
+# (.superpowers/sdd/2026-09-19-workshop-ask-qa/). Uses `helixqa http`
+# exclusively -- see banks/workshop/auth-session.yaml's header for the
+# established "helixqa run never dispatches a real network request for an
+# http-asserting case on the web platform" investigation trail. Run this
+# bank as:
+#
+#   bin/helixqa http --banks banks/workshop/ask.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password --
+#     see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root>' --verbose
+#
+# ============================================================================
+# CRITICAL, ABSOLUTE, DOCUMENTED SCOPE BOUNDARY -- READ BEFORE EDITING
+# ============================================================================
+# The live deployment's answer-provider setting is `none`, BY EXPLICIT
+# OPERATOR DIRECTIVE (workshop/platform/compose.yml lines 459-490: "THE
+# GENERATIVE ANSWER PATH IS OFF BY DEFAULT, ON AN EXPLICIT OPERATOR
+# DIRECTIVE"). Confirmed live 2026-09-19 THREE independent ways: (1) the
+# RUNNING container's own argv (`podman inspect
+# workshop-curriculum_platform_1 --format '{{.Config.Cmd}}'`) literally
+# carries `-answer-provider none`; (2) `GET /api/ask/status` (authenticated)
+# returns `"provider": "none"`, `"enabled": false`, `"reason":{"code":
+# "no_provider",...}`; (3) `POST /api/ask` with a well-formed question
+# returns 503 with that same `reason.code`. This bank NEVER changes that
+# setting -- not in compose.yml, not via WORKSHOP_ANSWER_PROVIDER, not by
+# restarting the stack with a different flag, under any circumstance, for
+# any reason, even temporarily "just to test the answered/declined path".
+#
+# CONSEQUENTLY, THE FOLLOWING SURFACES ARE NOT, AND CANNOT HONESTLY BE,
+# COVERED BY THIS BANK, AND THIS IS A DELIBERATE, DOCUMENTED SCOPE
+# BOUNDARY -- NOT A SILENT GAP:
+#   - The `answered` and `declined` terminal outcome shapes (pkg/answer/
+#     outcome.go, pkg/answer/http.go's writeOutcome) -- both require a
+#     genuinely constructed, healthy generative provider to ever be
+#     reached; with provider=none, `Handler.ask` always returns 503
+#     `unavailable{no_provider}` BEFORE a job is even created (see
+#     `h.Pipeline.Provider.Health` check at pkg/answer/http.go line 125,
+#     which runs before `h.Jobs.Start`), so `answered` and `declined` are
+#     structurally UNREACHABLE in this deployment today.
+#   - The six-member closed decline vocabulary (pkg/answer/outcome.go's
+#     DeclineReasons(): below_threshold, margin_too_small, unsupported,
+#     no_citations, redacted_evidence, does_not_answer) -- same reason,
+#     `DeclineReason` is only ever set inside `Pipeline.Ask`, which never
+#     runs while the provider health check fails first.
+#   - The async job/poll/stream surface: `GET /api/ask?wait=1`, `?stream=1`,
+#     `GET /api/ask/{job_id}`, `GET /api/ask/{job_id}/stream`,
+#     `POST /api/ask/suspend`, `POST /api/ask/resume`. All of these require
+#     a job to have been genuinely CREATED (`h.Jobs.Start`), which likewise
+#     never happens with the provider unhealthy -- `POST /api/ask` returns
+#     503 before `h.Jobs.Start` is ever called. `suspend`/`resume` toggle an
+#     ingest lock that is orthogonal to the provider but has no observable
+#     effect on `/api/ask`'s response while the provider itself is already
+#     the reason every request fails, so exercising them here would not add
+#     real coverage.
+#
+# The ONE honestly-reachable "asked a real question" path in this
+# deployment, exhaustively covered below, is: 503 unavailable{no_provider}
+# for a well-formed question (WK-ASK-003), 400 empty_query for an empty one
+# (WK-ASK-004), 413 query_too_long for an oversized one (WK-ASK-005), all
+# BEFORE the provider health check is ever reached for 004/005 (the
+# empty/oversized checks run first in `Handler.ask`, confirmed by reading
+# the function top-to-bottom: empty check at line 109, size check at line
+# 114, provider health check at line 125 -- strictly after both).
+#
+# REAL FIELD NAMES, MESSAGES AND STATUS CODES -- read directly from
+# pkg/answer/http.go's `Mount` function (registers GET/POST /api/ask, GET
+# /api/ask/status, POST /api/ask/suspend, POST /api/ask/resume, GET
+# /api/ask/{job_id}, GET /api/ask/{job_id}/stream) and its `ask`/`status`
+# handlers, CONFIRMED LIVE 2026-09-19 against the running server
+# (`source_commit` == `git rev-parse HEAD` at the umbrella's `workshop/`
+# checkout, `a861bd63b671db4c5364a7cf026c05e74ea00c95`):
+#
+#   - `NewHandler` (pkg/answer/http.go line 56-63) sets `MaxWait: 200 *
+#     time.Second` and `MaxQuestionBytes: 2000` -- these are the REAL,
+#     current constants, read from source, not assumed from prior research.
+#   - `GET /api/ask/status`, authenticated -> 200, REAL field set (read
+#     from the `status` handler, body map literal at line 430 onward, and
+#     confirmed byte-for-byte live): `enabled` (bool, true iff
+#     Provider.Health()==nil), `suspended` (bool), `provider` (string,
+#     Descriptor().Name), `model` (string or null), `endpoint` (string),
+#     `locality` (string), `locality_verified` (bool), `calibrated` (bool),
+#     `min_score` (float), `min_margin` (float), `generation` (string),
+#     `asynchronous` (bool, always true), `support_verification` (string or
+#     null), `verifier_kind` (string or null -- "lexical" or "entailment"),
+#     `question_verification` (string), `question_verifier_kind` (string or
+#     null), `estimated_seconds` (float or null), `latency_note` (string),
+#     and -- ONLY when `reason != nil` (provider unhealthy) OR `suspended`
+#     -- `reason` (object, `{code, message, retry_after_s}`). Confirmed
+#     live with provider=none: `enabled:false`, `suspended:false`,
+#     `provider:"none"`, `calibrated:true`, `verifier_kind:"lexical"`,
+#     `question_verifier_kind:null`, `estimated_seconds:null`,
+#     `reason.code:"no_provider"`. The response body is INDENTED 2 spaces
+#     (`writeJSON`'s `enc.SetIndent("", "  ")`), one `"key": value` pair per
+#     line -- confirmed live, NOT the compact single-line style
+#     `writeAuthJSON` uses for `/api/auth/*` (see auth-session.yaml's
+#     header for that contrast).
+#   - `GET|POST /api/ask` with a non-empty, in-limit question, provider
+#     unhealthy -> 503 (`http.StatusServiceUnavailable`), body (indented,
+#     confirmed live): `{"provider":{"name":"none","model":null,
+#     "locality":"local","locality_verified":true},"reason":{"code":
+#     "no_provider","message":"Answering is not configured. Browsing and
+#     search are unaffected. Name a provider with -answer-provider to
+#     enable it.","retry_after_s":null},"status":"unavailable"}` -- this
+#     `reason.code` of `"no_provider"` is `answer.CodeNoProvider`
+#     (pkg/answer/outcome.go line 186), confirmed live, matching the
+#     design doc's prediction exactly.
+#   - Empty question (after `strings.TrimSpace`) -> 400
+#     (`http.StatusBadRequest`), body: `{"error":{"code":"empty_query",
+#     "message":"ask a question with ?q=... or a JSON body {\"question\":
+#     \"...\"}"}}` (real message has a genuine ellipsis character `...`,
+#     not three ASCII dots -- confirmed live and reproduced exactly in
+#     `expect_body_contains` below via the shorter, ellipsis-free substring
+#     `"code": "empty_query",` to avoid any encoding ambiguity in this YAML
+#     file).
+#   - Question exceeding `MaxQuestionBytes` (2000) -> 413
+#     (`http.StatusRequestEntityTooLarge`), body: `{"error":{"code":
+#     "query_too_long","message":"question is <N> bytes; the limit is
+#     2000"}}` -- confirmed live with a 2001-byte question: exact message
+#     "question is 2001 bytes; the limit is 2000".
+#   - Unauthenticated request to ANY `/api/ask*` route (these are ordinary
+#     `/api/*` routes, gated the SAME way as every other route documented
+#     in auth-session.yaml -- `wrapWithAuth` -> `apiPathsOnly` ->
+#     `authhttp.Middleware`, NOT a separate answering-specific auth check)
+#     -> 401 `{"error":"unauthorized","message":"authentication required"}`
+#     -- confirmed live, byte-identical to auth-session.yaml's WK-AUTH-006
+#     finding for `GET /api/chapters`, because it is the literal same
+#     middleware wrapping both route trees.
+#   - `GET /api/search` (a DIFFERENT, disjoint route tree registered by
+#     `internal/api.Register`, never importing `pkg/answer` -- see
+#     pkg/answer/http.go's own `Mount` doc comment, lines 13-26, "FR-025 IS
+#     ENFORCED BY THIS BOUNDARY, NOT BY A RUNTIME CHECK") remains fully
+#     reachable and returns real lexical results (200, `"status":"ok"`,
+#     non-empty `results`) at the exact same time `/api/ask` answers 503 --
+#     confirmed live. This bank's WK-ASK-006 mirrors
+#     `platform/gates/verify-g-http-5-search-survives-answering-down.sh`'s
+#     own S1+S2 HTTP-observable assertion pair (read in full before writing
+#     this case) WITHOUT re-deriving its internal closed-port-ollama
+#     mechanism -- that gate's own S1/S2 already prove this holds when
+#     ollama is unreachable; this case proves the identical HTTP-observable
+#     pair holds against THIS deployment's actual, live, no-provider state,
+#     using two plain authenticated requests rather than a purpose-built
+#     throwaway server.
+#
+# REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
+# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345. Already
+# public per that spec's own text (committed in its git history); never
+# relied on as a real secret. Consistent with auth-session.yaml and every
+# other sibling bank in this directory, the real password is NEVER written
+# into this file -- every case needing a genuinely successful login uses
+# `auth: admin` (credentials supplied only via --admin-user/--admin-pass at
+# `helixqa http` invocation time).
+#
+# `auth: admin`'s cache is ONE SHARED SLOT for the whole `helixqa http`
+# process (see auth-session.yaml's header for the full mechanism and the
+# T508 login-rate-limit accounting -- 5 attempts/60s per account AND per
+# source). This bank's cases are written to REUSE the one cached admin
+# session across every case that needs authentication, rather than forcing
+# a fresh login per case, per this task's explicit instruction to keep the
+# real-login footprint low. Execution order is fixed by ID-string sort
+# (`testbank.Manager.All()`), not file order: WK-ASK-001..007. This bank's
+# real-login footprint is exactly ONE real internal login for the entire
+# run (created by WK-ASK-001's first authenticated step, reused free by
+# every other `auth: admin` step in every later case).
+
+version: "1.0"
+name: "Workshop Ask / Q&A"
+description: "The /api/ask and /api/ask/status surface, scoped to the live no_provider deployment state (see header for the documented scope boundary)"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-ASK-001
+    name: "GET /api/ask/status (authenticated) reflects the live no_provider state"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Fetch answering status with a real, authenticated session (first auth:admin use in this file -- costs the one real internal login this bank shares everywhere else)"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"provider\": \"none\","
+        expected: "200 OK, real capability fields reflecting the live none-provider deployment (enabled=false, suspended=false, calibrated=true, verifier_kind=lexical, question_verifier_kind=null, estimated_seconds=null, reason.code=no_provider -- all confirmed live and individually pinned by the steps below)"
+      - name: "enabled is false (Provider.Health() genuinely fails with no provider configured)"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"enabled\": false,"
+        expected: "enabled reports provider health, not suspension -- confirmed false live"
+      - name: "suspended is false (no ingest lock held)"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"suspended\": false,"
+        expected: "no ingest is running against this deployment right now"
+      - name: "calibrated is true (min_score/min_margin are genuinely non-zero, measured thresholds)"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"calibrated\": true,"
+        expected: "the deployment's thresholds are calibrated, independent of the provider being none"
+      - name: "verifier_kind is the real, fixed L4 support-verifier name"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"verifier_kind\": \"lexical\""
+        expected: "the lexical fallback verifier is wired (no entailment model configured in this deployment)"
+      - name: "question_verifier_kind is null (no L5 answer-against-question layer running)"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"question_verifier_kind\": null,"
+        expected: "L5 is not wired in this deployment, honestly reported as null rather than a fabricated kind"
+      - name: "estimated_seconds is null (no answer has ever been measured in this process)"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"estimated_seconds\": null,"
+        expected: "a guessed latency number is an invented capability (T083) -- null until genuinely measured, which cannot happen with provider=none"
+      - name: "reason.code is the real no_provider code, nested under reason"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"code\": \"no_provider\","
+        expected: "the same closed-vocabulary code (answer.CodeNoProvider) that /api/ask itself returns on a real question (WK-ASK-003), reported proactively by /status too"
+    tags: [ask, status, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "The real capability surface, confirmed live, reflects this deployment's actual no_provider state field-by-field -- no field guessed or assumed from the design doc's paraphrase"
+
+  - id: WK-ASK-002
+    name: "GET /api/ask/status unauthenticated is a genuine 401"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Fetch answering status with no credential at all"
+        action: "http: GET /api/ask/status"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- /api/ask/status is an ordinary gated /api/* route, wrapped by the SAME apiPathsOnly->authhttp.Middleware chain as every other route in auth-session.yaml, never a bare 404 and never a silent 200 with a degraded body. A direct regression pin, confirmed live in prior research."
+    tags: [ask, status, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no answering status, not a leaked capability surface"
+
+  - id: WK-ASK-003
+    name: "A well-formed question, no provider configured, returns 503 unavailable{no_provider}"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Ask a real, well-formed, in-limit question (reuses WK-ASK-001's already-cached admin-mode session -- 0 additional real logins)"
+        action: "http: POST /api/ask"
+        auth: "admin"
+        body:
+          question: "what does the fixture say about spoke tension?"
+        expect_status: 503
+        expect_body_contains: "\"code\": \"no_provider\","
+        expected: "503 unavailable, reason.code=no_provider -- Handler.ask checks Provider.Health() BEFORE any job is created (pkg/answer/http.go line 125), so this is the ONE honestly-reachable 'asked a real question' path in this deployment today (see header's documented scope boundary for why answered/declined/async are NOT reachable)"
+      - name: "The response status is the unavailable three-state vocabulary member, never declined or answered"
+        action: "http: POST /api/ask"
+        auth: "admin"
+        body:
+          question: "what does the fixture say about spoke tension?"
+        expect_status: 503
+        expect_body_contains: "\"status\": \"unavailable\""
+        expected: "status is genuinely 'unavailable', never 'declined' (which would mean a job ran and refused) or 'answered' -- both structurally impossible here"
+    tags: [ask, functional, no_provider, regression]
+    estimated_duration: "5s"
+    expected_result: "The real, live no_provider response shape is exactly as documented -- confirmed byte-for-byte against the running server, not assumed from the design doc"
+
+  - id: WK-ASK-004
+    name: "An empty question returns 400 empty_query, distinct from the 503 no-provider path"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Ask an empty question"
+        action: "http: POST /api/ask"
+        auth: "admin"
+        body:
+          question: ""
+        expect_status: 400
+        expect_body_contains: "\"code\": \"empty_query\","
+        expected: "400, NOT 503 -- the empty-question check (pkg/answer/http.go line 109) runs strictly BEFORE the provider-health check (line 125), so a client mistake is reported as a client mistake, never as a corpus/provider finding (see the handler's own doc comment: 'answering \"your query was empty\" as declined would file a client mistake as a finding about the corpus')"
+    tags: [ask, functional, validation, regression]
+    estimated_duration: "5s"
+    expected_result: "Input validation is reported as a distinct 4xx, never conflated with the provider's own 503 unavailable state"
+
+  - id: WK-ASK-005
+    name: "A question exceeding MaxQuestionBytes (2000) returns 413 query_too_long"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Ask a 2001-byte question, one byte over the real MaxQuestionBytes constant read from NewHandler (pkg/answer/http.go line 61)"
+        action: "http: POST /api/ask"
+        auth: "admin"
+        body:
+          question: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        expect_status: 413
+        expect_body_contains: "\"message\": \"question is 2001 bytes; the limit is 2000\""
+        expected: "413 Request Entity Too Large, exact message confirmed live for a 2001-byte question -- the size check (line 114) also runs strictly before the provider-health check (line 125), so this too is reported as a client mistake, never as a 503"
+    tags: [ask, functional, validation, regression]
+    estimated_duration: "5s"
+    expected_result: "An oversized question is rejected on its own terms, with the real, current MaxQuestionBytes limit, never silently truncated or conflated with provider unavailability"
+
+  - id: WK-ASK-006
+    name: "GET /api/search remains reachable and real while POST /api/ask answers 503 (FR-025, mirrors G-HTTP-5's own S1+S2 pair)"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Search still serves real lexical results"
+        action: "http: GET /api/search?q=test&limit=3"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\","
+        expected: "200, status=ok, real non-empty lexical results -- confirmed live. Mirrors verify-g-http-5-search-survives-answering-down.sh's own S1 assertion (read in full before writing this case), applied to THIS deployment's actual no_provider state rather than that gate's purpose-built closed-port-ollama stand-in. FR-025 is enforced at compile time by pkg/answer/http.go's Mount registering only /api/ask* while internal/api.Register registers /api/search with zero imports of pkg/answer (confirmed by reading Mount's own doc comment, lines 13-26) -- so a provider that will not construct cannot take search down with it."
+      - name: "Ask genuinely answers 503 in the very same window"
+        action: "http: POST /api/ask"
+        auth: "admin"
+        body:
+          question: "what does the fixture say about spoke tension?"
+        expect_status: 503
+        expect_body_contains: "\"status\": \"unavailable\""
+        expected: "503 unavailable -- mirrors G-HTTP-5's own S2 assertion: the answering leg is down and says so, with a cause, while search (the step above) is simultaneously unaffected. Never the reverse, never both down, never a 200-with-no-results bluff on either side."
+    tags: [ask, search, functional, regression, fr-025]
+    estimated_duration: "5s"
+    expected_result: "Search and answering are genuinely decoupled routes -- confirmed live, not merely by reading the import graph"
+
+  - id: WK-ASK-007
+    name: "Unauthenticated POST /api/ask is a genuine 401"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Ask a question with no credential at all"
+        action: "http: POST /api/ask"
+        body:
+          question: "what does the fixture say about spoke tension?"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- same apiPathsOnly->authhttp.Middleware chain as every other gated route (see WK-ASK-002 and auth-session.yaml); never a 503 no_provider leak to an unauthenticated caller, never a silent 200"
+    tags: [ask, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no answering access at all, not even the provider's own unavailable state"
