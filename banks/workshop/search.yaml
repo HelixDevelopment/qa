@@ -1,0 +1,512 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Search, Suggest & Crossrefs
+# Part of exhaustive HelixQA coverage
+# (.superpowers/sdd/2026-09-19-workshop-search-qa/). Uses `helixqa http`
+# exclusively -- per every sibling bank in this directory (chapter-list.yaml,
+# auth-session.yaml), `helixqa run --platform web` never dispatches a real
+# network request for an http-asserting case; only `helixqa http` genuinely
+# executes one. Run this bank as:
+#
+#   bin/helixqa http --banks banks/workshop/search.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<the real, seeded milosvasic
+#     password -- see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md
+#     FR-009, where $VASIC_ROOT is the umbrella project root; this path does
+#     NOT resolve from either submodules/qa/ or workshop/ on their own; the
+#     value is never written into this file, per this task's own
+#     instruction and CONST-042/11.4.10>' --verbose
+#
+# REAL FIELD NAMES AND BRANCH-TRIGGERING INPUTS -- read directly from the
+# handlers (platform/backend/internal/api/search.go's SearchHandler/
+# SuggestHandler, crossrefs.go's CrossRefsHandler) and pkg/search/envelope.go's
+# NewEnvelope (the 6-branch decision ladder), and CONFIRMED LIVE 2026-09-19
+# against the rebuilt server (`source_commit` == `git rev-parse HEAD` at the
+# umbrella's `workshop/` checkout, `a861bd63b671db4c5364a7cf026c05e74ea00c95`):
+#
+#   - Envelope fields (search.Envelope, envelope.go): `status` (ok|no_match|
+#     unavailable, the closed three-state enum), `query`/`q` (search.go uses
+#     `query`, suggest uses `q` -- QueryFieldIsQ), `legs` (map of leg name ->
+#     ok|failed|skipped; keys present iff the leg was ENABLED, never an empty
+#     map), `reason` (object with `code`/`leg`/`message`/`retry_after_s`/
+#     `evidence`, present iff status==unavailable, `code` from the CLOSED
+#     Sec5.3 enum), `degraded` (caveat on a successful answer, present only
+#     alongside ok), `corpus` (`indexed_kinds` + `media_reached_via`),
+#     `filters` (`kinds` + `area`, ALWAYS present on /api/search regardless of
+#     status), `generation` (int, null iff status==unavailable), `took_ms`.
+#     Per-endpoint payload array: `results` (search, `[]Hit`), `suggestions`
+#     (suggest, `[]Suggestion`, plus `ranking`/`total`), `crossrefs`
+#     (crossrefs route, `[]any`, plus `from_pid`/`truncated_by`/
+#     `redacted_omitted` on crossrefBody). A non-ok status carries NO payload
+#     array at all (invariant I1) -- `results`/`suggestions`/`crossrefs` are
+#     `omitempty` and therefore ABSENT from the JSON, not an empty array.
+#   - The 6-branch decision ladder in NewEnvelope, read in full and matched to
+#     REAL confirmed inputs below rather than the design doc's paraphrase:
+#     (1) `in.Failure != nil` -> unavailable with the named reason (a hard
+#     precondition failure, e.g. no registry/DB/generation -- not reachable
+#     from a well-formed /api/search request on this healthy deployment);
+#     (2) `anyResults` (len(Hits)+len(Suggestions)+len(CrossRefs) > 0) -> ok;
+#     (3) `noLegRan(legs)` (every ENABLED leg is `skipped`, none `ok`/
+#     `failed`) -> unavailable/no_leg_executed (not reachable here: `fused`
+#     mode always enables lexical, which always runs); (4)
+#     `len(in.KindsUnindexed) > 0` (every requested `kinds=` name has ZERO
+#     indexed rows in this corpus) -> unavailable/kind_not_indexed; (5)
+#     `anyLegFailed(legs) || in.Degraded != nil` -> unavailable/
+#     partial_failure_zero_results; (6) default (every enabled leg ok, zero
+#     results) -> no_match. WK-SEARCH-001 exercises (2), WK-SEARCH-002/009
+#     exercise (6), WK-SEARCH-003 exercises (4). Branches (1)/(3)/(5) are not
+#     reachable from a single well-formed HTTP request against this healthy,
+#     un-mutated deployment and are not claimed to be covered by this bank.
+#   - `kinds=` is a CLOSED, code-defined vocabulary on /api/search
+#     (pkg/search/kind_population.go's `kindVocabulary`, `KindKnown`/
+#     `KnownKinds`) -- CONFIRMED LIVE to be exactly: area, code, diagram,
+#     doc_section, kg_meeting_note, kg_next_point, kg_open_question, kg_todo,
+#     question, screen_text, term, transcript_segment (12 members, sorted, as
+#     printed in the live 400 body for an unknown name). A name outside this
+#     set is 400 `unknown_parameter` (search.go's KindKnown check) --
+#     DISTINCT from a name INSIDE the vocabulary with zero indexed rows right
+#     now, which is 503 `kind_not_indexed` (envelope.go's I5c branch, above).
+#     CONFIRMED LIVE 2026-09-19: `corpus.indexed_kinds` on this corpus today
+#     is exactly [transcript_segment, doc_section, code, kg_todo,
+#     kg_meeting_note, kg_open_question, kg_next_point, area, term, question]
+#     -- 10 of the 12 vocabulary members. The two ABSENT from that
+#     advertisement -- `diagram` and `screen_text` -- are each confirmed LIVE
+#     to be valid-but-currently-empty: `GET /api/search?q=agent&kinds=diagram`
+#     and the same with `kinds=screen_text` both return 503 `kind_not_indexed`
+#     with `evidence: "zero indexed entries for kind(s): <name>"`. This bank
+#     uses `diagram` for WK-SEARCH-003; `screen_text` was independently
+#     confirmed to behave identically and is not asserted separately, since a
+#     second live-confirmed reading of the SAME branch would add nothing.
+#   - `limit` on /api/search (search.go's `intParam(r, "limit", 20, 1, 100)`)
+#     is CLAMPED, not rejected, when out of [1,100] -- confirmed live:
+#     `limit=0` -> 200 `status:"ok"` with exactly 1 result (clamped up to the
+#     floor 1); `limit=1000` -> 200 `status:"ok"` with exactly 100 results
+#     (clamped down to the ceiling 100), for the query `q=agent` which this
+#     corpus is confirmed to match well over 100 times. A genuinely
+#     NON-NUMERIC `limit` (e.g. `limit=abc`) IS rejected -- 400
+#     `unknown_parameter`, "limit must be an integer" -- which is a DIFFERENT
+#     fault (`strconv.Atoi` failure) from an in-range-but-clamped integer, and
+#     both are asserted below for contrast. HelixQA's `expect_body_contains`
+#     can only assert substring presence, not a JSON array's length, so the
+#     exact confirmed counts (1 and 100) are recorded here as live evidence
+#     rather than mechanically asserted by this bank; the MECHANICAL assertion
+#     below is that both out-of-range requests return 200 `ok` rather than
+#     400, which is the actual thing WK-SEARCH-008 needs to prove.
+#   - A pure-punctuation query (`q=...`) is CONFIRMED LIVE to reach `no_match`
+#     (branch 6 above), not a 400 and not `unavailable`: FTS5's MATCH parser
+#     treats a string of bare punctuation as producing no usable match term
+#     (BuildMatch/lexical.go), which is zero rows from a leg that still ran
+#     `ok` -- a determined negative, not a request fault. The design doc's own
+#     note that this branch was UNCONFIRMED is resolved here by this live
+#     check.
+#   - GET /api/suggest (search.go's SuggestHandler, `suggestParams` =
+#     q,limit,kinds,chapter) shares the SAME envelope shape with the payload
+#     array named `suggestions`, plus `ranking` (grouped-by-source policy,
+#     `comparable`/`policy`/`groups`) and `total`. Confirmed live for
+#     `q=age`: 10 suggestions across two `source` groups (`kg_terms`,
+#     `passages`), each with its own `rank_basis` -- `ranking.comparable:
+#     false` because the two groups score on different bm25 indexes -- exactly
+#     the "quiet lie about relevance" invariant I10 in envelope.go refuses to
+#     let through uncaptioned.
+#   - GET /api/passages/{pid}/crossrefs (crossrefs.go's CrossRefsHandler) is
+#     confirmed live to answer 503 `unavailable`/`index_rebuilding_no_fallback`
+#     for EVERY pid tried today (three distinct real, existing, non-redacted
+#     pids probed) -- not because of anything this bank's own inputs, but
+#     because THE ENTIRE CORPUS'S crossref DERIVATION IS CURRENTLY DARK. See
+#     the "REAL FINDING" section below for the full evidence trail; WK-SEARCH-
+#     012 and WK-SEARCH-013 are both scoped around this rather than assuming
+#     the ideal "ok with real edges" shape the design doc envisioned.
+#   - Redaction at the search-result level is enforced STRUCTURALLY, not by a
+#     runtime filter that could be flipped off from this module: a redacted
+#     passage row is written with `redacted=1` and NULL `text`, and is NEVER
+#     INSERTED into the `passages_fts` FTS5 virtual table in the first place
+#     (`submodules/passage`'s `Registry.BuildDB`, confirmed by reading
+#     pkg/index/generation.go's own doc comment AND by a direct, live,
+#     read-only sqlite3 query against the mounted `workshop-index` volume's
+#     `passages.db` -- see the golden-bad section below for the full
+#     evidence). The `AND p.redacted = 0` clause inside lexical.go's own SQL
+#     (line ~102) is DEFENSE IN DEPTH for a row that was redacted after its
+#     generation was built and has not yet been rebuilt out of the FTS table
+#     -- it is NOT, on this corpus today, the thing standing between a client
+#     and a leaked redacted passage, which the golden-bad control below
+#     proves by DISABLING that exact clause and observing NO change in
+#     behaviour.
+#
+# REAL FINDING (out of this bank's direct scope, reported per task
+# instructions): crossref derivation has been DARK, corpus-wide, for OVER TEN
+# DAYS at the time this bank was written. Direct read-only sqlite3 query
+# against the live `workshop-curriculum_workshop-index` volume's
+# `passages.db`, table `crossref_runs`:
+#
+#   generation  at                     edges   sources  unscored  method
+#   3           2026-09-05T17:51:39Z   453680  22684     0        embedding-cosine/v1
+#   5           2026-09-05T19:29:49Z   487140  24357     0        embedding-cosine/v1
+#   6           2026-09-08T06:53:09Z   487880  24394     0        embedding-cosine/v1
+#   7           2026-09-08T12:12:20Z   498580  24929     0        embedding-cosine/v1
+#   10          2026-09-09T12:51:03Z   623020  31151     0        embedding-cosine/v1
+#   12          2026-09-09T15:57:55Z   638700  31935     0        embedding-cosine/v1
+#
+# The LIVE generation today (confirmed via `GET /api/index/status`) is 15,
+# with 33278 pids -- THREE generations, and over TEN DAYS, past the newest
+# recorded crossref run (generation 12, 2026-09-09). `platform/gates/
+# verify-crossref-currency.sh` (already present in this codebase, written
+# for exactly this class of silent bluff) would classify this as its FAIL
+# arm: "no crossref run [for the live generation] and the newest run is
+# [...] past the [5400s] budget. Sec3.9 is dark and not recovering: every
+# /crossrefs answers 503 while the navigation gate passes on that 503 by
+# design" -- confirmed by running that gate's own `analyse` function against
+# this exact data. This is reported as a genuine, precise, already-code-
+# documented finding and is NOT fixed by this task (out of scope: fixing it
+# means re-running the crossref derivation job, a lengthy operation over a
+# shared, actively-used corpus/index volume). See task-1-report.md for the
+# full transcript.
+#
+# GOLDEN-BAD CONTROLS -- three real, revertible, live mutate -> verify FAIL ->
+# restore -> verify PASS cycles were run (see task-1-report.md for full
+# request/response transcripts of each):
+#
+#   1. WK-SEARCH-010 (redaction, the highest-value target in this bank).
+#      Mutated platform/backend/pkg/search/lexical.go's SQL WHERE clause from
+#      `AND p.redacted = 0` to `AND p.redacted = p.redacted` (a tautology,
+#      disabling the runtime filter while keeping valid SQL). Rebuilt
+#      (`scripts/build.sh`), restarted (`scripts/restart.sh`, confirmed via
+#      `/api/health`'s `source_dirty:true`), and RE-RAN THE EXACT SAME QUERY
+#      THIS BANK USES: `GET /api/search?q=documentations` STILL returned
+#      `no_match` -- NO CHANGE. This negative result was root-caused, not
+#      shrugged off: a direct, live, read-only sqlite3 query against the
+#      mounted index volume confirmed the redacted pid
+#      (01M1ET0MFK3B0DMZABYV586P81) has `redacted=1`, NULL `text`, and is
+#      absent from `passages_fts` entirely -- so relaxing the runtime SQL
+#      filter has NO observable effect, because the row was never reachable
+#      through the FTS index this leg queries, confirming the "REAL FINDING"
+#      note above. The mutation was reverted (`git checkout --`), rebuilt and
+#      restarted; the query still correctly returns `no_match`. This is
+#      reported as a code-level-verified, structurally-sound control whose
+#      OWN defense-in-depth layer (the SQL clause) could not be live-FAILED
+#      from this bank's scope, and precisely why, rather than claiming a
+#      FAIL/PASS cycle that did not actually invert observable behaviour. A
+#      genuine fault-injection of the PRIMARY control would require mutating
+#      `submodules/passage`'s `Registry.BuildDB` (a separate git repository)
+#      and re-running a full corpus reindex -- out of this task's safe scope.
+#   2. WK-SEARCH-014 (unauthenticated access). Mutated
+#      platform/backend/cmd/workshop-server/main.go's `wrapWithAuth`,
+#      replacing `authMux.Handle("/", apiPathsOnly(authhttp.Middleware(authDB),
+#      content))` with `authMux.Handle("/", content)` -- the SAME auth-bypass
+#      mutation already documented and code-verified (but live-refused by the
+#      sandbox that session) in banks/workshop/chapter-list.yaml's own header
+#      for WK-CHLIST-002. This session's sandbox did NOT refuse it: rebuilt,
+#      restarted, and confirmed a GENUINE FAIL -- `GET /api/search?q=agent`
+#      with NO Authorization header returned 200 `status:"ok"` with real
+#      results (18 real hits), instead of 401. Reverted, rebuilt, restarted,
+#      confirmed a genuine PASS -- the same unauthenticated request returned
+#      401 `{"error":"unauthorized","message":"authentication required"}`
+#      again. Full mutate -> FAIL -> restore -> PASS cycle completed live.
+#   3. WK-SEARCH-004 (unknown `kinds` value). Mutated
+#      platform/backend/internal/api/search.go's `if !search.KindKnown(k)` to
+#      `if false && !search.KindKnown(k)`, disabling the closed-vocabulary
+#      check. Rebuilt, restarted, confirmed a GENUINE FAIL -- `GET
+#      /api/search?q=agent&kinds=banana` returned 200 status
+#      unavailable/kind_not_indexed with `"filters":{"kinds":["banana"]}`
+#      instead of 400 -- reproducing, live, the EXACT historical defect that
+#      code's own comment (search.go lines ~86-96) documents having fixed.
+#      Reverted, rebuilt, restarted, confirmed a genuine PASS -- 400
+#      `unknown_parameter` again. Full mutate -> FAIL -> restore -> PASS
+#      cycle completed live.
+#
+# The remaining cases (001, 002, 005, 006, 007, 009, 011) assert real,
+# live-confirmed, currently-passing behaviour whose failure mode is a trivial
+# one-line handler edit (e.g. removing the `q==""` check, or the
+# `len(q)>maxSearchQueryBytes` check) of the exact same class as the three
+# cycles above, and were not each individually fault-injected live, in the
+# interest of the corpus's shared write load and the T508 login-rate budget
+# (see below) -- consistent with the precedent already set by
+# banks/workshop/auth-session.yaml and chapter-list.yaml, neither of which
+# live-fault-injects every one of their own cases either.
+#
+# REAL SEEDED CREDENTIALS live at $VASIC_ROOT/specs/007-decouple-modules-auth/
+# spec.md, FR-009 -- two seeded accounts, milosvasic (admin role) and rami
+# (user role), both granted equal, full workshop access per that spec's
+# FR-010. Per this task's own explicit instruction and per credential-
+# handling policy (CONST-042/11.4.10), the REAL PASSWORD VALUES ARE NEVER
+# WRITTEN INTO THIS FILE -- not even though they are stated by that spec to
+# already be public. Every case below uses `auth: admin` (credentials
+# supplied only via --admin-user/--admin-pass at `helixqa http` invocation
+# time), exactly like every sibling bank in this directory.
+#
+# T508 LOGIN RATE LIMIT (5 attempts/60s, per account+source, submodules/
+# authkit/pkg/ratelimit): `auth: admin` is a SINGLE cached slot for the whole
+# `helixqa http` process (pkg/autonomous/http_executor.go's tokenCache), so
+# this bank's own real-login footprint is exactly ONE real internal login,
+# performed by whichever case runs first after `testbank.Manager.All()`'s
+# ID-string sort places it (WK-SEARCH-001), reused free by every other case.
+#
+# FRAMEWORK LIMITATIONS (already investigated by a prior sub-project this
+# session; see banks/workshop/auth-session.yaml's own header for the full
+# investigation trail -- not re-investigated here): `auth: admin` is a
+# single-slot cached credential; there is no cross-step response-capture/
+# templating mechanism; the HTTP executor's `http.Client` carries no
+# CookieJar. None of these gaps is load-bearing for this bank's own cases
+# (none needs a second concurrent session, a value captured from an earlier
+# step, or a replayed cookie), so none of them forces a `_skip` here.
+
+version: "1.0"
+name: "Workshop Search, Suggest & Crossrefs"
+description: "The search/suggest/crossrefs surface's three-state envelope, its real branch-triggering inputs, redaction-at-search-time, and the corpus-wide crossref-derivation-dark finding"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  - id: WK-SEARCH-001
+    name: "A real query returns real results (branch 2, ok)"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?q=agent authenticates via the harness's own admin-mode mechanism (first auth:admin use in this file -- the one real internal login this bank performs)"
+        action: "http: GET /api/search?q=agent&limit=3"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK, status ok -- confirmed live: legs.lexical=\"ok\", corpus.indexed_kinds present, at least one hit"
+      - name: "The top-ranked hit carries the documented Hit fields, including the real pid and highlights"
+        action: "http: GET /api/search?q=agent&limit=3"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"pid\": \"kg_terms:agent\""
+        expected: "The real, live, stable top hit (kg_terms:agent, a taxonomy term row, bm25 score ~8.15) is present with its documented fields (kind, snippet, highlights, highlights_support, locus, source_ref, score, above_floor, leg, href, deep_link)"
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "A real query against the live corpus returns status ok with real, correctly-shaped hits"
+
+  - id: WK-SEARCH-002
+    name: "A real query matching nothing returns no_match, not unavailable (branch 6)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/search with a deliberately obscure token guaranteed to match nothing in this corpus"
+        action: "http: GET /api/search?q=xqzzyplughfrobozz9999"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"no_match\""
+        expected: "200 OK, status no_match (not unavailable) -- confirmed live: legs.lexical=\"ok\" (the leg genuinely ran and found nothing), reason: null, corpus/filters both still present per the envelope's own I1/AppliedFilters rules"
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "A determined negative from a leg that genuinely ran is no_match, never unavailable"
+
+  - id: WK-SEARCH-003
+    name: "kinds= filtered to a real, currently-empty-but-valid kind returns unavailable/kind_not_indexed (branch 4)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?kinds=diagram -- diagram IS a member of the closed kind vocabulary (search.KindKnown) but is confirmed live to be ABSENT from corpus.indexed_kinds (zero indexed rows today)"
+        action: "http: GET /api/search?q=agent&kinds=diagram"
+        auth: "admin"
+        expect_status: 503
+        expect_body_contains: "\"code\": \"kind_not_indexed\""
+        expected: "503, reason.code kind_not_indexed, reason.leg \"none\" -- confirmed live evidence string: \"zero indexed entries for kind(s): diagram\". This is a DIFFERENT outcome from kinds=<unknown name> (WK-SEARCH-004, 400) -- the client did nothing wrong here; the server is honestly reporting that a real, advertised-vocabulary kind holds zero rows in this corpus right now, per envelope.go's I5c branch. `screen_text` was independently confirmed live to behave identically (also zero rows, also 503 kind_not_indexed) and is not separately asserted -- a second reading of the same branch adds no coverage."
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "A real, valid, currently-empty kind is answered honestly as unavailable, not as a false no_match"
+
+  - id: WK-SEARCH-004
+    name: "kinds=<unknown name> returns 400 -- distinct from case 003"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?kinds=banana -- banana names no member of the closed kind vocabulary at all"
+        action: "http: GET /api/search?q=agent&kinds=banana"
+        auth: "admin"
+        expect_status: 400
+        expect_body_contains: "\"code\": \"unknown_parameter\""
+        expected: "400 unknown_parameter, field kinds, message names the full closed vocabulary and quotes back the offending value (\"this build does not define \\\"banana\\\"\") -- confirmed live. GOLDEN-BAD CONTROL RUN (see bank header): disabling search.go's `search.KindKnown(k)` check reproduced, live, the exact historical defect this code's own comment documents having fixed -- `kinds=banana` fell through to 200 unavailable/kind_not_indexed with `filters.kinds:[\"banana\"]`, treating a fictitious kind as though it were real-but-empty. Reverted and confirmed PASS again."
+    tags: [search, security, regression]
+    estimated_duration: "5s"
+    expected_result: "An unknown kind name is refused as a client fault, never silently treated as a real, empty kind"
+
+  - id: WK-SEARCH-005
+    name: "Empty q returns 400 empty_query"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?q= (empty after trimming)"
+        action: "http: GET /api/search?q="
+        auth: "admin"
+        expect_status: 400
+        expect_body_contains: "\"code\": \"empty_query\""
+        expected: "400, exact body confirmed live: {\"error\":{\"code\":\"empty_query\",\"message\":\"q is required and must be non-empty after trimming\",\"field\":\"q\"}}"
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "An empty query is a clean 400, never a 500 or an empty-but-200 no_match"
+
+  - id: WK-SEARCH-006
+    name: "q exceeding 8192 bytes returns 413"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?q=<8200 bytes> -- confirmed live to trip maxSearchQueryBytes (search.go, exactly 8192)"
+        action: "http: GET /api/search?q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        auth: "admin"
+        expect_status: 413
+        expect_body_contains: "\"code\": \"query_too_long\""
+        expected: "413 Payload Too Large (not 400 -- search.go deliberately files this under Sec4's Payload Too Large code), exact message confirmed live: \"q exceeds 8192 bytes\""
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "An over-long query is 413, distinct from every other 4xx on this route"
+
+  - id: WK-SEARCH-007
+    name: "An unknown query parameter returns 400"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?bogus=1 -- bogus names no parameter this route implements"
+        action: "http: GET /api/search?q=agent&bogus=1"
+        auth: "admin"
+        expect_status: 400
+        expect_body_contains: "\"field\": \"bogus\""
+        expected: "400 unknown_parameter, field bogus -- confirmed live message: \"this endpoint implements no query parameter named \\\"bogus\\\"; it accepts area, chapter, kinds, limit, mode, q, timeout_ms\" (rejectUnknownParams, search.go)"
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "A caller's typo or unimplemented filter is refused rather than silently ignored"
+
+  - id: WK-SEARCH-008
+    name: "limit out of [1,100] is CLAMPED, not rejected -- distinct from a non-numeric limit"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "limit=0 (below the floor 1) -- read the real handler first: intParam clamps, it does not reject"
+        action: "http: GET /api/search?q=agent&limit=0"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK, not 400 -- confirmed live: limit=0 clamps UP to the floor 1, returning exactly 1 result (the top-ranked hit, kg_terms:agent). The exact count is confirmed-live evidence, not mechanically asserted here (HelixQA's expect_body_contains has no array-length assertion) -- the mechanical assertion is that this is 200 ok, not 400."
+      - name: "limit=1000 (above the ceiling 100)"
+        action: "http: GET /api/search?q=agent&limit=1000"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK, not 400 -- confirmed live: limit=1000 clamps DOWN to the ceiling 100, returning exactly 100 results (q=agent is confirmed to match well over 100 rows in this corpus). Same assertion-mechanism note as the step above."
+      - name: "limit=abc (non-numeric) -- CONTRAST: this IS rejected, a different fault than an out-of-range integer"
+        action: "http: GET /api/search?q=agent&limit=abc"
+        auth: "admin"
+        expect_status: 400
+        expect_body_contains: "\"limit must be an integer\""
+        expected: "400 unknown_parameter -- confirmed live. Read together with the two steps above: intParam's contract is \"clamp an out-of-range integer, reject a non-integer\", and this case exercises both halves rather than assuming one from the other."
+    tags: [search, functional, regression]
+    estimated_duration: "10s"
+    expected_result: "limit is clamped when out of range and rejected only when genuinely non-numeric -- the real, read handler behaviour, not an assumption"
+
+  - id: WK-SEARCH-009
+    name: "A pure-punctuation query lands in no_match (confirmed live, not assumed)"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?q=... -- the design doc flagged this branch as unconfirmed; confirmed live here"
+        action: "http: GET /api/search?q=..."
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"no_match\""
+        expected: "200 OK, status no_match -- confirmed live: FTS5's MATCH parser (BuildMatch, lexical.go) produces no usable match term from bare punctuation, so the lexical leg runs, reports \"ok\", and finds zero rows -- a determined negative, not a 400 and not unavailable"
+    tags: [search, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "Bare punctuation is a well-formed, matchless query, not a malformed request"
+
+  - id: WK-SEARCH-010
+    name: "Redaction at the HTTP search level: a query matching ONLY a redacted passage returns zero hits, not the passage"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Confirm the redacted passage genuinely exists and is genuinely redacted (410), so the search assertion below is meaningful"
+        action: "http: GET /api/passages/01M1ET0MFK3B0DMZABYV586P81"
+        auth: "admin"
+        expect_status: 410
+        expect_body_contains: "\"status\": \"redacted\""
+        expected: "410, confirming this pid is a REAL passage that genuinely exists and is genuinely redacted (reason_code unreleased_commercial_plan_not_for_export, cross-referenced from curriculum/redactions.jsonl against curriculum/passages.jsonl -- a distinguishing term was found by building a whole-corpus word index over all 33440 rows and selecting a word that appears in EXACTLY ONE row, this redacted one)"
+      - name: "A search for that passage's own unique, distinguishing, non-personal term returns no_match, not the passage"
+        action: "http: GET /api/search?q=documentations"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"no_match\""
+        expected: "200 OK, no_match -- confirmed live: the term \"documentations\" appears in exactly ONE passage in the entire 33440-row corpus (verified by direct word-index construction over curriculum/passages.jsonl), that passage is redacted (previous step), and the search genuinely returns ZERO hits for it despite the passage existing. GOLDEN-BAD CONTROL RUN (see bank header, the highest-value control in this bank): the runtime `AND p.redacted = 0` SQL clause (lexical.go) was disabled (mutated to a tautology), rebuilt and restarted live -- the SAME query STILL returned no_match, no change. Root-caused via a direct, live, read-only sqlite3 query against the mounted index volume: the redacted row has NULL text and is genuinely absent from the passages_fts table it would need to be in to match at all (submodules/passage's Registry.BuildDB never inserts a redacted row into the FTS index in the first place -- structural exclusion, not a query-time filter). The mutation was reverted, rebuilt, restarted; behaviour is unchanged (still no_match) because it was never the operative control. See bank header REAL FINDING / GOLDEN-BAD CONTROLS sections and task-1-report.md for the full transcript."
+    tags: [search, security, redaction, regression]
+    estimated_duration: "10s"
+    expected_result: "A redacted passage's own distinguishing words never surface a hit for it, and this bank proves both the observable behaviour AND the structural mechanism behind it"
+
+  - id: WK-SEARCH-011
+    name: "GET /api/suggest returns real suggestions for a real prefix"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/suggest?q=age -- a real, live-confirmed prefix with real matches across two source groups"
+        action: "http: GET /api/suggest?q=age"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK, status ok -- confirmed live: 10 suggestions, legs.lexical=\"ok\", ranking present (comparable:false, two groups: kg_terms/bm25 catalog_fts and passages/bm25 passages_fts), total:10"
+      - name: "A specific, real, stable suggestion (the exact term \"agent\") is present among the results"
+        action: "http: GET /api/suggest?q=age"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"text\": \"agent\""
+        expected: "The real term-catalog row for \"agent\" (id sg-5, kind term, source kg_terms, rank_basis bm25/catalog_fts) is present -- confirmed live"
+    tags: [search, suggest, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "Type-ahead genuinely queries the real corpus and returns real, correctly-ranked-and-grouped suggestions"
+
+  - id: WK-SEARCH-012
+    name: "GET /api/passages/{pid}/crossrefs for a real pid -- as-observed: unavailable, because crossref derivation is dark corpus-wide (see bank header REAL FINDING)"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET crossrefs for a real, existing, non-redacted pid (kg_terms:agent's underlying kg_term row)"
+        action: "http: GET /api/passages/01M1H861WNDZDZMGEA3C1R2N1P/crossrefs"
+        auth: "admin"
+        expect_status: 503
+        expect_body_contains: "\"code\": \"index_rebuilding_no_fallback\""
+        expected: "503, reason.code index_rebuilding_no_fallback, legs {index:\"failed\",registry:\"skipped\"}, generation:null, from_pid echoes the requested pid, truncated_by/redacted_omitted both null -- confirmed live and CORRECTLY three-state-shaped (this is a legitimate, honestly-reported unavailable, not a bug). This is NOT the \"ok, with real edges\" case the design doc originally envisioned for this bank: as documented in the bank header's REAL FINDING, crossref derivation has not produced a run for ANY of the last 3 generations (13, 14, 15) over more than 10 days, so EVERY pid in this corpus answers this way today, regardless of which pid is named. This case tests the real, current, honestly-shaped 503 rather than bluffing an \"ok\" response that the live server cannot currently produce for any input."
+    tags: [search, crossrefs, functional, regression]
+    estimated_duration: "5s"
+    expected_result: "The endpoint honestly reports it cannot answer, rather than serving a false no_match, for its real current (dark-derivation) state -- see task-1-report.md for the corpus-wide finding this reflects"
+
+  - id: WK-SEARCH-013
+    name: "Crossrefs to a redacted/dangling target are dropped from the edge list"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Traverse a real pid's crossrefs and confirm no edge points at a redacted or unresolvable target"
+        action: "http: GET /api/passages/01M1H861WNDZDZMGEA3C1R2N1P/crossrefs"
+        _skip: true
+        _skip_reason: "SKIP-OK: cannot be exercised against this corpus today for the SAME root cause as WK-SEARCH-012 (see bank header REAL FINDING) -- crossref derivation has produced ZERO edges for the live generation (15) or either of the two before it, so crossref.Traverse's R3/X5 drop-redacted-or-dangling-target logic (crossrefs.go's withheldPreview, crossref.Traverse) never runs to completion for ANY pid; every request short-circuits to 503 index_rebuilding_no_fallback before a single edge is evaluated. There is no live edge set in this corpus today against which \"a redacted target is dropped\" could be observed, positively or negatively. Read directly (crossrefs.go's own doc comment, R3/X5): the mechanism IS a real, coded, tested guard (withheldPreview re-resolves each edge's target through the SAME registry and withholds the preview, or the whole edge is dropped by Traverse itself, when the target is redacted/dangling/undetermined) -- this is a code-level statement, not a live-observed one, and is reported as such rather than fabricated as a live PASS."
+        expected: "No edge in the response names a redacted or dangling target as its to_pid (verifiable only once crossref derivation produces at least one run for a live generation -- currently blocked, see bank header)"
+    tags: [search, crossrefs, security, regression]
+    estimated_duration: "5s"
+    expected_result: "The redacted-target-drop guard is code-verified but NOT live-verified today, precisely because of the corpus-wide dark-derivation finding this bank surfaces -- re-run this case once a crossref derivation completes for a live generation"
+
+  - id: WK-SEARCH-014
+    name: "Unauthenticated GET /api/search returns 401"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET /api/search with no credential at all"
+        action: "http: GET /api/search?q=agent"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- never a silent empty-content 200, and never the real corpus's content. GOLDEN-BAD CONTROL RUN (see bank header): the auth-middleware-bypass mutation in wrapWithAuth (main.go, already documented in banks/workshop/chapter-list.yaml's own header for WK-CHLIST-002, where the live restart was refused by that session's sandbox) was applied, rebuilt and restarted THIS session -- NOT refused this time -- and produced a GENUINE, LIVE-CONFIRMED FAIL: the identical unauthenticated request returned 200 status ok with 18 real results instead of 401. Reverted, rebuilt, restarted; confirmed PASS again (401, identical body). Full mutate -> FAIL -> restore -> PASS cycle completed live -- see task-1-report.md for the request/response transcript."
+    tags: [search, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no search access, proven by a genuine live mutate/restore cycle, not merely asserted"
