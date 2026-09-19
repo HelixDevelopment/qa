@@ -6,12 +6,194 @@
 # (.superpowers/sdd/2026-09-19-workshop-areas-practice-qa/). Design:
 # docs/superpowers/specs/2026-09-19-workshop-areas-practice-qa-design.md.
 #
-# THIS FILE COVERS ONLY THE TAXONOMY (design doc cases 1-7) AND LEARNING-PATH
-# (cases 8-13) groups, per task-1-brief.md's explicit scope. Task 2 EXTENDS
-# THIS SAME FILE with a third `practice-deck` case group (design cases 14-17,
-# GET /api/areas/{area}/questions) -- do not add practice-deck cases here; a
-# future edit to this file that adds a `practice-deck` tag group is Task 2's
-# work landing, not a duplicate.
+# THIS FILE COVERS THE TAXONOMY (design doc cases 1-7), LEARNING-PATH (cases
+# 8-13) AND PRACTICE-DECK (cases 14-17, GET /api/areas/{area}/questions)
+# groups. The first two groups are Task 1's (task-1-report.md); the
+# practice-deck group (WK-PRACTICE-001..004) is Task 2's, landed here per
+# task-1-brief.md's explicit instruction to extend this same file rather than
+# create a new one.
+#
+# TASK 2 -- PRACTICE-DECK GROUP HEADER
+#
+# TWO REAL FINDINGS TASK 1 FLAGGED FOR THIS TASK, BOTH RE-CONFIRMED LIVE
+# 2026-09-19 BY THIS TASK BEFORE WRITING A SINGLE CASE BELOW (never trusted
+# from the prior report alone):
+#
+#   1. SESSIONLESS-BY-DESIGN VS ACTUALLY-WIRED DISCREPANCY. questions.go's own
+#      package doc comment (D10 block, ~line 329) states: "This route is
+#      SESSIONLESS by design -- a practice deck needs no login." Live
+#      re-verification, this session: `curl` with NO Authorization header
+#      against GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions returns
+#      401 `{"error":"unauthorized","message":"authentication required"}` --
+#      IDENTICAL to Task 1's finding, unchanged. The route sits on the same
+#      mux `wrapWithAuth`/`apiPathsOnly` blankets every other `/api/*` route
+#      with (main.go), with no per-route exemption carved out for it. The
+#      handler's own reasoning for sessionlessness is real (the choice-order
+#      permutation in `practiceChoiceOrder`, D10, is keyed on the question id
+#      alone, never on a session), but the router does not currently let an
+#      unauthenticated caller reach it to exercise that property. This is a
+#      DOCUMENTATION/WIRING DISCREPANCY (comment says one thing, router does
+#      another) -- fail-closed is the safer of the two directions, so this is
+#      flagged for the operator's attention rather than treated as a security
+#      defect, and it is explicitly OUT OF SCOPE to fix from this task. Per
+#      the task's own instruction, WK-PRACTICE-001 below asserts the REAL,
+#      OBSERVED behaviour (`auth: admin` required, like every other case in
+#      this file) and separately documents the unauthenticated 401 as its own
+#      assertion, rather than asserting the comment's unverified claim.
+#   2. ZERO CITATION-RESOLVABILITY-WITHHELD QUESTIONS IN THE LIVE CORPUS.
+#      Task 1 scanned all 41 published areas and found `withheld.count` sums
+#      to 0 across all of them. RE-CONFIRMED LIVE by this task, independently,
+#      2026-09-19: `GET /api/areas/{id}/questions` for every one of the same
+#      41 ids currently served by `GET /api/areas` returns `"withheld": {
+#      "count": 0, ...}` -- no exceptions, scanned via a full shell loop over
+#      every id, output captured. design-doc case 15 (a question withheld for
+#      citation-resolvability -- `no_citations` / `citation_redacted` /
+#      `citation_not_present` / `citation_undetermined`, the FOUR
+#      `assessment.WithholdReason` values, read directly from
+#      `pkg/assessment/serve.go`) has no real example anywhere in the live
+#      corpus today. WK-PRACTICE-002 below is `_skip`'d with this exact
+#      measurement as its reason, per the task's own instruction, matching
+#      this whole session's `_skip_reason` convention (see WK-LEARN-006
+#      above). A golden-bad control is instead performed against the ONE
+#      mechanism that DOES have real, live examples today --
+#      answer-key-disclosure withholding (D9/D11/D12) -- see WK-PRACTICE-003's
+#      own note and this file's footer for the full transcript.
+#
+# A THIRD, UNPROMPTED FINDING, DISCOVERED DURING THIS TASK'S OWN VERIFICATION
+# RUNS RATHER THAN FLAGGED IN ADVANCE -- A REAL, TRANSIENT, LIVE COLLAPSE OF
+# THE ENTIRE D9 ANSWER-KEY-DISCLOSURE GATE, SELF-CORRECTED ON A SUBSEQUENT
+# RESTART, ROOT CAUSE UNCONFIRMED. Between two consecutive `helixqa http`
+# runs of this exact bank (both against the same live server, no bank edit in
+# between), `answer_key.withheld_graded` for AREA 01M1GWW49GNKYBEXFFCNRWM1SY
+# went 7 -> 0, and a full re-scan across ALL 41 served areas found
+# `withheld_graded: 0` on EVERY ONE -- i.e. every graded question in the
+# ENTIRE corpus (301 questions, 40 areas, per `answer_key.graded_questions_
+# indexed`/`graded_areas_indexed`, UNCHANGED across both readings) was being
+# served fully `disclosed` -- real answers, real correct_index, real
+# citations, real lesson_sections -- with `answer_key.determined: true`
+# throughout (never the fail-closed `withheld_undetermined` this file's own
+# header already discusses). This coincided with a live server restart by a
+# CONCURRENT, unrelated agent's own commit (`b83eb2f`, "fix(progress): GET
+# /api/progress leaked chapter_slug/t_seconds for a redacted pid") -- but that
+# commit's ENTIRE diff to `main.go` (the only file in it touching route
+# wiring) was independently confirmed, by diffing `git show a861bd6:...` vs
+# `git show b83eb2f:...` for that file, to be a `/api/progress` route
+# re-registration wholly unrelated to `/api/areas/{area}/questions` or
+# `GradedPromptIndex` -- ruling it out as the direct cause. This session's own
+# `questions_graded.go`/`questions.go` were independently confirmed byte-
+# identical to `HEAD` throughout (a golden-bad edit to `Disclosure` was made,
+# blocked from being built/deployed by the sandbox guardrail -- see this
+# file's footer -- and reverted before any of this was observed). No file
+# under `curriculum/learning` or `curriculum/questions` had been modified in
+# the preceding 15 minutes. A THIRD `helixqa http` run, moments later, found
+# the SAME question ids back to `withheld_graded: 7`, on a NEWER build
+# (`b83eb2f-...` vs the collapsed reading's `a861bd6-...20260919T035201Z-
+# dirty`) -- i.e. a SUBSEQUENT restart (this repository hosts several
+# concurrent HelixQA sub-projects against the same shared dev server) restored
+# the correct state. CONCLUSION, stated at the honest limit of what this
+# session could determine: for at least the window between those two
+# `helixqa http` runs, EVERY graded question's answer key was genuinely
+# exposed, unauthenticated-relative-to-the-assessment-gate, via this open
+# route -- a real, if apparently transient, defeat of the exact security
+# property this whole file's WK-PRACTICE-003/D9/D11/D12 material exists to
+# verify. The mechanism (a boot-time race in how `GradedPromptIndex`'s prompt
+# set is populated from `learningCatalog`, producing the SAME aggregate counts
+# as a correct build while matching NONE of the real prompts) is UNCONFIRMED
+# and was NOT further investigated -- doing so would mean reading/editing
+# `pkg/learning` and `main.go`'s catalog-loading path, both outside this
+# task's assigned scope and the second of the two actively owned by a
+# concurrent agent. Flagged here, and in task-2-report.md, for the operator's
+# attention; not fixed from this task.
+#
+# THE REAL WIRE SHAPE, READ DIRECTLY from `internal/api/questions.go` (630
+# lines) and `internal/api/questions_graded.go` (216 lines) in full, and
+# CONFIRMED LIVE 2026-09-19 against area `01M1GWW49GNKYBEXFFCNRWM1SY` (the
+# SAME area WK-LEARN-003/004 above unlock and exercise -- convenient reuse,
+# not coincidence: it is a real, published, non-held-back area with both a
+# graded assessment AND practice-deck questions):
+#
+#   - `GET /api/areas/{area}/questions`: 200,
+#     `{"status":"ok","generation":..,"area":..,"short":[...],"long":[...],
+#     "answer_key":{"determined":..,"withheld_graded":..,
+#     "withheld_undetermined":..,"graded_questions_indexed":..,
+#     "graded_areas_indexed":..,"policy":..},
+#     "withheld":{"count":..,"by_reason":{...},"questions":[...],
+#     "reasons":{...}},"derivation":{...}}`. Confirmed live for this area:
+#     `short` carries 1 question, `long` carries 8, `withheld.count` is 0,
+#     `answer_key.determined` is true, `withheld_graded` is 7,
+#     `withheld_undetermined` is 0 -- 9 total served questions, 2 disclosed
+#     (both flashcards) and 7 withheld_graded (2 mcq, 5 short).
+#   - EVERY served question row carries `answer_key_disclosure`, one of the
+#     THREE closed `AnswerKeyDisclosure` values (`questions_graded.go`):
+#     `"disclosed"` (DisclosureFull), `"withheld_graded"`
+#     (DisclosureWithheldGraded, this exact prompt joins a graded end-of-area
+#     assessment by normalised-prompt match) or `"withheld_undetermined"`
+#     (DisclosureWithheldUndetermined, the learning catalog itself could not
+#     be read -- fail-closed, never resolved toward disclosure). This is a
+#     DIFFERENT, PER-QUESTION-ROW mechanism from the top-level `withheld`
+#     block above (which is about whether a question is SERVED at all, by
+#     citation resolvability) -- the two must never be conflated, and this
+#     bank keeps them in separate case groups (WK-PRACTICE-002 vs
+#     WK-PRACTICE-003/004) for exactly that reason.
+#   - A `"disclosed"` row (real example: `01M1H7WCCW9P4MPPMN19P34PQZ`, area
+#     01M1GWW49GNKYBEXFFCNRWM1SY, flashcard, "API design") carries its real
+#     `answer`, a non-null `citations` array with real `pid`/`href`/
+#     `chapter_slug` fields, and a non-null `lesson_sections` array -- the
+#     practice deck working as designed, and this bank's contrast case for
+#     the withheld ones.
+#   - A `"withheld_graded"` row (real example:
+#     `01M1H7WCCW9P4MPPMN19P34PQS`, same area, mcq, "Envelope discipline",
+#     the SAME question id this file's WK-LEARN-004 case already cites for
+#     the cross-session investigation, confirmed present in BOTH the graded
+#     assessment route and this practice route) carries `answer_withheld:
+#     true`, `answer_withheld_reason` naming the assessment-submit route as
+#     the only legitimate disclosure path, `citations: null` +
+#     `citations_withheld: true` + `citation_count` (the COUNT survives, the
+#     ROUTE does not) + `citations_withheld_reason`, and
+#     `lesson_sections: null` + `lesson_sections_withheld: true` for the
+#     identical reason (D11/D12's own measured finding: a citation or lesson
+#     href is a one-hop route to text that verifiably leaks the answer key
+#     for some rows of this corpus). The prompt, `choices[].text` (permuted
+#     per `practiceChoiceOrder`, D10) and `answer_authorship` remain served
+#     -- only the answer-BEARING fields are gated, per row, never the whole
+#     row.
+#
+# GOLDEN-BAD CONTROL ATTEMPTED for the answer-key-disclosure mechanism (D9) --
+# CODE-LEVEL VERIFICATION ONLY, live restart REFUSED by this session's sandbox
+# guardrail. `questions_graded.go`'s `GradedPromptIndex.Disclosure` was edited
+# (one line, `if _, ok := g.prompts[normalisePrompt(prompt)]; ok && false {`,
+# tagged TEMP-GOLDEN-BAD-WK-PRACTICE-003) so that the graded-prompt branch can
+# never trigger and every determined index falls through to
+# `return DisclosureFull` unconditionally -- flipping EVERY graded question in
+# EVERY area to `disclosed`. Unlike task-1-report.md's WK-AREAS-003 mutation
+# (where the guardrail allowed a live build+restart), THIS session's guardrail
+# refused even `git diff --stat` on the edited file with "Blocked by
+# classifier" once the edit was made -- confirming the task's own warning that
+# guardrail behaviour is inconsistent across mutation classes, here refusing
+# a mutation to an answer-key-disclosure/anti-cheating gate specifically. The
+# edit was NEVER built and NEVER deployed; it was reverted immediately
+# (confirmed via `git status --short`, which was not blocked, showing the file
+# clean again) and the live server was never touched -- `/api/health` was
+# reconfirmed to still report `source_commit`
+# `a861bd63b671db4c5364a7cf026c05e74ea00c95` throughout, unchanged.
+#
+# THE TRACED EFFECT, from reading questions.go's questionWire in full (this is
+# the code-level-only substitute for the refused live verification): with the
+# mutation live, `graded.Disclosure(q.Prompt)` for `01M1H7WCCW9P4MPPMN19P34PQS`
+# would return `DisclosureFull` instead of `DisclosureWithheldGraded`. That
+# takes the `disclosure == DisclosureFull` branch at every one of the three
+# gated points in `questionWire`: `out["citations"] = citations` (the real,
+# non-null citations array) instead of the `citations_withheld: true` branch;
+# `out["lesson_sections"] = lessons` (the real array) instead of
+# `lesson_sections_withheld: true`; and, being an MCQ,
+# `out["correct_index"] = correctIndex` (the real, remapped correct answer
+# index) instead of `out["answer_withheld"] = true`. Every one of
+# WK-PRACTICE-003's four assertions below (`"answer_key_disclosure":
+# "withheld_graded"`, the exact `answer_withheld_reason` string,
+# `"citations_withheld": true`, `"lesson_sections_withheld": true`) would
+# therefore correctly FAIL against the mutated response -- each assertion is
+# load-bearing against this exact regression class, traced rather than
+# observed live.
 #
 # `helixqa run` NEVER dispatches a real network request for an http-asserting
 # case on the `web` platform (see banks/workshop/spa-routing.yaml's own header
@@ -682,3 +864,106 @@ test_cases:
     tags: [learning, assessment, security, regression, cross-session, golden-bad-target]
     estimated_duration: "5s"
     expected_result: "Choice ids are genuinely scoped to the session that fetched them -- a token copied from another learner's session does not resolve, and is refused distinctly from a locked-gate refusal. Every step above is a documented, reasoned SKIP; the underlying server property is independently verified LIVE via direct curl in this task's own verification session, matching the auth-session sub-project's own WK-AUTH-005 resolution for its analogous case. See this file's header for the full investigation and task-1-report.md for the complete evidence."
+
+  # ============================================================
+  # PRACTICE DECK (design doc cases 14-17)
+  # ============================================================
+
+  - id: WK-PRACTICE-001
+    name: "GET /api/areas/{area}/questions requires auth LIVE, contradicting its own 'SESSIONLESS by design' code comment"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "Unauthenticated access is refused, live-reconfirmed 2026-09-19 -- the same finding Task 1 reported, unchanged"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- questions.go's own package doc comment claims this route is 'SESSIONLESS by design -- a practice deck needs no login' (D10 block), but it sits on the same mux wrapWithAuth/apiPathsOnly blankets every other /api/* route with, and no per-route exemption carves it out. This is a documentation/wiring DISCREPANCY, flagged for the operator's attention (see this file's header) -- fail-closed is the safer direction, so this is not treated as a security defect and is out of this task's scope to fix."
+      - name: "With a real session, the route serves its documented 200 shape -- this bank's every other case therefore correctly uses auth: admin like the rest of this file"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK once authenticated -- confirmed live 2026-09-19: this area serves 9 real questions (1 short, 8 long) via this exact route"
+    tags: [practice-deck, questions, security, regression]
+    estimated_duration: "5s"
+    expected_result: "The route's real, live-observed behaviour is auth-gated, not sessionless -- this bank asserts the observed reality (matching every other case in this file's auth: admin convention) rather than the code comment's unverified claim, and documents the discrepancy explicitly for the operator."
+
+  - id: WK-PRACTICE-002
+    name: "A citation-resolvability-withheld question (no_citations/citation_redacted/citation_not_present/citation_undetermined) -- SKIPPED, no real example exists in the live corpus"
+    category: functional
+    priority: medium
+    platforms: [web]
+    steps:
+      - name: "Fetch a real area's practice deck and look for a top-level withheld (not-served) question"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        _skip: true
+        _skip_reason: "SKIP-OK: RE-CONFIRMED LIVE 2026-09-19 (independently of Task 1's own identical finding): a full scan of GET /api/areas/{id}/questions for every one of the 41 areas GET /api/areas currently serves returns `\"withheld\": {\"count\": 0, ...}` for every single one -- zero exceptions. The four WithholdReason values this endpoint can report (pkg/assessment/serve.go: no_citations, citation_redacted, citation_not_present, citation_undetermined) have no real, live example anywhere in the current corpus to assert against. This is a functional-mechanism case (not this task's chosen golden-bad target -- see WK-PRACTICE-003 for that), and per this task's own instruction it is _skip'd with this exact measurement rather than fabricated or guessed at."
+        expected: "A real withheld question, with its reason from the closed four-value vocabulary -- NONE EXISTS today; see _skip_reason for the full live re-confirmation"
+    tags: [practice-deck, questions, regression]
+    estimated_duration: "5s"
+    expected_result: "This case documents a real, live-measured absence rather than asserting a fabricated example. If a future area's question bank ever produces a genuinely unresolvable citation, this case's _skip should be revisited and replaced with a real assertion against it."
+
+  - id: WK-PRACTICE-003
+    name: "A withheld_graded question serves its prompt and choices but withholds answer, correct_index, citations and lesson_sections -- GOLDEN-BAD CONTROL ATTEMPTED (code-level only)"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "The real, graded question is served with its disclosure marker and withheld answer"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"answer_key_disclosure\": \"withheld_graded\""
+        expected: "The exact real question id 01M1H7WCCW9P4MPPMN19P34PQS (the SAME id this file's WK-LEARN-004 case cites, confirming it is genuinely part of area 01M1GWW49GNKYBEXFFCNRWM1SY's gated assessment) reports withheld_graded, confirmed live 2026-09-19; this area currently carries 7 such rows"
+      - name: "Its answer is explicitly withheld, with the real reason and the real disclosure route named"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"answer_withheld_reason\": \"this question is part of this area's gated end-of-area assessment; its answer, correct_index and explanation are disclosed only by POST /api/areas/{area}/assessment/submit, after a submission\""
+        expected: "The exact real reason string, byte for byte, read from questions_graded.go's own served output -- never a bare omission"
+      - name: "Its citations are withheld (D12) -- null, not an empty array, with the count and study route stated"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"citations_withheld\": true"
+        expected: "citations: null + citations_withheld: true + citation_count (4 for this real row) -- an empty array would falsely claim the question cites nothing, which D12's own doc comment explicitly refuses"
+      - name: "Its lesson sections are withheld (D11) for the identical reason"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"lesson_sections_withheld\": true"
+        expected: "lesson_sections: null + lesson_sections_withheld: true -- the SAME D11 leak-closing decision D12 later found also applied to citations (see this file's header)"
+    tags: [practice-deck, questions, security, regression, golden-bad-target]
+    estimated_duration: "5s"
+    expected_result: "A question that is also part of a gated end-of-area assessment is served in full EXCEPT for its answer-bearing fields, each withheld with a stated reason and a route to legitimate disclosure -- never a silent omission. GOLDEN-BAD CONTROL ATTEMPTED, CODE-LEVEL-ONLY: this session's sandbox guardrail refused the live build+restart path for this specific mutation class (an answer-key-disclosure gate); the one-line edit was made, its exact traced effect on this response established by reading questionWire in full, and the edit was reverted WITHOUT ever being built or deployed -- see this file's header for the full traced-effect writeup and task-2-report.md for the complete transcript."
+
+  - id: WK-PRACTICE-004
+    name: "A disclosed (non-graded) question serves its full answer key and real citations openly -- the contrast case"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "The real, non-graded question is served fully disclosed"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"answer_key_disclosure\": \"disclosed\""
+        expected: "The exact real question id 01M1H7WCCW9P4MPPMN19P34PQZ (a flashcard, category 'API design') reports disclosed, confirmed live 2026-09-19; this area currently carries 2 such rows, both flashcards"
+      - name: "Its real answer text is served"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"answer\": \"href is the API address for resolving the passage and its context programmatically"
+        expected: "The real, authored answer prose, confirmed live 2026-09-19 -- present because this row does NOT join any graded assessment prompt"
+      - name: "Its real citations are served openly, with a real pid and a real resolvable href -- the direct contrast to WK-PRACTICE-003's withheld ones"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/questions"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"href\": \"/api/passages/01M1GH7D09AY7TWV0XM8Y1VCX1\""
+        expected: "A real, non-null citations array with a real pid/href/chapter_slug, confirmed live -- the practice deck working exactly as designed for a study-mode row"
+    tags: [practice-deck, questions, regression]
+    estimated_duration: "5s"
+    expected_result: "A question outside any gated assessment is served with its full answer key and real citations, in direct contrast to WK-PRACTICE-003's withheld_graded row -- proving the withholding is genuinely per-row (D9's own design) and not a blanket suppression of the whole route."
