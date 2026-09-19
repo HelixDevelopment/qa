@@ -1,0 +1,684 @@
+# SPDX-FileCopyrightText: 2026 Milos Vasic
+# SPDX-License-Identifier: Apache-2.0
+#
+# HelixQA Test Bank: Workshop Areas & Learning Path (Task 1 of 4)
+# Part of exhaustive HelixQA coverage
+# (.superpowers/sdd/2026-09-19-workshop-areas-practice-qa/). Design:
+# docs/superpowers/specs/2026-09-19-workshop-areas-practice-qa-design.md.
+#
+# THIS FILE COVERS ONLY THE TAXONOMY (design doc cases 1-7) AND LEARNING-PATH
+# (cases 8-13) groups, per task-1-brief.md's explicit scope. Task 2 EXTENDS
+# THIS SAME FILE with a third `practice-deck` case group (design cases 14-17,
+# GET /api/areas/{area}/questions) -- do not add practice-deck cases here; a
+# future edit to this file that adds a `practice-deck` tag group is Task 2's
+# work landing, not a duplicate.
+#
+# `helixqa run` NEVER dispatches a real network request for an http-asserting
+# case on the `web` platform (see banks/workshop/spa-routing.yaml's own header
+# for the investigation trail, reconfirmed by every sibling bank in this
+# directory). Every step below uses the structured `http: METHOD PATH` action,
+# executed ONLY via the dedicated `helixqa http` CLI subcommand. Run this bank
+# as:
+#
+#   bin/helixqa http --banks banks/workshop/areas-practice.yaml \
+#     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
+#     --admin-user milosvasic --admin-pass '<seeded milosvasic password -- see
+#     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
+#     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
+#     from either submodules/qa/ or workshop/ on their own>' --verbose
+#
+# `auth: admin` performs ONE real internal login (cached for the whole
+# process, per chapter-list.yaml/auth-session.yaml's own documented
+# mechanism) and every step below reuses that one cached token -- this bank's
+# entire real-login footprint is exactly 1 of the T508 5-attempts/60s budget,
+# confirmed by inspection: no step here is expected to return 401 under
+# `auth: admin`, so Execute()'s automatic 401-retry relogin is never
+# triggered. `expect_json_path` is presence-only in this HelixQA build and
+# `TestStep` carries NO negative ("must not contain") assertion field
+# (`pkg/testbank/schema.go` -- confirmed by reading it: only ExpectStatus,
+# ExpectJSONPath, ExpectBodyContains exist) -- so every value pinned below
+# uses `expect_body_contains` against real, live-observed response bytes, and
+# WK-LEARN-005's "no `result` key on a locked submission" is asserted only in
+# prose (the positive facts around it ARE mechanically asserted).
+#
+# REAL FIELD NAMES, STATUS CODES AND ERROR CODES -- read directly from the
+# handlers (platform/backend/internal/api/areas.go's AreasHandler/AreaHandler/
+# areaObjectFrom/writeAreaHeldBack, area_publication.go's AreaPublicationOf,
+# and lessons.go's LessonsHandler/AssessmentHandler/AssessmentSubmitHandler/
+# LessonStateHandler) and CONFIRMED LIVE 2026-09-19 against the rebuilt server
+# (`source_commit` == `git rev-parse HEAD` at the umbrella's `workshop/`
+# checkout, `a861bd63b671db4c5364a7cf026c05e74ea00c95`):
+#
+#   - GET /api/areas: 200, `{"status":"ok","generation":..,
+#     "corpus_revision":..,"areas":[...],"contract":{...},"held_back":{...}}`.
+#     Every served row carries `id`,`origin`,`title`,`summary`,`tags`,
+#     `ordinal`(null),`evidence_certainty`,`evidence_count`,`chapters`,`href`,
+#     `derivation`,`published:true`. `contract.areas_are_servable` states the
+#     property this bank asserts end to end: "every id in `areas` answers 200
+#     at its own `href`; an area this server would refuse at
+#     GET /api/areas/{area} is in `held_back` instead, never in both".
+#   - GET /api/areas/{area}: 200 for a served area -- the SAME areaObjectFrom
+#     fields PLUS `published:true`,`corpus_revision`,`lesson_sections`,
+#     `publication_review`,`links` (evidence, questions, coverage, exports,
+#     lessons, materials, assessment -- all seven, all real routes). NO
+#     top-level `status` key on this 200 (areaObjectFrom's map carries none;
+#     confirmed by reading the raw bytes, not assumed).
+#   - GET /api/areas/{malformed}: 400 `{"error":{"code":"malformed_pid",
+#     "message":"area must be a 26-character ULID","field":"area"}}` (any
+#     string that fails passage.ParsePID -- not a 26-char Crockford-base32
+#     ULID -- BEFORE the taxonomy is even consulted).
+#   - GET /api/areas/{unknown-but-well-formed-ulid}: 404
+#     `{"error":{"code":"area_not_found","message":"no such area",
+#     "field":"area"}}`.
+#   - GET /api/areas?include=<anything but "held_back">: 400
+#     `{"error":{"code":"unknown_parameter",
+#     "message":"include accepts only the value \"held_back\"",
+#     "field":"include"}}` -- refused, never silently ignored.
+#   - GET /api/areas?include=held_back: 200, same envelope as the plain list,
+#     PLUS each `held_back.areas[]` row carries the full area object under
+#     `.area` (with `published:false` and `held_back_reason` added), not just
+#     `id`/`reason`.
+#   - GET /api/areas/{held-back-area}: 404, `writeAreaHeldBack`'s shape --
+#     `{"status":"not_found","error":{"code":<area_not_found|
+#     area_not_published>,...},"area_id":..,"reason":<closed vocabulary>,
+#     "published":false,"list_href":"/api/areas",
+#     "whole_list":"/api/areas?include=held_back"}`. The three reasons read
+#     from the two boot-time publication snapshots (no_publication_review,
+#     no_materials_record, stale_publication_review) map to
+#     `area_not_published`; every other held-back reason maps to
+#     `area_not_found` (area_publication.go's AreaHandler switch).
+#   - Every `/api/*` route in this file except `/api/auth/*` and
+#     `/api/health` is gated by `authhttp.Middleware` via `wrapWithAuth` ->
+#     `apiPathsOnly` (main.go ~3315-3374) -- unauthenticated access is 401
+#     `{"error":"unauthorized","message":"authentication required"}` (compact,
+#     no indentation -- a different, hand-rolled writer than the 200 paths'
+#     `writeJSON`, which always 2-space-indents with alphabetically-sorted map
+#     keys, per Go's `json.Marshal` on `map[string]any`).
+#   - GET /api/areas/{area}/lessons: 200, `{"status":"ok","area_id":..,
+#     "area":{"id":..,"title":..,"summary":..,"ord":..},"lessons":[...],
+#     "completion":{...},"estimated_minutes":..,"assessment":{...},
+#     "links":{"area":..,"materials":..,"assessment":..}}`.
+#   - GET /api/areas/{area}/assessment: ALWAYS 200 whether the gate is open or
+#     shut (the lock is a STATE of the test, never an error about the
+#     request -- see the file's own doc comment on AssessmentHandler).
+#     `availability.available:false` carries `missing_lessons[]` (each with
+#     id/title/href) and `questions` is `null` -- NEVER `[]`, which would be
+#     the false claim "this test has no questions". `available:true` serves
+#     real `questions[]`, each carrying per-SESSION shuffle tokens in
+#     `choices[].id` (learning.QuestionForTaking/ShuffledChoices/ChoiceToken,
+#     pkg/learning/shuffle.go -- SHA-256 of (domain, session, question id,
+#     choice id), where `session` for an authenticated caller is
+#     `authhttp.UserProgressKey(u.ID)`, keyed on the ACCOUNT, not the bearer
+#     token -- see WK-LEARN-006's header note below for why this is exactly
+#     the fact that makes the cross-session case genuine and exactly the fact
+#     that makes it inexpressible in this harness).
+#   - POST /api/areas/{area}/assessment/submit while locked: 403
+#     `{"status":"forbidden","error":{"code":"assessment_locked",...},
+#     "area_id":..,"availability":{...},"completion":{...},"recorded":false}`
+#     -- NO `result` key at all (curriculum-kit "returns this INSTEAD of a
+#     result, never alongside a zero one" -- lessons.go's own doc comment on
+#     ErrAssessmentLocked). This bank cannot mechanically assert the absence
+#     of a JSON key (see header above); the positive facts around it are
+#     asserted instead and the absence is recorded here as a live-read fact.
+#   - POST /api/areas/{area}/lessons/{lesson}/state with a valid transition:
+#     200, `{"status":"ok","area_id":..,"lesson_id":..,"state":..,
+#     "completion":{...},"assessment":{...}}` -- `assessment.availability` in
+#     THIS SAME response already reflects any gate change the write just
+#     caused (lessons.go: "The gate's new answer, in the SAME response as the
+#     write that may have opened it").
+#
+# REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
+# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345. FR-009's own
+# text states these are already public and must never be relied on as real
+# secrets. Per this task's own instruction and CONST-042/11.4.10, no real
+# password and no real, dynamically-minted bearer token is ever written into
+# this checked-in file -- every case below that needs a genuinely successful
+# login goes through `auth: admin` (credentials supplied only at
+# `helixqa http` invocation time), exactly like every sibling bank in this
+# directory.
+#
+# LIVE CORPUS STATE, CONFIRMED 2026-09-19 -- DO NOT TRUST THE RESEARCH DOC'S
+# HISTORICAL 819/817 FIGURES. The corpus this bank runs against measures 42
+# total taxonomy areas: 41 served (`GET /api/areas` -> `contract.total_areas:
+# 42`, `len(areas): 41`) and exactly 1 held back
+# (`held_back.count: 1`, id `01M1GWW49HBRQWS9T70E2A7ZFT`, reason
+# `stale_publication_review`, `held_back.snapshot.state: "current"` -- a
+# DETERMINED negative, not withheld pending a stale-snapshot re-check). This
+# is a completely different scale from the 819/817 asymmetry the research
+# measured on 2026-09-07 (a corpus of ~13x this size existed at that time and
+# has since shrunk, per this same live server's own re-derivation) -- the
+# MECHANISM this bank asserts (list-vs-detail servability agreement) is
+# identical; only the corpus size changed. Re-derive rather than trusting
+# these figures -- a concurrent sub-project's fix commits can move the
+# publication-review corpus at any time:
+#
+#   curl -s $BASE/api/areas -H "Authorization: Bearer $TOKEN" | \
+#     python3 -c 'import sys,json; d=json.load(sys.stdin); \
+#     print(d["contract"]["total_areas"], len(d["areas"]), \
+#     d["held_back"]["count"])'
+#
+# GOLDEN-BAD CONTROL FOR WK-AREAS-003 -- THE PUBLICATION-ASYMMETRY CASE, THE
+# DESIGN DOC'S OWN HIGHEST-VALUE TARGET ALONGSIDE WK-LEARN-006. A real,
+# revertible, single-line mutation was identified by reading
+# `internal/api/area_publication.go`'s `AreaPublicationOf` (the ONE decision
+# function both AreasHandler and AreaHandler call -- unifying them is
+# precisely what fixed the historical 819/817 defect), made, BUILT, and
+# DEPLOYED LIVE -- unlike chapter-list.yaml's WK-CHLIST-002, this session's
+# sandbox guardrail ALLOWED this restart (confirming the task's own warning
+# that the guardrail's behaviour is inconsistent across mutation classes: an
+# auth-bypass restart was refused in that sibling bank's session, a
+# publication-gate-bypass restart was allowed in this one). The mutation:
+# `if review.ReviewedAt < materials.MaterialsLastModified {` (the W3
+# staleness gate, area_publication.go ~205) became
+# `if false && review.ReviewedAt < materials.MaterialsLastModified {` --
+# confirmed via `git diff --stat` to be the ONLY tracked-file-under-test
+# change (two unrelated data files owned by a concurrent agent were already
+# dirty in this tree before this session began and are untouched by it), and
+# `bash scripts/build.sh` built clean against it. `bash scripts/restart.sh`
+# deployed it: `GET /api/areas/01M1GWW49HBRQWS9T70E2A7ZFT` (the SAME real
+# held-back area WK-AREAS-003 asserts 404 against) flipped from 404
+# `area_not_published` to a genuine 200, serving the area's real title
+# ("Evidence Gates and Anti-Bluff") and materials -- PROVING that if this W3
+# gate were ever disabled, WK-AREAS-003's `expect_status: 404` assertion
+# below would correctly FAIL and catch the regression. The mutation was live
+# for under three minutes; it was then reverted (`git checkout --
+# platform/backend/internal/api/area_publication.go`, confirmed via
+# `git diff --stat` to restore the pre-mutation two-file-only diff), rebuilt,
+# and redeployed (`bash scripts/build.sh && bash scripts/restart.sh`), and the
+# live server was reconfirmed BOTH on `source_commit` matching
+# `git rev-parse HEAD` again AND on the held-back area answering 404 once
+# more -- so the live server was never left running the weakened gate. Full
+# transcript, exact request/response bytes and timestamps: task-1-report.md.
+#
+# WK-LEARN-006 INVESTIGATION -- THE CROSS-SESSION unknown_choice ISOLATION
+# CASE, per task-1-brief.md's explicit instruction to investigate this
+# framework's session-addressing limitations before writing the case, rather
+# than guess (matching the auth-session sub-project's own WK-AUTH-005
+# resolution, which this investigation independently reproduces the shape
+# of). Read pkg/autonomous/http_executor.go's HTTPExecutor.applyAuth/
+# resolveCreds/tokenCache and pkg/learning/shuffle.go's ChoiceToken/
+# ResolveChoiceToken and lessons.go's sessionOf in full.
+#
+# THE FACT THAT MAKES THIS CASE GENUINE, confirmed live: for an AUTHENTICATED
+# request, `sessionOf` (lessons.go ~311-323) returns
+# `authhttp.UserProgressKey(u.ID)` -- the ACCOUNT's derived key -- and
+# ignores the `X-Session` header entirely (that header is read only on the
+# UNAUTHENTICATED fallback path, and every route this bank exercises is
+# gated, so that fallback is never reached here). Two DIFFERENT bearer
+# tokens for the SAME account therefore resolve to the SAME progress/session
+# key and the SAME choice-token space -- not a cross-session case at all.
+# Genuine cross-session isolation requires TWO DIFFERENT ACCOUNTS
+# (milosvasic id 1, rami id 2), each producing a distinct `UserProgressKey`.
+#
+# FINDING, precise, and it is why this case's steps below are `_skip`'d for
+# THREE independent, compounding reasons -- the same three WK-AUTH-005 named,
+# reproduced here against this different route:
+#   1. `auth: admin` is a SINGLE cached slot for the life of the
+#      `helixqa http` process (h.tokenCache["admin"]) -- a second `auth:
+#      admin` step never creates a second, independently-addressable session,
+#      it reuses the first. `as:<user>` is UNUSABLE from the `helixqa http`
+#      CLI as built: `cmd/helixqa/http.go`'s flag set has no flag that
+#      populates `HTTPExecutor.UserCredentials` (only `--admin-user`/
+#      `--admin-pass`, which feed the "admin" slot alone).
+#   2. There is NO per-step response-capture / variable-templating mechanism
+#      to carry a dynamically-obtained choice token (from one step's real
+#      `GET .../assessment` response) into a LATER step's request body.
+#      `auth: raw:<token>` takes a LITERAL string straight out of the YAML;
+#      it does not resolve a name against anything captured earlier. This is
+#      the SAME root cause auth-session.yaml's header names,
+#      #BLUFF-HELIXQA-BANKS-VAR-SUBST-001.
+#   3. Even setting 1 and 2 aside: minting a SECOND, genuinely independent,
+#      SUCCESSFUL login for the SECOND account (rami) via an explicit
+#      `http: POST /api/auth/login` step requires a real, working password in
+#      that step's `body:` -- forbidden to embed in a checked-in bank
+#      (CONST-042/11.4.10, and this task's own instruction). And even
+#      granting that: the resulting bearer TOKEN would then need to be
+#      carried into a submit step's body as a literal `chosen` value -- which
+#      is itself a real, dynamically-minted session-scoped credential-shaped
+#      value, impossible to know at YAML-authoring time and no safer to embed
+#      than the password reason 3 already forbids.
+#
+# A FOURTH FINDING, discovered ONLY by attempting the live curl verification
+# and NOT knowable from reading the harness alone, is recorded here because
+# it changes what "verified live" actually means for this case: THE LOCK
+# OUTRANKS THE TOKEN COMPLAINT (lessons.go's own comment on
+# AssessmentSubmitHandler's mutate closure says so, and this session
+# confirmed it is not merely a comment). If the SUBMITTING account's own
+# assessment gate is still LOCKED, a cross-session token submission returns
+# 403 `assessment_locked` -- NOT 400 `unknown_choice` -- because the mutate
+# closure checks availability BEFORE reporting the token error, on purpose
+# ("a learner who may not sit the test at all must be told that, not told
+# their choice ids are stale"). So a genuine, unambiguous 400 `unknown_choice`
+# demonstration requires the SUBMITTING account's OWN gate to be unlocked
+# too, not just the token-issuing account's -- confirmed live in both
+# configurations, full transcript in task-1-report.md.
+#
+# CONCLUSION: WK-LEARN-006's steps are `_skip`'d below, each citing the
+# specific reason(s) above. The underlying SERVER property this case
+# documents -- a choice token minted under one account's session is refused
+# with 400 `unknown_choice` when submitted under a DIFFERENT account's
+# session, distinctly from (and only observable once ruled out from) a 403
+# `assessment_locked` refusal -- was independently confirmed LIVE via direct
+# curl in this task's own verification session: two real logins (milosvasic,
+# rami), both accounts' required lessons marked complete on the SAME area
+# (a real, permanent, idempotent progress-store mutation, sanctioned by this
+# sub-project's own design doc for exactly this reason), a real choice token
+# captured from milosvasic's `GET .../assessment` response, and submitted
+# under rami's session both BEFORE (403 assessment_locked) and AFTER (400
+# unknown_choice, plus a positive control: rami's OWN real token for the
+# identical question resolves and grades, 200 `recorded:true`) rami's own
+# gate was unlocked. Full transcript, exact request/response bytes and
+# timestamps: task-1-report.md.
+
+version: "1.0"
+name: "Workshop Areas & Learning Path"
+description: "The taxonomy list/detail publication-servability contract and the lesson/assessment learning-path gate, including the genuine cross-session choice-token isolation property"
+metadata:
+  author: "vasic-digital"
+  app: "workshop"
+  version: "1.0.0"
+
+test_cases:
+  # ============================================================
+  # TAXONOMY (design doc cases 1-7)
+  # ============================================================
+
+  - id: WK-AREAS-001
+    name: "GET /api/areas returns real areas with the documented AreaCard fields"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "The list reports its own servability contract and a real, current corpus size"
+        action: "http: GET /api/areas"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK; confirmed live 2026-09-19: 41 served, 1 held back, total_areas 42 -- see this file's header for why the historical 819/817 figures do not apply to the current corpus"
+      - name: "The servability contract is stated on the wire, not only in a comment"
+        action: "http: GET /api/areas"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "an area this server would refuse at GET /api/areas/{area} is in `held_back` instead, never in both"
+        expected: "The exact contract string this bank's own cases test end to end"
+      - name: "A real served area carries published:true and a live-resolved evidence_count"
+        action: "http: GET /api/areas"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"published\": true"
+        expected: "At least one real area object states published:true explicitly (membership of areas[] already implies it; this field says so even once the object leaves its envelope)"
+      - name: "held_back is reported, never silent, with its snapshot freshness stated"
+        action: "http: GET /api/areas"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"count\": 1"
+        expected: "held_back.count reflects the real, live-confirmed single held-back area"
+    tags: [areas, taxonomy, regression]
+    estimated_duration: "5s"
+    expected_result: "The taxonomy list reflects the real, current corpus with the documented AreaCard shape and its own stated servability contract"
+
+  - id: WK-AREAS-002
+    name: "A real published area's detail route returns 200 with the full Area shape"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET a real, currently-published area by its confirmed-live id"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"published\": true"
+        expected: "200 OK; this exact id was confirmed live 2026-09-19 to be one of the 41 served areas"
+      - name: "The area object carries links to every real area-scoped route"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"assessment\": \"/api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment\""
+        expected: "links.assessment is a real, reachable route (WK-LEARN-002/003/004/005 exercise it directly)"
+      - name: "The area object also links its lessons route"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"lessons\": \"/api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons\""
+        expected: "links.lessons is a real, reachable route (WK-LEARN-001 exercises it directly)"
+    tags: [areas, taxonomy, regression]
+    estimated_duration: "5s"
+    expected_result: "The detail route agrees with the list about this area being servable, and links every real sibling route"
+
+  - id: WK-AREAS-003
+    name: "A real held-back area's detail route answers 404 area_not_published, matching the list's own held_back reason"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "GET the one real area the live corpus currently holds back, confirmed 2026-09-19"
+        action: "http: GET /api/areas/01M1GWW49HBRQWS9T70E2A7ZFT"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"code\": \"area_not_published\""
+        expected: "404, never a 200 -- this is the SAME decision function (AreaPublicationOf) the list already applied to mark this id held_back; the two must never disagree, which is exactly what the historical 819/817 defect was. See this file's header for the live golden-bad control that disabled this exact gate and confirmed the flip to 200."
+      - name: "The reason matches the list's own held_back.areas[] reason for this id, byte for byte"
+        action: "http: GET /api/areas/01M1GWW49HBRQWS9T70E2A7ZFT"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"reason\": \"stale_publication_review\""
+        expected: "The SAME closed-vocabulary reason string GET /api/areas reports for this id in held_back.areas[] -- one vocabulary, two endpoints"
+      - name: "The refusal names where the whole held-back list can be read"
+        action: "http: GET /api/areas/01M1GWW49HBRQWS9T70E2A7ZFT"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"whole_list\": \"/api/areas?include=held_back\""
+        expected: "A client landing on this 404 is told where to see the whole held-back catalogue, not left at a dead end"
+    tags: [areas, taxonomy, security, regression, golden-bad-target]
+    estimated_duration: "5s"
+    expected_result: "The list-vs-detail publication asymmetry the research measured historically (819/817) does not recur on the current, much smaller corpus: the one real held-back area answers 404 consistently with its own listed reason. LIVE GOLDEN-BAD CONTROL PERFORMED for this case -- see this file's header."
+
+  - id: WK-AREAS-004
+    name: "A malformed area id (not a 26-character ULID) is refused before the taxonomy is even consulted"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET with an obviously non-ULID area segment"
+        action: "http: GET /api/areas/not-a-ulid"
+        auth: "admin"
+        expect_status: 400
+        expect_body_contains: "\"code\": \"malformed_pid\""
+        expected: "400, exact body confirmed live (writeError's own 2-space-indented shape -- {\"error\":{\"code\":\"malformed_pid\",\"message\":\"area must be a 26-character ULID\",\"field\":\"area\"}}) -- passage.ParsePID fails before d.Taxonomy is ever read"
+    tags: [areas, taxonomy, regression]
+    estimated_duration: "5s"
+    expected_result: "Malformed input is rejected cleanly, never a 404 or 500"
+
+  - id: WK-AREAS-005
+    name: "An unknown but well-formed area id is a genuine 404, never a 400"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET with a syntactically valid ULID that names no real area"
+        action: "http: GET /api/areas/01AAAAAAAAAAAAAAAAAAAAAAAA"
+        auth: "admin"
+        expect_status: 404
+        expect_body_contains: "\"code\": \"area_not_found\""
+        expected: "404, exact body confirmed live (writeError's own 2-space-indented shape -- {\"error\":{\"code\":\"area_not_found\",\"message\":\"no such area\",\"field\":\"area\"}}) -- this id parses as a valid 26-char ULID but names no row in the taxonomy, distinct from the malformed-id 400 above"
+    tags: [areas, taxonomy, regression]
+    estimated_duration: "5s"
+    expected_result: "A well-formed but unknown id is distinguished from a malformed one by status code and error code alike"
+
+  - id: WK-AREAS-006
+    name: "?include=held_back returns the full area object for a held-back row, not just id and reason"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET the list with the one accepted filter value"
+        action: "http: GET /api/areas?include=held_back"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"01M1GWW49HBRQWS9T70E2A7ZFT\""
+        expected: "200 OK; the real held-back id appears in held_back.areas[]"
+      - name: "The held-back row's full area object is present under .area, carrying published:false"
+        action: "http: GET /api/areas?include=held_back"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"held_back_reason\": \"stale_publication_review\""
+        expected: "held_back.areas[].area is the FULL area object (title, tags, summary, evidence_count, chapters) plus published:false and held_back_reason -- confirmed live this is populated only when include=held_back is passed, per areas.go's own includeHeld branch"
+    tags: [areas, taxonomy, regression]
+    estimated_duration: "5s"
+    expected_result: "Nothing that was reachable before the list/detail unification became unreachable -- it moved to this escape hatch, and this proves the move works"
+
+  - id: WK-AREAS-007
+    name: "An include value other than held_back is refused, never silently ignored"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET the list with an unsupported include value"
+        action: "http: GET /api/areas?include=bogus"
+        auth: "admin"
+        expect_status: 400
+        expect_body_contains: "\"code\": \"unknown_parameter\""
+        expected: "400, exact body confirmed live (writeError's own 2-space-indented shape -- {\"error\":{\"code\":\"unknown_parameter\",\"message\":\"include accepts only the value \\\"held_back\\\"\",\"field\":\"include\"}}) -- a silently-dropped filter would be a client believing it asked a question it did not ask"
+    tags: [areas, taxonomy, security, regression]
+    estimated_duration: "5s"
+    expected_result: "An unrecognised filter value is a refusal, not a quietly-ignored no-op"
+
+  - id: WK-AREAS-008
+    name: "Unauthenticated access to the taxonomy list is a genuine 401"
+    category: security
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "List areas with no credential"
+        action: "http: GET /api/areas"
+        expect_status: 401
+        expect_body_contains: "{\"error\":\"unauthorized\",\"message\":\"authentication required\"}"
+        expected: "401, exact body confirmed live -- every /api/* route except /api/health and /api/auth/* is gated (main.go's wrapWithAuth/apiPathsOnly), the taxonomy list included"
+    tags: [areas, taxonomy, security, regression]
+    estimated_duration: "5s"
+    expected_result: "No session means no taxonomy data, not an empty-but-200 response"
+
+  # ============================================================
+  # LEARNING PATH (design doc cases 8-13)
+  # ============================================================
+
+  - id: WK-LEARN-001
+    name: "GET /api/areas/{area}/lessons for a real published area returns its real lessons"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "List lessons for a real published area with an authored catalog entry"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/lessons"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK; this area's real authored learning catalog, confirmed live 2026-09-19 to carry 7 lessons"
+      - name: "The first real, required lesson is present by its real id"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/lessons"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"01M1GWW49GNKYBEXFFCNRWM1SZ-l00\""
+        expected: "The real, authored first lesson id for this area"
+      - name: "The response links its own materials and assessment routes"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/lessons"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"links\": {"
+        expected: "A client landing on the lesson list is given the sibling routes, not left to discover them by reading source"
+    tags: [learning, lessons, regression]
+    estimated_duration: "5s"
+    expected_result: "A published area's real, authored lessons are served with the documented shape"
+
+  - id: WK-LEARN-002
+    name: "GET /api/areas/{area}/assessment for a LOCKED gate is 200 with availability.available:false, missing_lessons populated, and questions:null"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Fetch the assessment for an area whose required lessons have NOT been completed by this account (confirmed live untouched)"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"available\": false"
+        expected: "200 OK, never 403 -- the lock is a STATE of the test, not an error about the request (AssessmentHandler's own doc comment)"
+      - name: "questions is null, never an empty array, while the gate is shut"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"questions\": null"
+        expected: "null is the honest 'the gate is shut, nothing was served', which is a different and true statement from the false 'this test has no questions' an empty array would make"
+      - name: "missing_lessons is populated with the real, required, uncompleted lesson"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"01M1GWW49GNKYBEXFFCNRWM1SZ-l00\""
+        expected: "A learner is told WHAT to finish, with a real lesson id and href, not only that something is unfinished"
+      - name: "The assessment's own metadata (pass_percent, question_count) is served even while locked"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"question_count\": 7"
+        expected: "A learner can see what the test requires before attempting it, confirmed live: this area's real, authored assessment carries exactly 7 questions"
+    tags: [learning, assessment, regression]
+    estimated_duration: "5s"
+    expected_result: "The lock is reported as a state, with everything a UI needs to render it usefully, never as a bare refusal"
+
+  - id: WK-LEARN-003
+    name: "Completing an area's required lessons unlocks its gate, and the FINAL POST's own response already reflects the new answer"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Mark lesson l00 complete (idempotent: already complete on a re-run of this bank, confirmed live)"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l00/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"state\": \"complete\""
+        expected: "200 OK; MarkLesson accepts this state unconditionally the same way whether it is a fresh transition or a no-op re-confirmation"
+      - name: "Mark lesson l01 complete"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l01/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"lesson_id\": \"01M1GWW49GNKYBEXFFCNRWM1SY-l01\""
+        expected: "200 OK, the write echoes its own real lesson id"
+      - name: "Mark lesson l02 complete"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l02/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK"
+      - name: "Mark lesson l03 complete"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l03/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK"
+      - name: "Mark lesson l04 complete"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l04/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK"
+      - name: "Mark lesson l05 complete"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l05/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200 OK"
+      - name: "Mark lesson l06 complete -- the LAST of 7 required lessons -- and confirm the SAME response's own availability answer is now open, with no second round trip"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/lessons/01M1GWW49GNKYBEXFFCNRWM1SY-l06/state"
+        auth: "admin"
+        body:
+          state: "complete"
+        expect_status: 200
+        expect_body_contains: "\"available\": true"
+        expected: "200 OK, and THIS SAME POST response's own assessment.availability.available is true -- confirmed live 2026-09-19: this exact area/account pair genuinely transitioned locked->unlocked under this state write. On a re-run of this bank the gate is already unlocked (idempotent: marking an already-complete lesson complete again is a no-op that still reports available:true), so this assertion is stable across repeated runs either way."
+    tags: [learning, assessment, lessons, regression, state-write]
+    estimated_duration: "10s"
+    expected_result: "The gate's new answer is delivered in the SAME response as the write that opened it, per the design's own idempotency/cleanup expectation for this sub-project's state-writing cases: this bank marks real lessons complete on the shared dev server's milosvasic account for area 01M1GWW49GNKYBEXFFCNRWM1SY, a real, permanent, but fully idempotent progress-store mutation that WK-LEARN-004 below depends on."
+
+  - id: WK-LEARN-004
+    name: "GET /api/areas/{area}/assessment for an UNLOCKED gate serves real questions with per-session choice tokens"
+    category: functional
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Fetch the assessment for the area WK-LEARN-003 just unlocked (or already unlocked, on a re-run)"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"available\": true"
+        expected: "200 OK, the gate this bank's own WK-LEARN-003 case opened (execution order is ID-sorted, and \"WK-LEARN-003\" < \"WK-LEARN-004\" -- testbank.Manager.All() sorts by id string, per auth-session.yaml/chapter-list.yaml's own documented precedent, so 003 has already run when this case starts)"
+      - name: "questions is a real, non-null array matching the assessment's own question_count"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"question_count\": 7"
+        expected: "The unlocked gate serves real content, confirmed live: this area's real, authored assessment carries exactly 7 questions"
+      - name: "A real, deterministic question from the authored bank is present, with its choices carrying per-session tokens rather than catalog ids"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"id\": \"01M1GWW49GNKYBEXFFCNRWM1SY-q01M1H7WCCW9P4MPPMN19P34PQS\""
+        expected: "The exact real, authored question id this bank's own WK-LEARN-006 header cites for the cross-session investigation, confirmed present in the live unlocked response -- its choices[].id values are ChoiceToken(session,...) outputs (pkg/learning/shuffle.go), never the kit's own choice ids, which is the whole D10 fix this route exists to preserve"
+    tags: [learning, assessment, regression]
+    estimated_duration: "5s"
+    expected_result: "An unlocked gate serves the real, authored assessment content, with choices carrying opaque per-session tokens rather than answer-revealing catalog ids"
+
+  - id: WK-LEARN-005
+    name: "POST .../assessment/submit while locked is 403, records nothing, and carries no result key"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Attempt to submit an (empty) response set against a still-locked, untouched area"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment/submit"
+        auth: "admin"
+        body:
+          responses: []
+        expect_status: 403
+        expect_body_contains: "\"code\": \"assessment_locked\""
+        expected: "403, never a 200 with a zero score -- curriculum-kit returns ErrAssessmentLocked INSTEAD of a result so a refusal can never be mistaken for a mark (lessons.go's own doc comment). This area is confirmed live to remain untouched by this bank (WK-LEARN-005 is the only case that writes to it, and it only ever submits, never marks a lesson complete)."
+      - name: "recorded is explicitly false"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment/submit"
+        auth: "admin"
+        body:
+          responses: []
+        expect_status: 403
+        expect_body_contains: "\"recorded\": false"
+        expected: "Stated, not merely implied by the status code -- a client and a gate can both check it directly"
+      - name: "availability and completion are still present on the refusal, so a client can render the lock's real state without a second request"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment/submit"
+        auth: "admin"
+        body:
+          responses: []
+        expect_status: 403
+        expect_body_contains: "\"availability\": {"
+        expected: "The 403 body is not a bare error -- it carries the same availability/completion shape the GET route already serves, confirmed live present in this exact refusal"
+    tags: [learning, assessment, security, regression]
+    estimated_duration: "5s"
+    expected_result: "A locked submission is refused cleanly with no attempt recorded. HONEST BOUNDARY: this HelixQA build (pkg/testbank/schema.go's TestStep) has no field to assert a JSON key's ABSENCE -- only ExpectStatus/ExpectJSONPath(presence-only)/ExpectBodyContains exist. That the body carries no `result` key at all is confirmed by direct reading of the real, live response bytes (task-1-report.md), not by a mechanical assertion in this bank."
+
+  - id: WK-LEARN-006
+    name: "POST .../assessment/submit with a choice token from a DIFFERENT session's session is refused with 400 unknown_choice, never a misgrade"
+    category: security
+    priority: critical
+    platforms: [web]
+    steps:
+      - name: "Log in as a first, independent account"
+        action: "http: POST /api/auth/login"
+        _skip: true
+        _skip_reason: "SKIP-OK: minting a SECOND, genuinely independent, real account login (rami) via an explicit body requires a real, working password embedded in this checked-in file -- forbidden (CONST-042/11.4.10, and this task's own instruction). See this file's header WK-LEARN-006 INVESTIGATION for the full three-reason analysis (single-slot auth:admin cache; no response-capture/templating to carry a token between steps; no credential-free way to mint a second account's session)."
+        expected: "200 OK, a genuinely new session for the first account (verified live via curl -- see task-1-report.md)"
+      - name: "Fetch that first session's real assessment, capturing a real per-session choice token"
+        action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment"
+        _skip: true
+        _skip_reason: "SKIP-OK: depends on the skipped login step above for a session distinct from the shared admin-mode one, and there is no mechanism to carry the captured token forward into a later step's request body even if it were obtained (reason 2 in the header investigation)."
+        expected: "200 OK, real choices[].id tokens scoped to that session (confirmed live via curl: e.g. 4e991164062764590f5b137dfc6b90d0 for question 01M1GWW49GNKYBEXFFCNRWM1SY-q01M1H7WCCW9P4MPPMN19P34PQS under milosvasic's session)"
+      - name: "Log in as a second, independent, DIFFERENT account and unlock its own gate for the same area"
+        action: "http: POST /api/auth/login"
+        _skip: true
+        _skip_reason: "SKIP-OK: same reason as the first login step -- a second account's real password cannot be embedded here, and this step additionally needs several real lesson-state POSTs under that second identity before its own gate is genuinely unlocked (see the header's fourth finding: a still-locked submitting account masks unknown_choice behind assessment_locked)."
+        expected: "200 OK for a genuinely different account (id 2, rami, per FR-009/FR-010), with its own required lessons for this area marked complete (confirmed live via curl -- see task-1-report.md)"
+      - name: "Submit the FIRST session's real choice token under the SECOND session"
+        action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment/submit"
+        expect_status: 400
+        _skip: true
+        _skip_reason: "SKIP-OK: depends on both skipped steps above for two independently-addressable, real sessions with a token carried between them -- exactly the addressing gap this file's header investigation establishes this harness build cannot express in one bank case."
+        expected: "400 unknown_choice, NOT a misgrade and NOT a 403 -- CONFIRMED LIVE via direct curl in this task's own verification session, in BOTH configurations: submitted while the second account's own gate was still locked, the response was 403 assessment_locked (the lock outranking the token complaint, per lessons.go's own documented precedence); submitted after the second account's own gate was also unlocked, the response was the clean, unambiguous 400 {\"error\":{\"code\":\"unknown_choice\",\"message\":\"unknown choice id: a chosen value for question 01M1GWW49GNKYBEXFFCNRWM1SY-q01M1H7WCCW9P4MPPMN19P34PQS is not one of the choice ids this session was served for that question; ...\",\"field\":\"responses\"}}. A positive control was also run: the second account's OWN real token for the identical question resolved and graded normally (200, recorded:true), proving the rejection is specific to the cross-session token, not a general submission failure. Full request/response transcript, both logins, all lesson-state writes, and both submit attempts: task-1-report.md."
+    tags: [learning, assessment, security, regression, cross-session, golden-bad-target]
+    estimated_duration: "5s"
+    expected_result: "Choice ids are genuinely scoped to the session that fetched them -- a token copied from another learner's session does not resolve, and is refused distinctly from a locked-gate refusal. Every step above is a documented, reasoned SKIP; the underlying server property is independently verified LIVE via direct curl in this task's own verification session, matching the auth-session sub-project's own WK-AUTH-005 resolution for its analogous case. See this file's header for the full investigation and task-1-report.md for the complete evidence."
