@@ -109,6 +109,9 @@
 #     false` because the two groups score on different bm25 indexes -- exactly
 #     the "quiet lie about relevance" invariant I10 in envelope.go refuses to
 #     let through uncaptioned.
+#   - [SUPERSEDED 2026-09-24 -- see "RESOLVED" below: crossrefs now answer 200
+#     `ok` on generation 15; the 503 reading in this bullet was true on
+#     2026-09-19 and is kept only as history.]
 #   - GET /api/passages/{pid}/crossrefs (crossrefs.go's CrossRefsHandler) is
 #     confirmed live to answer 503 `unavailable`/`index_rebuilding_no_fallback`
 #     for EVERY pid tried today (three distinct real, existing, non-redacted
@@ -132,6 +135,30 @@
 #     and a leaked redacted passage, which the golden-bad control below
 #     proves by DISABLING that exact clause and observing NO change in
 #     behaviour.
+#
+# RESOLVED 2026-09-24 (WITHDRAWS the "dark corpus-wide" finding below, by name;
+# it was TRUE when written and is kept verbatim as history). The workshop's
+# prebuilt crossrefs bundle was rebuilt over generation 15 and deployed:
+# `verify-prebuilt-artifacts.sh` 6 PASS, `verify-crossref-currency.sh` CLEAN,
+# and the server log says "prebuilt crossrefs: imported 665560 row(s) into
+# generation 15". Measured LIVE against http://127.0.0.1:8087 with the admin
+# session, for this bank's pid 01M1H861WNDZDZMGEA3C1R2N1P:
+#
+#   HTTP 200, status "ok", generation 15, legs {index: ok, registry: ok},
+#   from_pid echoed, reason null, 20 edges (truncated_by "depth"), each with
+#   depth/href/origin/preview/relation/score/to_pid; anonymous -> 401.
+#   All 20 edge targets resolve through GET /api/passages/{to_pid} (200); this
+#   pid's redacted_omitted is 0.
+#
+# WK-SEARCH-012 was therefore STALE (it still expected the 503) and is
+# rewritten to the current contract. WK-SEARCH-013 stays skipped, but for a
+# DIFFERENT and stated reason: derivation is no longer dark, yet the property it
+# names -- "no edge names a redacted or dangling target" -- needs a per-edge
+# comparison that expect_status / expect_body_contains / a presence-only
+# expect_json_path cannot express, and this pid omits 0 redacted edges, so the
+# drop guard itself is not exercised by it. The dangling-target half WAS
+# checked by hand (20 of 20 resolve); the redacted-drop guard remains
+# code-verified, NOT live-verified.
 #
 # REAL FINDING (out of this bank's direct scope, reported per task
 # instructions): crossref derivation has been DARK, corpus-wide, for OVER TEN
@@ -466,20 +493,32 @@ test_cases:
     expected_result: "Type-ahead genuinely queries the real corpus and returns real, correctly-ranked-and-grouped suggestions"
 
   - id: WK-SEARCH-012
-    name: "GET /api/passages/{pid}/crossrefs for a real pid -- as-observed: unavailable, because crossref derivation is dark corpus-wide (see bank header REAL FINDING)"
+    name: "GET /api/passages/{pid}/crossrefs for a real pid answers ok with real edges from the live generation"
     category: functional
     priority: high
     platforms: [web]
     steps:
-      - name: "GET crossrefs for a real, existing, non-redacted pid (kg_terms:agent's underlying kg_term row)"
+      - name: "GET crossrefs for a real, existing, non-redacted pid (kg_terms:agent's underlying kg_term row) -- status ok"
         action: "http: GET /api/passages/01M1H861WNDZDZMGEA3C1R2N1P/crossrefs"
         auth: "admin"
-        expect_status: 503
-        expect_body_contains: "\"code\": \"index_rebuilding_no_fallback\""
-        expected: "503, reason.code index_rebuilding_no_fallback, legs {index:\"failed\",registry:\"skipped\"}, generation:null, from_pid echoes the requested pid, truncated_by/redacted_omitted both null -- confirmed live and CORRECTLY three-state-shaped (this is a legitimate, honestly-reported unavailable, not a bug). This is NOT the \"ok, with real edges\" case the design doc originally envisioned for this bank: as documented in the bank header's REAL FINDING, crossref derivation has not produced a run for ANY of the last 3 generations (13, 14, 15) over more than 10 days, so EVERY pid in this corpus answers this way today, regardless of which pid is named. This case tests the real, current, honestly-shaped 503 rather than bluffing an \"ok\" response that the live server cannot currently produce for any input."
+        expect_status: 200
+        expect_body_contains: "\"status\": \"ok\""
+        expected: "200, envelope status ok (never the old 503 index_rebuilding_no_fallback, and never a false no_match). Measured live 2026-09-24 on generation 15: legs {index:ok, registry:ok}, 20 edges, reason null."
+      - name: "same request -- from_pid echoes the requested pid"
+        action: "http: GET /api/passages/01M1H861WNDZDZMGEA3C1R2N1P/crossrefs"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"from_pid\": \"01M1H861WNDZDZMGEA3C1R2N1P\""
+        expected: "from_pid is the requested pid, so the answer is about THIS passage and not a canned body"
+      - name: "same request -- both legs ran and succeeded"
+        action: "http: GET /api/passages/01M1H861WNDZDZMGEA3C1R2N1P/crossrefs"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"index\": \"ok\""
+        expected: "legs.index is ok: the derived edges were read from the live generation's index rather than skipped or failed"
     tags: [search, crossrefs, functional, regression]
-    estimated_duration: "5s"
-    expected_result: "The endpoint honestly reports it cannot answer, rather than serving a false no_match, for its real current (dark-derivation) state -- see task-1-report.md for the corpus-wide finding this reflects"
+    estimated_duration: "15s"
+    expected_result: "With derivation live (prebuilt bundle imported for generation 15) the endpoint serves real edges. HISTORY: until 2026-09-24 this case expected 503 index_rebuilding_no_fallback because derivation was dark corpus-wide; that expectation was stale once the bundle was deployed and is WITHDRAWN (see the RESOLVED note in this bank's header)."
 
   - id: WK-SEARCH-013
     name: "Crossrefs to a redacted/dangling target are dropped from the edge list"
@@ -490,7 +529,7 @@ test_cases:
       - name: "Traverse a real pid's crossrefs and confirm no edge points at a redacted or unresolvable target"
         action: "http: GET /api/passages/01M1H861WNDZDZMGEA3C1R2N1P/crossrefs"
         _skip: true
-        _skip_reason: "SKIP-OK: cannot be exercised against this corpus today for the SAME root cause as WK-SEARCH-012 (see bank header REAL FINDING) -- crossref derivation has produced ZERO edges for the live generation (15) or either of the two before it, so crossref.Traverse's R3/X5 drop-redacted-or-dangling-target logic (crossrefs.go's withheldPreview, crossref.Traverse) never runs to completion for ANY pid; every request short-circuits to 503 index_rebuilding_no_fallback before a single edge is evaluated. There is no live edge set in this corpus today against which \"a redacted target is dropped\" could be observed, positively or negatively. Read directly (crossrefs.go's own doc comment, R3/X5): the mechanism IS a real, coded, tested guard (withheldPreview re-resolves each edge's target through the SAME registry and withholds the preview, or the whole edge is dropped by Traverse itself, when the target is redacted/dangling/undetermined) -- this is a code-level statement, not a live-observed one, and is reported as such rather than fabricated as a live PASS."
+        _skip_reason: "SKIP-OK: the ORIGINAL cause (crossref derivation dark corpus-wide) NO LONGER APPLIES -- crossrefs answer 200 ok since 2026-09-24 (see the RESOLVED note in this bank's header; WITHDRAWN by name). Still not expressible here: the property needs a per-edge comparison against the redacted set, which expect_status / expect_body_contains / a presence-only expect_json_path cannot do, and the bank pid omits 0 redacted edges (redacted_omitted: 0), so the drop guard is not exercised by it. Dangling targets were checked by hand: 20 of 20 edge targets resolve via /api/passages/{to_pid}. The redacted-drop guard stays code-verified, NOT live-verified."
         expected: "No edge in the response names a redacted or dangling target as its to_pid (verifiable only once crossref derivation produces at least one run for a live generation -- currently blocked, see bank header)"
     tags: [search, crossrefs, security, regression]
     estimated_duration: "5s"
