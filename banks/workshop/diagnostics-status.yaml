@@ -342,29 +342,29 @@ test_cases:
     expected_result: "web:true is never a lie -- GET / genuinely serves the real bundle whenever health claims it does"
 
   - id: WK-DIAG-004
-    name: "ollama.configured reflects the real live state (today: unconfigured)"
+    name: "ollama.configured reflects the real live state (today: configured and reachable)"
     category: functional
     priority: medium
     platforms: [web]
     steps:
-      - name: "ollama sub-object matches the live, confirmed-unconfigured state exactly"
+      - name: "ollama sub-object matches the live, confirmed-configured state exactly"
         action: "http: GET /api/health"
         expect_status: 200
-        expect_body_contains: "\"configured\": false"
-        expected: "confirmed live 2026-09-19: this deployment runs with no -ollama endpoint configured"
-      - name: "reachable is false when unconfigured (probeOllama never dials out when base is empty)"
+        expect_body_contains: "\"configured\": true"
+        expected: "UPDATED 2026-10-01: the operator re-enabled answering (WORKSHOP_ANSWER_PROVIDER=ollama, workshop/platform/.env, dated 2026-09-30), the server was rebuilt and restarted, and this was confirmed live: -ollama now names a real endpoint. Was 'configured: false' while answering was off since 2026-09-25 -- see this case's prior revision for that state (git history)."
+      - name: "reachable is true (probeOllama's real GET <base>/api/tags genuinely succeeded)"
         action: "http: GET /api/health"
         expect_status: 200
-        expect_body_contains: "\"reachable\": false"
-        expected: "probeOllama's own short-circuit: base==\"\" returns immediately with Reachable left at its zero value, no HTTP call attempted"
-      - name: "detail explains why, with the exact real message"
+        expect_body_contains: "\"reachable\": true"
+        expected: "UPDATED 2026-10-01: confirmed live -- probeOllama's real HTTP GET to the configured endpoint's /api/tags returned 200, so Reachable is genuinely true, not merely Configured. Was false (short-circuited, no dial attempted at all) while unconfigured."
+      - name: "url names the real configured Ollama endpoint"
         action: "http: GET /api/health"
         expect_status: 200
-        expect_body_contains: "\"detail\": \"no -ollama endpoint configured\""
-        expected: "the exact literal probeOllama sets on the base==\"\" branch (main.go:2801) -- confirmed live byte-for-byte"
+        expect_body_contains: "\"url\": \"http://127.0.0.1:11434\","
+        expected: "UPDATED 2026-10-01: replaces the former 'detail' assertion -- ollamaStatus.Detail (main.go) carries `json:\"detail,omitempty\"`, and probeOllama only ever sets Detail on an error/non-200 branch; on the real success path it stays the empty string and the key is genuinely ABSENT from the response body (confirmed live: no 'detail' key at all when configured:true, reachable:true), so the former exact-message pin on 'no -ollama endpoint configured' no longer applies, and is not replaced with a presence check on a key that is honestly not there. Pinning the real reachable endpoint's url is the equivalent live, honest assertion for this now-healthy state."
     tags: [diagnostics, health, ollama, regression]
     estimated_duration: "10s"
-    expected_result: "ollama.configured/reachable/detail together honestly describe the real live deployment's Ollama wiring. The other two probeOllama states (configured:true, reachable:false|true) are a DOCUMENTED, untested gap -- see bank header cross-cutting note; exercising them needs a real or fake Ollama endpoint configured on the shared live deployment, out of this bank's scope."
+    expected_result: "UPDATED 2026-10-01: ollama.configured/reachable/url together honestly describe the real live deployment's Ollama wiring now that answering is re-enabled. The former configured:false/reachable:false/detail state this case asserted is superseded; the previously-documented gap (configured:true, reachable:false -- configured but unreachable) remains a DOCUMENTED, untested state, now the ONLY untested probeOllama branch -- exercising it would need the configured endpoint to be made deliberately unreachable on the shared live deployment, out of this bank's scope."
 
   - id: WK-DIAG-005
     name: "Authenticated GET /api/index/status returns the real live ok shape"
