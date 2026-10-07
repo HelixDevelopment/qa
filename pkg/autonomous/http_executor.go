@@ -274,8 +274,16 @@ func (h *HTTPExecutor) Execute(
 	if err != nil {
 		return ActionResult{Success: false, Message: fmt.Sprintf("http: request failed: %v", err)}
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	if readErr != nil {
+		// A body cut short cannot prove anything about what it did not
+		// contain: a negative assertion over a truncated body would pass
+		// even if the forbidden text was in the unread part.
+		return ActionResult{Success: false, Message: fmt.Sprintf(
+			"http: %s %s → reading the response body failed after %d byte(s): %v",
+			method, path, len(body), readErr)}
+	}
 
 	// Article XI §11.5: 401 on a request that USED a cached
 	// bearer token usually means the cached token was invalidated
@@ -325,8 +333,13 @@ func (h *HTTPExecutor) Execute(
 					}
 				}
 				if retryResp, retryErr := h.HTTPClient.Do(retryReq); retryErr == nil {
-					retryBytes, _ := io.ReadAll(retryResp.Body)
+					retryBytes, retryReadErr := io.ReadAll(retryResp.Body)
 					retryResp.Body.Close()
+					if retryReadErr != nil {
+						return ActionResult{Success: false, Message: fmt.Sprintf(
+							"http: %s %s → reading the retried response body failed after %d byte(s): %v",
+							method, path, len(retryBytes), retryReadErr)}
+					}
 					resp = retryResp
 					body = retryBytes
 				}
@@ -353,6 +366,21 @@ func (h *HTTPExecutor) Execute(
 			Success: false,
 			Message: fmt.Sprintf("http: response body missing %q (body: %s)",
 				step.ExpectBodyContains, truncateOutput(body, 200)),
+		}
+	}
+	if step.ExpectBodyNotContains != nil {
+		if *step.ExpectBodyNotContains == "" {
+			return ActionResult{
+				Success: false,
+				Message: "http: expect_body_not_contains is empty — it would match every body, so the assertion is vacuous",
+			}
+		}
+		if strings.Contains(string(body), *step.ExpectBodyNotContains) {
+			return ActionResult{
+				Success: false,
+				Message: fmt.Sprintf("http: response body must not contain %q but does (body: %s)",
+					*step.ExpectBodyNotContains, truncateOutput(body, 200)),
+			}
 		}
 	}
 	if step.ExpectJSONPath != "" {

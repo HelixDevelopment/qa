@@ -9,6 +9,7 @@
 package testbank
 
 import (
+	"fmt"
 	"strings"
 
 	"digital.vasic.challenges/pkg/challenge"
@@ -320,6 +321,28 @@ type TestStep struct {
 	// "do not check".
 	ExpectBodyContains string `yaml:"expect_body_contains,omitempty" json:"expect_body_contains,omitempty"`
 
+	// ExpectBodyNotContains is a substring that must NOT appear in
+	// the HTTP response body. It is a pointer so an explicitly empty
+	// value is distinguishable from an absent one: "" would match
+	// every body and make the step unable to pass, so it is refused
+	// at load time (TestCase.IsValid) and again at run time. nil
+	// means "do not check".
+	//
+	// MATCHING IS RAW: the substring is searched in the response
+	// bytes exactly as received — case-SENSITIVE, and with NO
+	// decoding of JSON \uXXXX escapes. A forbidden value that the
+	// server may emit upper-cased, or escaped (any non-ASCII text),
+	// can therefore slip past this assertion; an ASCII identifier
+	// such as a ULID cannot, because JSON encoders do not escape it.
+	//
+	// Two load-time rules (TestCase.IsValid) keep it from passing
+	// vacuously: it is accepted ONLY on an `http:` action (no other
+	// executor reads it), and the step must also carry a POSITIVE
+	// assertion — expect_status, expect_body_contains or
+	// expect_json_path — because a negative assertion alone passes on
+	// a 500, an empty body or an error envelope.
+	ExpectBodyNotContains *string `yaml:"expect_body_not_contains,omitempty" json:"expect_body_not_contains,omitempty"`
+
 	// Skip, when true, causes the runner to mark this step
 	// SKIPPED with the reason in SkipReason instead of executing
 	// it. Article XI §11.5: an explicit, reasoned skip is
@@ -458,6 +481,29 @@ func (tc *TestCase) IsValid() string {
 	}
 	if tc.Name == "" {
 		return "test case " + tc.ID + " missing name"
+	}
+	for i := range tc.Steps {
+		st := &tc.Steps[i]
+		nc := st.ExpectBodyNotContains
+		if nc == nil {
+			continue
+		}
+		if *nc == "" {
+			return fmt.Sprintf("test case %s step %d: expect_body_not_contains is empty — "+
+				"an empty forbidden substring matches every body, so the assertion is vacuous",
+				tc.ID, i)
+		}
+		if kind, _ := st.ParseAction(); kind != ActionTypeHTTP {
+			return fmt.Sprintf("test case %s step %d: expect_body_not_contains is only read by "+
+				"an http: action, but this step's action is %q — on any other kind the "+
+				"assertion would be silently ignored", tc.ID, i, string(kind))
+		}
+		if st.ExpectStatus == 0 && st.ExpectBodyContains == "" && st.ExpectJSONPath == "" {
+			return fmt.Sprintf("test case %s step %d: expect_body_not_contains has no positive "+
+				"assertion beside it (expect_status, expect_body_contains or expect_json_path) — "+
+				"a negative assertion alone passes on a 500, an empty body or an error envelope",
+				tc.ID, i)
+		}
 	}
 	return ""
 }

@@ -142,6 +142,7 @@ func collectUnassertedHTTPSteps(t *testing.T, dir string) (violations []string, 
 				}
 				has := st.ExpectStatus != 0 ||
 					st.ExpectBodyContains != "" ||
+					st.ExpectBodyNotContains != nil ||
 					st.ExpectJSONPath != ""
 				if !has {
 					violations = append(violations, fmt.Sprintf(
