@@ -198,7 +198,7 @@
 # ordering-dependent comment below assumes exactly that.
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345 -- ALREADY
+# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI> -- ALREADY
 # PUBLIC per that spec's own text, and per that same text and CONST-042/
 # 11.4.10, NEVER written into this file as a real, working credential. Every
 # case needing a genuinely successful login uses `auth: admin` (credentials

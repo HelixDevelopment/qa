@@ -433,42 +433,55 @@ test_cases:
     expected_result: "limit is clamped when out of range and rejected only when genuinely non-numeric -- the real, read handler behaviour, not an assumption"
 
   - id: WK-SEARCH-009
-    name: "A pure-punctuation query lands in no_match (confirmed live, not assumed)"
+    name: "A pure-punctuation query is a well-formed request: 200, the lexical leg runs ok (no 400, no unavailable)"
     category: functional
     priority: medium
     platforms: [web]
     steps:
-      - name: "GET /api/search?q=... -- the design doc flagged this branch as unconfirmed; confirmed live here"
+      - name: "GET /api/search?q=... answers 200 (never 400 unknown_parameter, never a 5xx)"
         action: "http: GET /api/search?q=..."
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"status\": \"no_match\""
-        expected: "200 OK, status no_match -- confirmed live: FTS5's MATCH parser (BuildMatch, lexical.go) produces no usable match term from bare punctuation, so the lexical leg runs, reports \"ok\", and finds zero rows -- a determined negative, not a 400 and not unavailable"
+        expect_body_contains: "\"query\": \"...\""
+        expected: "200 OK with the query echoed back. Bare punctuation is a well-formed query, not a malformed request: FTS5's MATCH parser (BuildMatch, lexical.go) produces no usable match term from it, but that is a lexical NO-HIT, not a fault."
+      - name: "The lexical leg ran and reported ok -- punctuation does not fail the leg"
+        action: "http: GET /api/search?q=..."
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"lexical\": \"ok\""
+        expected: "legs.lexical is \"ok\" (the leg ran and found zero rows), not \"failed\". RE-BASED 2026-10-07: this case used to assert status no_match. Since the semantic leg went live, the semantic leg ALWAYS returns nearest neighbours for any text, so status is no longer no_match for a query the lexical leg cannot match -- the overall status depends on the embedding scores, which is not a contract a bank should pin. The stable, contractual part is the one asserted here: well-formed request, lexical leg ok. A genuine no_match is covered by WK-SEARCH-015."
     tags: [search, functional, regression]
     estimated_duration: "5s"
-    expected_result: "Bare punctuation is a well-formed, matchless query, not a malformed request"
+    expected_result: "Bare punctuation is a well-formed, lexically matchless query: 200 with the lexical leg ok, not a malformed request"
 
   - id: WK-SEARCH-010
-    name: "Redaction at the HTTP search level: a query matching ONLY a redacted passage returns zero hits, not the passage"
+    name: "Redaction at the HTTP level: the redacted passage is 410 before and after a search over its own distinguishing term, that search answers 200, and the redacted pid is absent from its results"
     category: security
     priority: critical
     platforms: [web]
     steps:
-      - name: "Confirm the redacted passage genuinely exists and is genuinely redacted (410), so the search assertion below is meaningful"
+      - name: "Confirm the redacted passage genuinely exists and is genuinely redacted (410), so the steps below are meaningful"
         action: "http: GET /api/passages/01M1ET0MFK3B0DMZABYV586P81"
         auth: "admin"
         expect_status: 410
         expect_body_contains: "\"status\": \"redacted\""
-        expected: "410, confirming this pid is a REAL passage that genuinely exists and is genuinely redacted (reason_code unreleased_commercial_plan_not_for_export, cross-referenced from curriculum/redactions.jsonl against curriculum/passages.jsonl -- a distinguishing term was found by building a whole-corpus word index over all 33440 rows and selecting a word that appears in EXACTLY ONE row, this redacted one)"
-      - name: "A search for that passage's own unique, distinguishing, non-personal term returns no_match, not the passage"
+        expected: "410, confirming this pid is a REAL passage that genuinely exists and is genuinely redacted (a transcript_segment flagged redacted in curriculum/passages.jsonl, reason_code unreleased_commercial_plan_not_for_export in curriculum/redactions.jsonl)."
+      - name: "A search for that passage's own distinguishing term answers 200 and the redacted pid is ABSENT from the response (redaction never breaks retrieval, and never leaks into it)"
         action: "http: GET /api/search?q=documentations"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"status\": \"no_match\""
-        expected: "200 OK, no_match -- confirmed live: the term \"documentations\" appears in exactly ONE passage in the entire 33440-row corpus (verified by direct word-index construction over curriculum/passages.jsonl), that passage is redacted (previous step), and the search genuinely returns ZERO hits for it despite the passage existing. GOLDEN-BAD CONTROL RUN (see bank header, the highest-value control in this bank): the runtime `AND p.redacted = 0` SQL clause (lexical.go) was disabled (mutated to a tautology), rebuilt and restarted live -- the SAME query STILL returned no_match, no change. Root-caused via a direct, live, read-only sqlite3 query against the mounted index volume: the redacted row has NULL text and is genuinely absent from the passages_fts table it would need to be in to match at all (submodules/passage's Registry.BuildDB never inserts a redacted row into the FTS index in the first place -- structural exclusion, not a query-time filter). The mutation was reverted, rebuilt, restarted; behaviour is unchanged (still no_match) because it was never the operative control. See bank header REAL FINDING / GOLDEN-BAD CONTROLS sections and task-1-report.md for the full transcript."
+        expect_body_contains: "\"query\": \"documentations\""
+        expect_body_not_contains: "01M1ET0MFK3B0DMZABYV586P81"
+        expected: "200 OK, the query echoed back (a POSITIVE control: an empty body or an error envelope cannot satisfy it, and the loader refuses a negative assertion with no positive companion), and the body does not contain the redacted passage's id (expect_body_not_contains; raw-body, case-sensitive match, which is sound for an ASCII ULID; needs a helixqa build that has the field, older runners reject the bank at load). The overall status (ok vs no_match) depends on semantic nearest-neighbour scores and is NOT pinned here (same reasoning as WK-SEARCH-009). History: this step used to assert no_match because the term appeared in exactly one passage (the redacted one) and the lexical leg found nothing once that row was excluded from the FTS index (structural exclusion in submodules/passage Registry.BuildDB, not a query-time filter)."
+      - name: "After the search the passage is STILL 410 -- searching its words does not resurrect it"
+        action: "http: GET /api/passages/01M1ET0MFK3B0DMZABYV586P81"
+        auth: "admin"
+        expect_status: 410
+        expect_body_contains: "\"status\": \"redacted\""
+        expected: "410 redacted again."
     tags: [search, security, redaction, regression]
     estimated_duration: "10s"
-    expected_result: "A redacted passage's own distinguishing words never surface a hit for it, and this bank proves both the observable behaviour AND the structural mechanism behind it"
+    expected_result: "The redacted passage stays withheld, the search over its distinguishing term stays a normal 200 envelope, and that envelope never contains the redacted pid. Priority is critical again (demoted to high on 2026-10-07 while the runner had no negative assertion) because the step now asserts the risk its security tag names. LIMIT that remains: it asserts the PID is absent for one query, not that no suppressed TEXT surfaces for every query; the all-677-pids leak probe and platform/gates/verify-suppressed-residue.sh cover that outside this bank."
 
   - id: WK-SEARCH-011
     name: "GET /api/suggest returns real suggestions for a real prefix"
@@ -549,3 +562,31 @@ test_cases:
     tags: [search, security, regression]
     estimated_duration: "5s"
     expected_result: "No session means no search access, proven by a genuine live mutate/restore cycle, not merely asserted"
+
+  - id: WK-SEARCH-015
+    name: "A query with no lexical term and no above-floor neighbour is a determined no_match, with its nearest misses reported below the floor"
+    category: functional
+    priority: high
+    platforms: [web]
+    steps:
+      - name: "GET /api/search?q=zzqxjvkw (a token that exists nowhere in the corpus) answers 200 no_match"
+        action: "http: GET /api/search?q=zzqxjvkw"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"status\": \"no_match\""
+        expected: "200 OK, status no_match -- confirmed live 2026-10-07 at generation 18: both legs ran (lexical ok, semantic ok), the lexical leg found no row and no semantic neighbour cleared the relevance floor, so the envelope is a DETERMINED negative, not unavailable and not ok."
+      - name: "The nearest misses are reported, each explicitly below the floor (the answer is no_match, not 'nothing was looked at')"
+        action: "http: GET /api/search?q=zzqxjvkw"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"above_floor\": false"
+        expected: "near_misses[] carries the closest neighbours with above_floor false -- the field that distinguishes 'looked and found nothing relevant' from 'did not look'."
+      - name: "Both legs reported ok -- a no_match is only determined when no leg failed"
+        action: "http: GET /api/search?q=zzqxjvkw"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"lexical\": \"ok\""
+        expected: "legs.lexical ok (a failed leg would make this unavailable, never no_match)."
+    tags: [search, functional, regression]
+    estimated_duration: "10s"
+    expected_result: "A genuinely matchless query is a determined no_match with below-floor near misses, and only when every enabled leg ran"

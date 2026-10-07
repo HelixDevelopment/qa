@@ -310,7 +310,7 @@
 #     write that may have opened it").
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345. FR-009's own
+# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. FR-009's own
 # text states these are already public and must never be relied on as real
 # secrets. Per this task's own instruction and CONST-042/11.4.10, no real
 # password and no real, dynamically-minted bearer token is ever written into
@@ -694,8 +694,8 @@ test_cases:
         action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"id\": \"01M1GWW49GNKYBEXFFCNRWM1SZ-l00\""
-        expected: "A learner is told WHAT to finish, with a real lesson id and href, not only that something is unfinished"
+        expect_body_contains: "\"id\": \"01M1GWW49GNKYBEXFFCNRWM1SZ-l06\""
+        expected: "A learner is told WHAT to finish, with a real lesson id, not only that something is unfinished. Pinned to the LAST required lesson (l06), RE-MEASURED 2026-10-07: this admin account has since completed l00 of this area (complete_of_required 1 of 7), so l00 is correctly no longer listed as missing -- the previous pin assumed an untouched account, which is state this bank's own runs mutate. l06 is the lesson nothing in this bank completes; if it ever fails, read availability.missing_lessons live before changing the pin."
       - name: "The assessment's own metadata (pass_percent, question_count) is served even while locked"
         action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SZ/assessment"
         auth: "admin"
