@@ -531,7 +531,7 @@ test_cases:
         expected: "legs.index is ok: the derived edges were read from the live generation's index rather than skipped or failed"
     tags: [search, crossrefs, functional, regression]
     estimated_duration: "15s"
-    expected_result: "With derivation live (prebuilt bundle imported for generation 15) the endpoint serves real edges. HISTORY: until 2026-09-24 this case expected 503 index_rebuilding_no_fallback because derivation was dark corpus-wide; that expectation was stale once the bundle was deployed and is WITHDRAWN (see the RESOLVED note in this bank's header)."
+    expected_result: "With derivation live (prebuilt bundle imported for generation 15) the endpoint serves real edges. HISTORY: until 2026-09-24 this case expected 503 index_rebuilding_no_fallback because derivation was dark corpus-wide; that expectation was stale once the bundle was deployed and is WITHDRAWN (see the RESOLVED note in this bank's header). PRECONDITION (added 2026-10-08, no assertion changed): this case describes the state AFTER the vector embed is restored. Generation 20 was deliberately built with the embed deferred (WORKSHOP_OLLAMA_URL pointed at a dead port, host memory exhausted), so crossrefs derivation is skipped (it refuses a partly embedded corpus) and the endpoint answers 503 unavailable. It is EXPECTED TO FAIL until the offline embed is transplanted and the server is restarted with the real Ollama URL; do not rewrite it to the dark state, and do not _skip it (a skip would hide a real regression after the embed lands)."
 
   - id: WK-SEARCH-013
     name: "Crossrefs to a redacted/dangling target are dropped from the edge list"
@@ -589,4 +589,4 @@ test_cases:
         expected: "legs.lexical ok (a failed leg would make this unavailable, never no_match)."
     tags: [search, functional, regression]
     estimated_duration: "10s"
-    expected_result: "A genuinely matchless query is a determined no_match with below-floor near misses, and only when every enabled leg ran"
+    expected_result: "A genuinely matchless query is a determined no_match with below-floor near misses, and only when every enabled leg ran PRECONDITION (added 2026-10-08, no assertion changed): this case describes the state AFTER the vector embed is restored. Generation 20 was deliberately built with the embed deferred (WORKSHOP_OLLAMA_URL pointed at a dead port, host memory exhausted), so the semantic leg is skipped, so near_misses with above_floor=false are not reported. It is EXPECTED TO FAIL until the offline embed is transplanted and the server is restarted with the real Ollama URL; do not rewrite it to the dark state, and do not _skip it (a skip would hide a real regression after the embed lands)."
