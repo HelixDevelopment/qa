@@ -437,19 +437,23 @@ func (ste *StructuredTestExecutor) performAction(
 		if shCmd.ProcessState != nil {
 			exitCode = shCmd.ProcessState.ExitCode()
 		}
-		if exitCode != 0 {
-			return ActionResult{Success: false, Message: fmt.Sprintf(
-				"shell exited %d: %s", exitCode,
-				truncateOutput(shOut, 200))}
-		}
-		if shErr != nil {
-			// Spawn/timeout error with no non-zero exit code recorded.
+		if shCmd.ProcessState == nil {
+			// Spawn failure: the command never ran, so it can satisfy no
+			// expectation (expect_exit included).
 			return ActionResult{Success: false, Message: fmt.Sprintf(
 				"shell error: %v (out: %s)", shErr,
 				truncateOutput(shOut, 200))}
 		}
+		// The verdict comes from the SAME function the bank-driven runner
+		// uses (testbank.TestStep.CheckShellOutcome): no expect_exit means
+		// exit 0, expect_exit N means exactly N, and expect_output_contains
+		// is read from the combined stdout+stderr.
+		if ok, why := step.CheckShellOutcome(exitCode, string(shOut)); !ok {
+			return ActionResult{Success: false, Message: fmt.Sprintf(
+				"%s: %s", why, truncateOutput(shOut, 200))}
+		}
 		return ActionResult{Success: true, Message: fmt.Sprintf(
-			"shell exit=0: %s", truncateOutput(shOut, 200))}
+			"shell exit=%d: %s", exitCode, truncateOutput(shOut, 200))}
 
 	case testbank.ActionTypeSleep:
 		// Sleep for specified milliseconds

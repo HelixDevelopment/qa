@@ -154,41 +154,20 @@ func captureTwinLog(t *testing.T) *strings.Builder {
 	return &sb
 }
 
-// The two legacy keys existing banks carry are ACCEPTED but REPORTED: a dead
-// assertion must never be silent, and rejecting it would stop three shipped
-// banks loading.
-func TestLoadFile_LegacyIgnoredAssertionKeyLoadsButWarnsLoudly(t *testing.T) {
-	logs := captureTwinLog(t)
-	bf, err := LoadFile(writeNCBank(t, unknownExpectHead+"        expect_exit: 0\n        expect_output_contains: \"ok\"\n"))
-	require.NoError(t, err)
-	require.Len(t, bf.TestCases, 1)
-	out := logs.String()
-	assert.Contains(t, out, "expect_exit")
-	assert.Contains(t, out, "expect_output_contains")
-	assert.Contains(t, out, "assert NOTHING")
-}
-
-// A step with only known keys must not log anything (no warning noise).
-func TestLoadFile_CleanBankLogsNoLegacyWarning(t *testing.T) {
-	logs := captureTwinLog(t)
-	_, err := LoadFile(writeNCBank(t, unknownExpectHead))
-	require.NoError(t, err)
-	assert.NotContains(t, logs.String(), "WARNING")
-}
-
-// The legacy set is closed: a key NEAR a legacy one is still a load error.
-func TestLoadFile_NearLegacyKeyIsStillLoadError(t *testing.T) {
+// A key NEAR a real assertion key is still a load error: expect_exit and
+// expect_output_contains are now real keys, but expect_exit_code is not.
+func TestLoadFile_NearMissOfARealAssertionKeyIsStillLoadError(t *testing.T) {
 	_, err := LoadFile(writeNCBank(t, unknownExpectHead+"        expect_exit_code: 0\n"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expect_exit_code")
 }
 
-// Pins the allowlist to reality in BOTH directions, over every bank file:
-// every key the corpus actually carries without a struct field must be in
-// legacyIgnoredAssertionKeys (otherwise LoadFile errors and this test fails),
-// and every allowlist entry must still be used by some bank (otherwise the
-// entry is stale and must be deleted, so the list can only shrink).
-func TestLegacyIgnoredAssertionKeysMatchTheRealCorpus(t *testing.T) {
+// Pins the strict rule to reality over EVERY bank file: all of them must load
+// (no key is silently dropped and none needs an allowlist), and the walk must
+// have seen the real corpus or this test is vacuous. The former legacy
+// allowlist for expect_exit / expect_output_contains is gone because both
+// keys are now evaluated; a new unknown expect* key in any bank fails here.
+func TestEveryBankInTheCorpusLoadsUnderTheStrictRule(t *testing.T) {
 	logs := captureTwinLog(t)
 	root := filepath.Join("..", "..", "banks")
 	loaded := 0
@@ -202,21 +181,13 @@ func TestLegacyIgnoredAssertionKeysMatchTheRealCorpus(t *testing.T) {
 			return nil
 		}
 		if _, lerr := LoadFile(p); lerr != nil {
-			t.Errorf("bank %s must load under the narrow rule: %v", p, lerr)
+			t.Errorf("bank %s must load under the strict rule: %v", p, lerr)
 		}
 		loaded++
 		return nil
 	})
 	require.NoError(t, err)
 	require.Greater(t, loaded, 100, "the walk must see the real corpus, or this test is vacuous")
-
-	used := map[string]bool{}
-	for key := range legacyIgnoredAssertionKeys {
-		if strings.Contains(logs.String(), `assertion key "`+key+`"`) {
-			used[key] = true
-		}
-	}
-	for key := range legacyIgnoredAssertionKeys {
-		assert.True(t, used[key], "legacy allowlist entry %q is no longer used by any bank: delete it", key)
-	}
+	assert.NotContains(t, logs.String(), "assert NOTHING",
+		"no bank may carry an assertion key that nothing evaluates")
 }

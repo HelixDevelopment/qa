@@ -57,12 +57,12 @@ func knownStepKeys() map[string]bool {
 //
 // "expected" (the prose description) is a real field, so it is in the known
 // set and is never confused with an assertion key.
-func rejectUnknownExpectKeys(data []byte) (ignored map[string]int, err error) {
+func rejectUnknownExpectKeys(data []byte) error {
 	var root yaml.Node
 	// JSON is a YAML subset, so one node walk serves both formats. A syntax
 	// error was already reported by the typed decode that ran before this.
 	if yerr := yaml.Unmarshal(data, &root); yerr != nil || len(root.Content) == 0 {
-		return nil, nil
+		return nil
 	}
 	known := knownStepKeys()
 	var bad []string
@@ -76,13 +76,6 @@ func rejectUnknownExpectKeys(data []byte) (ignored map[string]int, err error) {
 						for j := 0; st.Kind == yaml.MappingNode && j+1 < len(st.Content); j += 2 {
 							sk := st.Content[j]
 							if strings.HasPrefix(sk.Value, "expect") && !known[sk.Value] {
-								if legacyIgnoredAssertionKeys[sk.Value] {
-									if ignored == nil {
-										ignored = map[string]int{}
-									}
-									ignored[sk.Value]++
-									continue
-								}
 								bad = append(bad, fmt.Sprintf("line %d: unknown assertion key %q", sk.Line, sk.Value))
 							}
 						}
@@ -98,30 +91,9 @@ func rejectUnknownExpectKeys(data []byte) (ignored map[string]int, err error) {
 	}
 	walk(&root)
 	if len(bad) > 0 {
-		return ignored, fmt.Errorf("%s (rebuild helixqa, or fix the key in the bank)", strings.Join(bad, "; "))
+		return fmt.Errorf("%s (rebuild helixqa, or fix the key in the bank)", strings.Join(bad, "; "))
 	}
-	return ignored, nil
-}
-
-// legacyIgnoredAssertionKeys is the CLOSED set of assertion keys that
-// existing banks carry but that no executor in this build evaluates, so the
-// steps using them have always asserted nothing on those lines.
-//
-// Measured 2026-10-08 over all 212 bank files (YAML and JSON): exactly two
-// such keys exist, both in three JSON banks — expect_exit (22 steps) and
-// expect_output_contains (12 steps) in aichat-bash-tools-comprehensive.json,
-// cli-agents-comprehensive.json and cli-agents-test-helixagent.json. Rejecting
-// them would stop those banks loading and lose case ids the id-floor guards
-// (HXC029-CLI-PROBE), which is a worse outcome than reporting them.
-//
-// They are therefore ACCEPTED BUT REPORTED: LoadFile logs one line per file
-// naming the key and the step count, so the dead assertion is never silent.
-// The set must not grow (a new unknown key is a load error) and must shrink
-// as banks are fixed: TestLegacyIgnoredAssertionKeysMatchTheRealCorpus fails
-// when an entry is no longer used by any bank.
-var legacyIgnoredAssertionKeys = map[string]bool{
-	"expect_exit":            true,
-	"expect_output_contains": true,
+	return nil
 }
 
 // LoadFile loads a test bank file (YAML or JSON) and returns the
@@ -157,21 +129,8 @@ func LoadFile(path string) (*BankFile, error) {
 	// An assertion key this build does not define must be a load error,
 	// never a silent no-op (see rejectUnknownExpectKeys). Runs for YAML and
 	// JSON banks alike, after the typed decode has reported real syntax errors.
-	ignored, err := rejectUnknownExpectKeys(data)
-	if err != nil {
+	if err := rejectUnknownExpectKeys(data); err != nil {
 		return nil, fmt.Errorf("parse bank file %s: %w", path, err)
-	}
-	if len(ignored) > 0 {
-		keys := make([]string, 0, len(ignored))
-		for k := range ignored {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			twinLogger.Printf("testbank: WARNING %s: %d step line(s) carry assertion key %q, "+
-				"which no executor in this build evaluates — those lines assert NOTHING",
-				path, ignored[k], k)
-		}
 	}
 
 	// Validate all test cases + guard against intra-bank duplicate

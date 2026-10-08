@@ -343,6 +343,26 @@ type TestStep struct {
 	// a 500, an empty body or an error envelope.
 	ExpectBodyNotContains *string `yaml:"expect_body_not_contains,omitempty" json:"expect_body_not_contains,omitempty"`
 
+	// ExpectExit is the exit code a `shell:` step's command must return.
+	// It is a pointer so an explicit 0 is distinguishable from an absent
+	// key: nil means "no explicit expectation", which keeps the established
+	// shell verdict (the command must exit 0). A non-zero value turns a
+	// failing command into the asserted outcome (e.g. a negative probe that
+	// must exit 2). A signal death reports -1 and therefore never matches.
+	//
+	// Accepted ONLY on a `shell:` action (TestCase.IsValid): it is the only
+	// action kind whose executors yield an exit code, so on any other kind
+	// the assertion would be silently ignored. Valid range 0..255.
+	ExpectExit *int `yaml:"expect_exit,omitempty" json:"expect_exit,omitempty"`
+
+	// ExpectOutputContains is a substring that must appear in the
+	// COMBINED stdout+stderr of a `shell:` step's command (case-sensitive,
+	// raw bytes). It is a pointer so an explicitly empty value is refused
+	// at load time (an empty substring matches everything, so the step
+	// could never fail) and again at run time. Accepted ONLY on a `shell:`
+	// action.
+	ExpectOutputContains *string `yaml:"expect_output_contains,omitempty" json:"expect_output_contains,omitempty"`
+
 	// Skip, when true, causes the runner to mark this step
 	// SKIPPED with the reason in SkipReason instead of executing
 	// it. Article XI §11.5: an explicit, reasoned skip is
@@ -484,6 +504,9 @@ func (tc *TestCase) IsValid() string {
 	}
 	for i := range tc.Steps {
 		st := &tc.Steps[i]
+		if msg := st.validateShellAssertions(tc.ID, i); msg != "" {
+			return msg
+		}
 		nc := st.ExpectBodyNotContains
 		if nc == nil {
 			continue
@@ -506,4 +529,66 @@ func (tc *TestCase) IsValid() string {
 		}
 	}
 	return ""
+}
+
+// validateShellAssertions enforces the load-time rules for expect_exit and
+// expect_output_contains so neither can ever be a silent no-op: both are
+// accepted only on a `shell:` action (the one kind whose executors yield an
+// exit code and combined output), an empty substring is refused, and an exit
+// code must be a real one (0..255).
+func (st *TestStep) validateShellAssertions(caseID string, idx int) string {
+	if st.ExpectExit == nil && st.ExpectOutputContains == nil {
+		return ""
+	}
+	key := "expect_exit"
+	if st.ExpectExit == nil {
+		key = "expect_output_contains"
+	}
+	if kind, _ := st.ParseAction(); kind != ActionTypeShell {
+		return fmt.Sprintf("test case %s step %d: %s is only evaluated by a shell: action, "+
+			"but this step's action is %q — on any other kind the assertion would be "+
+			"silently ignored", caseID, idx, key, string(kind))
+	}
+	if st.ExpectExit != nil && (*st.ExpectExit < 0 || *st.ExpectExit > 255) {
+		return fmt.Sprintf("test case %s step %d: expect_exit %d is not an exit code (0..255) — "+
+			"the step could never pass", caseID, idx, *st.ExpectExit)
+	}
+	if st.ExpectOutputContains != nil && *st.ExpectOutputContains == "" {
+		return fmt.Sprintf("test case %s step %d: expect_output_contains is empty — "+
+			"an empty substring matches every output, so the assertion is vacuous", caseID, idx)
+	}
+	return ""
+}
+
+// CheckShellOutcome is the single verdict function for a `shell:` step. Both
+// shell executors (the bank-driven runner and the autonomous executor) call
+// it with the command's real exit code and combined stdout+stderr, so the two
+// paths cannot drift apart.
+//
+//   - no expect_exit: the command must exit 0 (the established behaviour);
+//   - expect_exit N: the command must exit exactly N;
+//   - expect_output_contains S: the combined output must contain S.
+//
+// It returns ok=true with an empty message, or ok=false with a message naming
+// what was expected and what was observed.
+func (st TestStep) CheckShellOutcome(exitCode int, output string) (bool, string) {
+	want := 0
+	if st.ExpectExit != nil {
+		want = *st.ExpectExit
+	}
+	if exitCode != want {
+		if st.ExpectExit == nil {
+			return false, fmt.Sprintf("shell exited %d", exitCode)
+		}
+		return false, fmt.Sprintf("shell exited %d, expected %d", exitCode, want)
+	}
+	if st.ExpectOutputContains != nil {
+		if *st.ExpectOutputContains == "" {
+			return false, "expect_output_contains is empty — an empty substring matches everything, refusing to pass"
+		}
+		if !strings.Contains(output, *st.ExpectOutputContains) {
+			return false, fmt.Sprintf("output does not contain %q", *st.ExpectOutputContains)
+		}
+	}
+	return true, ""
 }

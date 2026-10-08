@@ -442,26 +442,57 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 			fmt.Sprintf("shell-step[%d]: exit=%d output=%q",
 				i, exitCode, truncateForRecord(string(output))))
 
-		stepPassed := runErr == nil && exitCode == 0
+		// The verdict comes from the ONE shared function so this runner and
+		// the autonomous executor cannot disagree: no expect_exit means the
+		// command must exit 0; expect_exit N means exactly N; and
+		// expect_output_contains is read from the combined output. A command
+		// that never started (ProcessState nil) can satisfy nothing.
+		stepPassed, why := step.CheckShellOutcome(exitCode, string(output))
+		if cmd.ProcessState == nil {
+			stepPassed, why = false, fmt.Sprintf("command did not run: %v", runErr)
+		}
 		if !stepPassed {
 			allPassed = false
 			if firstFailure == "" {
 				firstFailure = fmt.Sprintf(
-					"step %d %q exited %d: %s",
-					i, command, exitCode,
+					"step %d %q: %s: %s",
+					i, command, why,
 					truncateForRecord(string(output)))
 			}
 		}
 
+		wantExitCode := 0
+		if step.ExpectExit != nil {
+			wantExitCode = *step.ExpectExit
+		}
+		wantExit := fmt.Sprintf("%d", wantExitCode)
+		exitOK := cmd.ProcessState != nil && exitCode == wantExitCode
+		exitAssertionType := "shell-exit-zero"
+		if step.ExpectExit != nil {
+			exitAssertionType = "shell-exit"
+		}
 		assertions = append(assertions, challenge.AssertionResult{
-			Type:     "shell-exit-zero",
+			Type:     exitAssertionType,
 			Target:   fmt.Sprintf("step[%d].exit_code", i),
-			Expected: "0",
+			Expected: wantExit,
 			Actual:   fmt.Sprintf("%d", exitCode),
-			Passed:   stepPassed,
+			Passed:   exitOK,
 			Message: fmt.Sprintf(
-				"desktop shell action %q exited %d", command, exitCode),
+				"desktop shell action %q exited %d (expected %s)", command, exitCode, wantExit),
 		})
+		if step.ExpectOutputContains != nil {
+			contains := *step.ExpectOutputContains != "" &&
+				strings.Contains(string(output), *step.ExpectOutputContains)
+			assertions = append(assertions, challenge.AssertionResult{
+				Type:     "shell-output-contains",
+				Target:   fmt.Sprintf("step[%d].output", i),
+				Expected: *step.ExpectOutputContains,
+				Actual:   truncateForRecord(string(output)),
+				Passed:   contains,
+				Message: fmt.Sprintf(
+					"desktop shell action %q output contains expected substring: %t", command, contains),
+			})
+		}
 	}
 
 	now := time.Now()
