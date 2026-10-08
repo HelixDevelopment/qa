@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -24,6 +25,103 @@ type jsonBankFile struct {
 	TestCases   []TestCase     `json:"test_cases"`
 	Challenges  []TestCase     `json:"challenges"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+// knownStepKeys is the set of YAML/JSON keys a TestStep defines, derived
+// from the struct's tags by reflection so it cannot drift from the schema.
+func knownStepKeys() map[string]bool {
+	known := map[string]bool{}
+	t := reflect.TypeOf(TestStep{})
+	for i := 0; i < t.NumField(); i++ {
+		for _, tag := range []string{"yaml", "json"} {
+			if name := strings.Split(t.Field(i).Tag.Get(tag), ",")[0]; name != "" && name != "-" {
+				known[name] = true
+			}
+		}
+	}
+	return known
+}
+
+// rejectUnknownExpectKeys fails a bank whose steps carry an assertion key
+// (anything starting "expect") that this build does not define.
+//
+// WHY (operator decision 2026-10-08): yaml.Unmarshal and json.Unmarshal drop
+// unknown keys silently, so a step asserting something the binary cannot
+// check loaded fine and PASSED vacuously — a stale helixqa binary printed
+// [ok] for WK-SEARCH-010's "pid ABSENT" step while checking nothing.
+//
+// WHY ONLY expect* (measured, not assumed): all 145 banks under banks/ load
+// with this rule, whereas a global KnownFields(true) would reject 43 of them
+// (fix_reference, executor_agent, requires, ...). Those keys are metadata,
+// not assertions; a dropped assertion is the only silent-pass hazard.
+//
+// "expected" (the prose description) is a real field, so it is in the known
+// set and is never confused with an assertion key.
+func rejectUnknownExpectKeys(data []byte) (ignored map[string]int, err error) {
+	var root yaml.Node
+	// JSON is a YAML subset, so one node walk serves both formats. A syntax
+	// error was already reported by the typed decode that ran before this.
+	if yerr := yaml.Unmarshal(data, &root); yerr != nil || len(root.Content) == 0 {
+		return nil, nil
+	}
+	known := knownStepKeys()
+	var bad []string
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				k, v := n.Content[i], n.Content[i+1]
+				if k.Value == "steps" && v.Kind == yaml.SequenceNode {
+					for _, st := range v.Content {
+						for j := 0; st.Kind == yaml.MappingNode && j+1 < len(st.Content); j += 2 {
+							sk := st.Content[j]
+							if strings.HasPrefix(sk.Value, "expect") && !known[sk.Value] {
+								if legacyIgnoredAssertionKeys[sk.Value] {
+									if ignored == nil {
+										ignored = map[string]int{}
+									}
+									ignored[sk.Value]++
+									continue
+								}
+								bad = append(bad, fmt.Sprintf("line %d: unknown assertion key %q", sk.Line, sk.Value))
+							}
+						}
+					}
+				}
+				walk(v)
+			}
+			return
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(&root)
+	if len(bad) > 0 {
+		return ignored, fmt.Errorf("%s (rebuild helixqa, or fix the key in the bank)", strings.Join(bad, "; "))
+	}
+	return ignored, nil
+}
+
+// legacyIgnoredAssertionKeys is the CLOSED set of assertion keys that
+// existing banks carry but that no executor in this build evaluates, so the
+// steps using them have always asserted nothing on those lines.
+//
+// Measured 2026-10-08 over all 212 bank files (YAML and JSON): exactly two
+// such keys exist, both in three JSON banks — expect_exit (22 steps) and
+// expect_output_contains (12 steps) in aichat-bash-tools-comprehensive.json,
+// cli-agents-comprehensive.json and cli-agents-test-helixagent.json. Rejecting
+// them would stop those banks loading and lose case ids the id-floor guards
+// (HXC029-CLI-PROBE), which is a worse outcome than reporting them.
+//
+// They are therefore ACCEPTED BUT REPORTED: LoadFile logs one line per file
+// naming the key and the step count, so the dead assertion is never silent.
+// The set must not grow (a new unknown key is a load error) and must shrink
+// as banks are fixed: TestLegacyIgnoredAssertionKeysMatchTheRealCorpus fails
+// when an entry is no longer used by any bank.
+var legacyIgnoredAssertionKeys = map[string]bool{
+	"expect_exit":            true,
+	"expect_output_contains": true,
 }
 
 // LoadFile loads a test bank file (YAML or JSON) and returns the
@@ -56,6 +154,26 @@ func LoadFile(path string) (*BankFile, error) {
 		}
 	}
 
+	// An assertion key this build does not define must be a load error,
+	// never a silent no-op (see rejectUnknownExpectKeys). Runs for YAML and
+	// JSON banks alike, after the typed decode has reported real syntax errors.
+	ignored, err := rejectUnknownExpectKeys(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse bank file %s: %w", path, err)
+	}
+	if len(ignored) > 0 {
+		keys := make([]string, 0, len(ignored))
+		for k := range ignored {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			twinLogger.Printf("testbank: WARNING %s: %d step line(s) carry assertion key %q, "+
+				"which no executor in this build evaluates — those lines assert NOTHING",
+				path, ignored[k], k)
+		}
+	}
+
 	// Validate all test cases + guard against intra-bank duplicate
 	// ids. P9 fix (docs/nexus/remaining-work.md): a duplicate id
 	// inside a single bank used to silently overwrite the prior
@@ -82,6 +200,27 @@ func LoadFile(path string) (*BankFile, error) {
 	}
 
 	return &bf, nil
+}
+
+// hasTopLevelKey reports whether the YAML/JSON document at path has the given
+// key at its top level. A read or parse failure answers false: this is only
+// used to enrich a message, never to decide anything.
+func hasTopLevelKey(path, key string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || len(root.Content) == 0 {
+		return false
+	}
+	m := root.Content[0]
+	for i := 0; m.Kind == yaml.MappingNode && i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 // DeclinedFile records a bank file LoadDir found on disk but did NOT
@@ -583,14 +722,22 @@ func loadDirVerbose(dir string, enforceFloor bool) (*LoadDirResult, error) {
 				// break a directory that has always loaded, and
 				// unlike the twin case there is no sibling here for
 				// lost content to hide behind.
-				declined = append(declined, DeclinedFile{
-					Path: path,
-					Reason: "parses successfully but declares 0 test cases — " +
-						"contributes nothing to the catalog. Either it is not a " +
-						"test bank at all (a stray document in the bank directory), " +
-						"or it is an empty, truncated or half-written bank that has " +
-						"silently lost its content",
-				})
+				reason := "parses successfully but declares 0 test cases — " +
+					"contributes nothing to the catalog. Either it is not a " +
+					"test bank at all (a stray document in the bank directory), " +
+					"or it is an empty, truncated or half-written bank that has " +
+					"silently lost its content"
+				// The most common way a real bank ends up here is a
+				// misnamed list key: the loader reads "test_cases:" and
+				// drops a top-level "cases:" without a word. Say so, because
+				// that is the actionable fact (operator decision 2026-10-08;
+				// found in banks/yole-concrete/yole-android-smoke.yaml).
+				if hasTopLevelKey(path, "cases") {
+					reason += ". This file has a top-level \"cases:\" key, but the " +
+						"loader reads \"test_cases:\" — rename the key and its " +
+						"cases will load"
+				}
+				declined = append(declined, DeclinedFile{Path: path, Reason: reason})
 				return nil
 			}
 			excluded, loaded, err := addBank(path, bf, false)
