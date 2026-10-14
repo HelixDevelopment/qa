@@ -346,10 +346,16 @@ func (ste *StructuredTestExecutor) visionCandidates() []llm.Provider {
 			members = ps
 		}
 	}
+	router, _ := ste.vision.(llm.VisionRouter)
 	var endpoint, rest []llm.Provider
 	for _, p := range members {
 		if p == nil || !p.SupportsVision() {
 			continue
+		}
+		if router != nil && p != ste.vision {
+			// Keep the wrapper's accounting (availability, rate limit,
+			// circuit breaker, cost) for the member we ask directly.
+			p = routedProvider{Provider: p, router: router}
 		}
 		if p.Name() == llm.ProviderVisionEndpoint {
 			endpoint = append(endpoint, p)
@@ -360,6 +366,16 @@ func (ste *StructuredTestExecutor) visionCandidates() []llm.Provider {
 	return append(endpoint, rest...)
 }
 
+// routedProvider asks one member through its wrapper's VisionVia.
+type routedProvider struct {
+	llm.Provider
+	router llm.VisionRouter
+}
+
+func (r routedProvider) Vision(ctx context.Context, image []byte, prompt string) (*llm.Response, error) {
+	return r.router.VisionVia(ctx, r.Provider, image, prompt)
+}
+
 // blindTranscription asks providers in order for the expectation-blind
 // reading and returns the first reply that carries a TEXT: section. A
 // provider error, an empty reply or a reply without the section moves on
@@ -368,6 +384,10 @@ func (ste *StructuredTestExecutor) visionCandidates() []llm.Provider {
 func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame []byte) (desc, transcript, who, reason string) {
 	var tried []string
 	for _, p := range ste.visionCandidates() {
+		if ctx.Err() != nil {
+			tried = append(tried, "context cancelled before asking "+p.Name())
+			break
+		}
 		resp, err := p.Vision(ctx, frame, blindDescribePrompt)
 		if err != nil {
 			tried = append(tried, p.Name()+": blind description failed: "+err.Error())

@@ -182,7 +182,7 @@ func (e errTest) Error() string { return string(e) }
 func TestNoBluffVision_SkippedGatedStepBlocksCase(t *testing.T) {
 	t.Setenv("HELIXQA_PLAYWRIGHT_CDP_URL", "")
 	gatedSkips := map[string]testbank.TestStep{
-		"description + vision_verify": {Name: "look", Action: "Check that the settings screen is shown", Expected: "settings", VisionVerify: true},
+		"description + vision_verify":     {Name: "look", Action: "Check that the settings screen is shown", Expected: "settings", VisionVerify: true},
 		"playwright (no CDP) + recognize": {Name: "nav", Action: "playwright: navigate http://127.0.0.1:1/", Expected: "home", Recognize: []string{"Home"}},
 	}
 	for name, st := range gatedSkips {
@@ -238,5 +238,83 @@ func TestNoBluffVision_TranscriptionStructureStrict(t *testing.T) {
 		if r.Passed != c.pass || r.Blocked != c.blocked {
 			t.Errorf("%s: passed=%v blocked=%v (want %v/%v) actual=%q", c.name, r.Passed, r.Blocked, c.pass, c.blocked, r.Actual)
 		}
+	}
+}
+
+// Review round 2, finding 7 (LOW): asking adaptive members one by one must
+// keep the wrapper's accounting (cost, unavailable-marking) and must stop
+// asking providers once the context is cancelled.
+func TestNoBluffVision_ProviderLoopKeepsAccountingAndHonoursCtx(t *testing.T) {
+	// Cost is recorded for the provider that answered.
+	a := &fakeVision{name: "a", verify: "The screen shows a list."}
+	b := &fakeVision{name: "b", verify: "VERIFIED: yes"}
+	ap := llm.NewAdaptiveProvider(a, b)
+	ct := llm.NewCostTracker()
+	ap.SetCostTracker(ct)
+	ste, _ := newSTE(ap, noisePNG(t, 1), noisePNG(t, 2))
+	if r := run(ste, gated(nil)); !r.Passed {
+		t.Fatalf("setup: %+v", r)
+	}
+	if got := ct.Summary().TotalCalls; got < 1 {
+		t.Fatalf("no vision cost recorded through the executor's provider loop (TotalCalls=%d)", got)
+	}
+
+	// An auth failure marks the provider unavailable in the wrapper, so the
+	// next step does not ask it again.
+	a = &fakeVision{name: "a", verifyErr: errTest("openai: API error 401: invalid key")}
+	b = &fakeVision{name: "b", verify: "VERIFIED: yes"}
+	ap = llm.NewAdaptiveProvider(a, b)
+	ste, _ = newSTE(ap, noisePNG(t, 1), noisePNG(t, 2), noisePNG(t, 3), noisePNG(t, 4))
+	_ = run(ste, gated(nil))
+	_ = run(ste, gated(nil))
+	if a.calls() != 1 {
+		t.Fatalf("provider with an auth failure was asked %d times, want 1 (wrapper unavailable-marking bypassed)", a.calls())
+	}
+	if _, marked := ap.GetUnavailableProviders()["a"]; !marked {
+		t.Fatal("auth failure not recorded on the wrapper")
+	}
+
+	// Cancellation between providers: the first provider's call cancels the
+	// context; the second provider must not be asked; the step is BLOCKED.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a = &fakeVision{name: "a", verify: "unclear", onCall: cancel}
+	b = &fakeVision{name: "b", verify: "VERIFIED: yes"}
+	ste, _ = newSTE(llm.NewAdaptiveProvider(a, b), noisePNG(t, 1), noisePNG(t, 2))
+	r := ste.executeStep(ctx, testbank.TestCase{ID: "TC-CTX", Name: "ctx"}, gated(nil), 1)
+	if b.calls() != 0 {
+		t.Fatalf("provider asked after the context was cancelled (%d calls)", b.calls())
+	}
+	requireBlocked(t, r, "cancelled context")
+}
+
+// listProvider exposes members via Providers() but is NOT a VisionRouter,
+// so the executor's own between-provider ctx check is the only guard.
+type listProvider struct{ ps []llm.Provider }
+
+func (l listProvider) Chat(context.Context, []llm.Message) (*llm.Response, error) { return nil, errTest("no chat") }
+func (l listProvider) Vision(context.Context, []byte, string) (*llm.Response, error) {
+	return nil, errTest("listProvider.Vision must not be called directly")
+}
+func (l listProvider) Name() string              { return "list" }
+func (l listProvider) SupportsVision() bool      { return true }
+func (l listProvider) Providers() []llm.Provider { return l.ps }
+
+func TestNoBluffVision_ProviderLoopStopsOnCancelledCtxWithoutRouter(t *testing.T) {
+	for _, mode := range []string{"verify", "blind"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		a := &fakeVision{name: "a", verify: "unclear", blind: "no headings", onCall: cancel}
+		b := &fakeVision{name: "b", verify: "VERIFIED: yes", blind: "TEXT:\nLogin\nDESCRIPTION: x"}
+		ste, _ := newSTE(listProvider{ps: []llm.Provider{a, b}}, noisePNG(t, 1), noisePNG(t, 2))
+		st := gated(nil)
+		if mode == "blind" {
+			st = testbank.TestStep{Name: "s", Action: "keypress: X", Expected: "x", Recognize: []string{"Login"}}
+		}
+		r := ste.executeStep(ctx, testbank.TestCase{ID: "TC-CTX2", Name: "ctx"}, st, 1)
+		cancel()
+		if b.calls() != 0 {
+			t.Fatalf("%s: provider asked after the context was cancelled", mode)
+		}
+		requireBlocked(t, r, mode+" cancelled context")
 	}
 }

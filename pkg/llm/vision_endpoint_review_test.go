@@ -248,3 +248,31 @@ func TestVisionEndpoint_ResponseReadStopsAtCap(t *testing.T) {
 		t.Fatalf("refusal took %v — the read did not stop at the cap", time.Since(start))
 	}
 }
+
+// Review round 2, finding 7: the enhanced wrapper's VisionVia keeps its cost
+// accounting and refuses on a cancelled context without calling the member.
+func TestVisionEndpoint_EnhancedVisionViaKeepsAccounting(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"VERIFIED: yes"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`)
+	}))
+	defer srv.Close()
+	eap, err := NewEnhancedAdaptiveProvider([]ProviderConfig{{Name: ProviderVisionEndpoint, BaseURL: srv.URL + "/v1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := NewCostTracker()
+	eap.SetCostTracker(ct)
+	if _, err := eap.VisionVia(context.Background(), eap.Providers()[0], []byte("x"), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if ct.Summary().TotalCalls != 1 || calls != 1 {
+		t.Fatalf("VisionVia: cost calls=%d server calls=%d, want 1/1", ct.Summary().TotalCalls, calls)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := eap.VisionVia(ctx, eap.Providers()[0], []byte("x"), "q"); err == nil || calls != 1 {
+		t.Fatalf("cancelled ctx: err=%v server calls=%d", err, calls)
+	}
+}

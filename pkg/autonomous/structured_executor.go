@@ -1064,6 +1064,10 @@ func (ste *StructuredTestExecutor) verifyOutcome(
 	// shopping for a yes).
 	var tried []string
 	for _, p := range cands {
+		if ctx.Err() != nil {
+			tried = append(tried, "context cancelled before asking "+p.Name())
+			break
+		}
 		ok, actual, err := askVerified(ctx, p, screenshot, expected)
 		if err == nil {
 			return ok, actual, p.Name(), nil

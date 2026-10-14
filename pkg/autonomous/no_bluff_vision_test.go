@@ -121,6 +121,7 @@ func (f screenFactory) Create(string) (navigator.ActionExecutor, error) { return
 type fakeVision struct {
 	mu          sync.Mutex
 	name        string
+	onCall      func()
 	unsupported bool
 	verify      string
 	verifyErr   error
@@ -145,6 +146,9 @@ func (f *fakeVision) Vision(_ context.Context, img []byte, prompt string) (*llm.
 	defer f.mu.Unlock()
 	f.images = append(f.images, append([]byte(nil), img...))
 	f.prompts = append(f.prompts, prompt)
+	if f.onCall != nil {
+		f.onCall()
+	}
 	if strings.Contains(prompt, "VERIFIED:") {
 		if f.verifyErr != nil {
 			return nil, f.verifyErr
