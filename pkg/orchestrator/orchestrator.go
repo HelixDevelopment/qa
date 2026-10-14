@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 	"time"
 
 	"digital.vasic.challenges/pkg/bank"
@@ -169,11 +169,13 @@ func (o *Orchestrator) Run(
 		return nil, fmt.Errorf("load banks: %w", err)
 	}
 
-	definitions := o.bank.All()
 	// The bank is a map: without an explicit order every run would execute
 	// the challenges in a different random order (and a timeout would cut
-	// a different one). Run them in ID order.
-	sort.SliceStable(definitions, func(i, j int) bool { return definitions[i].ID < definitions[j].ID })
+	// a different one). Run them in dependency order (declared
+	// `dependencies:` first), ID as the tie-break — the same order the
+	// autonomous structured phase uses. Cases in a dependency cycle are not
+	// run; they are reported (SKIPPED, reason "dependency cycle").
+	definitions, cyclic := orderDefinitions(o.bank.All())
 	o.log("Loaded %d challenge definitions from %d sources",
 		len(definitions), len(o.bank.Sources()))
 
@@ -232,6 +234,11 @@ platforms:
 		}
 		platformResults = append(platformResults, pr)
 	}
+	if runErr == nil && ctx.Err() != nil {
+		// Cancelled during the LAST challenge: the run is still incomplete.
+		runErr = ctx.Err()
+	}
+	platformResults = completeRecords(platforms, platformResults, definitions, cyclic, runErr != nil)
 
 	// 4. Generate combined report.
 	rep := o.getReporter()
@@ -322,11 +329,13 @@ func (o *Orchestrator) runPlatform(
 	// execution behaviour depends on the target platform; a single
 	// shared registry could not distinguish desktop from android.
 	platformRunner := o.runner
+	wrappers := map[challenge.ID]*definitionChallenge{}
 	if platformRunner == nil {
 		reg := newDefinitionRegistry()
 		for _, def := range definitions {
 			tc := o.executableCases[def.ID]
 			wrapper := newDefinitionChallengeForPlatform(def, tc, platform)
+			wrappers[def.ID] = wrapper
 			if err := reg.Register(wrapper); err != nil {
 				return nil, fmt.Errorf(
 					"register definition %s for platform %s: %w",
@@ -366,7 +375,17 @@ func (o *Orchestrator) runPlatform(
 			cr, err := platformRunner.Run(
 				ctx, def.ID, cfg,
 			)
-			if ctx.Err() != nil && interruptedOutcome(cr, err) {
+			if ctx.Err() != nil {
+				// What the wrapper itself concluded (the runner replaces it
+				// with "timed out" when the run's deadline passed): a step
+				// that FAILED before the cancellation keeps its verdict.
+				if w := wrappers[def.ID]; w != nil {
+					if lr := w.lastResult(); lr != nil && lr.Status == challenge.StatusFailed {
+						cr, err = lr, nil
+					}
+				}
+			}
+			if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {
 				// The run was cancelled / timed out while this challenge
 				// ran and it reports an error / timeout: its outcome is
 				// unknown — not a failure. Record it as not executed and
@@ -652,4 +671,78 @@ func interruptedOutcome(cr *challenge.Result, err error) bool {
 		return true
 	}
 	return false
+}
+
+// orderDefinitions returns the definitions in dependency order (ID as the
+// tie-break, see testbank.DependencyOrder) and, separately, those in or
+// behind a dependency cycle.
+func orderDefinitions(defs []*challenge.Definition) (ordered, cyclic []*challenge.Definition) {
+	byID := map[string]*challenge.Definition{}
+	ids := make([]string, 0, len(defs))
+	deps := map[string][]string{}
+	for _, d := range defs {
+		id := string(d.ID)
+		byID[id] = d
+		ids = append(ids, id)
+		for _, dep := range d.Dependencies {
+			deps[id] = append(deps[id], string(dep))
+		}
+	}
+	order, cyc := testbank.DependencyOrder(ids, deps)
+	for _, id := range order {
+		ordered = append(ordered, byID[id])
+	}
+	for _, id := range cyc {
+		cyclic = append(cyclic, byID[id])
+	}
+	return ordered, cyclic
+}
+
+// completeRecords makes the report name every challenge: those in a
+// dependency cycle (never run) and, when the run was cancelled / timed out,
+// those that never started — each SKIPPED with its reason, on every
+// platform.
+func completeRecords(platforms []config.Platform, prs []*reporter.PlatformResult,
+	ordered, cyclic []*challenge.Definition, cancelled bool) []*reporter.PlatformResult {
+	if len(cyclic) == 0 && !cancelled {
+		return prs
+	}
+	byPlatform := map[config.Platform]*reporter.PlatformResult{}
+	for _, pr := range prs {
+		byPlatform[pr.Platform] = pr
+	}
+	now := time.Now()
+	skip := func(d *challenge.Definition, why string) *challenge.Result {
+		return &challenge.Result{ChallengeID: d.ID, ChallengeName: d.Name, Status: challenge.StatusSkipped,
+			Error: why, StartTime: now, EndTime: now}
+	}
+	var cycleIDs []string
+	for _, d := range cyclic {
+		cycleIDs = append(cycleIDs, string(d.ID))
+	}
+	out := make([]*reporter.PlatformResult, 0, len(platforms))
+	for _, p := range platforms {
+		pr := byPlatform[p]
+		if pr == nil {
+			pr = &reporter.PlatformResult{Platform: p, StartTime: now, EndTime: now}
+		}
+		if cancelled {
+			seen := map[challenge.ID]bool{}
+			for _, cr := range pr.ChallengeResults {
+				seen[cr.ChallengeID] = true
+			}
+			for _, d := range ordered {
+				if !seen[d.ID] {
+					pr.ChallengeResults = append(pr.ChallengeResults,
+						skip(d, "not started: the run was cancelled / timed out before this challenge"))
+				}
+			}
+		}
+		for _, d := range cyclic {
+			pr.ChallengeResults = append(pr.ChallengeResults,
+				skip(d, "not run: dependency cycle among "+strings.Join(cycleIDs, ", ")))
+		}
+		out = append(out, pr)
+	}
+	return out
 }

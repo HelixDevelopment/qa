@@ -327,3 +327,150 @@ func TestOrchRun_DeterministicChallengeOrder(t *testing.T) {
 		}
 	}
 }
+
+func statusOf(res *Result) map[string]string {
+	out := map[string]string{}
+	if res == nil || res.Report == nil {
+		return out
+	}
+	for _, pr := range res.Report.PlatformResults {
+		for _, cr := range pr.ChallengeResults {
+			out[string(pr.Platform)+":"+string(cr.ChallengeID)] = string(cr.Status)
+		}
+	}
+	return out
+}
+
+// Review round 7, finding 1 (HIGH): Ctrl-C (a CANCEL, not a deadline)
+// during a REAL `shell:` step made the challenge FAILED (the interrupted
+// result carried no assertion, so the runner's anti-bluff gate turned it
+// into a failure). It is SKIPPED "interrupted"; a step that FAILED before
+// the cancellation keeps its FAILED verdict — for cancel and deadline.
+func TestOrchRun_RealShellInterrupted(t *testing.T) {
+	slow := "version: \"1.0\"\nname: rs\ntest_cases:\n" +
+		"  - id: R1\n    name: one\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n" +
+		"  - id: R2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 38; true\"\n" +
+		"  - id: R3\n    name: three\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n"
+	failFirst := "version: \"1.0\"\nname: rf\ntest_cases:\n" +
+		"  - id: F1\n    name: fails then slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: exit 3\"\n" +
+		"      - name: b\n        action: \"shell: sleep 38; true\"\n"
+	for _, c := range []struct {
+		name, bank string
+		deadline   bool
+		want       int
+		wantStatus map[string]string
+	}{
+		{"cancel during R2", slow, false, 2, map[string]string{"desktop:R1": "passed", "desktop:R2": "skipped", "desktop:R3": "skipped"}},
+		{"deadline during R2", slow, true, 2, map[string]string{"desktop:R1": "passed", "desktop:R2": "skipped", "desktop:R3": "skipped"}},
+		{"cancel after a failed step", failFirst, false, 1, map[string]string{"desktop:F1": "failed"}},
+		{"deadline after a failed step", failFirst, true, 1, map[string]string{"desktop:F1": "failed"}},
+	} {
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if c.deadline {
+			ctx, cancel = context.WithTimeout(context.Background(), 1200*time.Millisecond)
+		} else {
+			ctx, cancel = context.WithCancel(context.Background())
+			time.AfterFunc(1200*time.Millisecond, cancel)
+		}
+		cfg := &config.Config{Banks: []string{writeBank(t, c.bank)}, Platforms: []config.Platform{config.PlatformDesktop},
+			OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
+			Timeout: time.Minute, StepTimeout: 60 * time.Second}
+		start := time.Now()
+		res, err := New(cfg).Run(ctx)
+		cancel()
+		if d := time.Since(start); d > 6*time.Second {
+			t.Errorf("%s: run took %v after the cancellation", c.name, d)
+		}
+		if err == nil {
+			t.Errorf("%s: cancellation not surfaced", c.name)
+		}
+		if got := exitLike(res, err); got != c.want {
+			t.Errorf("%s: exit %d, want %d (%v)", c.name, got, c.want, statusOf(res))
+		}
+		st := statusOf(res)
+		for k, v := range c.wantStatus {
+			if st[k] != v {
+				t.Errorf("%s: %s = %q, want %q (all: %v)", c.name, k, st[k], v, st)
+			}
+		}
+		if c.want == 2 && res != nil && res.Report != nil {
+			for _, pr := range res.Report.PlatformResults {
+				for _, cr := range pr.ChallengeResults {
+					if cr.ChallengeID == "R2" && !strings.Contains(cr.Error, "interrupted") {
+						t.Errorf("%s: R2 not recorded as interrupted: %q", c.name, cr.Error)
+					}
+				}
+			}
+		}
+	}
+}
+
+// Review round 7, finding 4: declared `dependencies:` order the run (ID only
+// breaks ties); a dependency cycle is not run but reported (SKIPPED with
+// the reason), never silently reordered.
+func TestOrchRun_DependencyOrderAndCycle(t *testing.T) {
+	bank := "version: \"1.0\"\nname: dep\ntest_cases:\n" +
+		"  - id: a-check\n    name: a\n    platforms: [desktop]\n    dependencies: [z-setup]\n    steps:\n      - name: s\n        action: \"shell: true\"\n" +
+		"  - id: z-setup\n    name: z\n    platforms: [desktop]\n    steps:\n      - name: s\n        action: \"shell: true\"\n" +
+		"  - id: c-loop\n    name: c\n    platforms: [desktop]\n    dependencies: [d-loop]\n    steps:\n      - name: s\n        action: \"shell: true\"\n" +
+		"  - id: d-loop\n    name: d\n    platforms: [desktop]\n    dependencies: [c-loop]\n    steps:\n      - name: s\n        action: \"shell: true\"\n"
+	r := &orderRunner{}
+	cfg := &config.Config{Banks: []string{writeBank(t, bank)}, Platforms: []config.Platform{config.PlatformDesktop},
+		OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
+		Timeout: time.Minute, StepTimeout: 10 * time.Second}
+	res, err := New(cfg, WithRunner(r)).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(r.ids, ","); got != "z-setup,a-check" {
+		t.Fatalf("run order %s, want z-setup,a-check (cycle not run)", got)
+	}
+	st := statusOf(res)
+	if st["desktop:c-loop"] != "skipped" || st["desktop:d-loop"] != "skipped" {
+		t.Fatalf("cycle members not reported: %v", st)
+	}
+	found := false
+	for _, pr := range res.Report.PlatformResults {
+		for _, cr := range pr.ChallengeResults {
+			if cr.ChallengeID == "c-loop" && strings.Contains(cr.Error, "dependency cycle") {
+				found = true
+			}
+		}
+	}
+	if !found || res.ExitCode() != 2 {
+		t.Fatalf("cycle reason missing or exit %d", res.ExitCode())
+	}
+}
+
+// LOW: a cancelled run lists the challenges that never started (SKIPPED
+// "not started"), and a cancellation during the LAST challenge is still
+// surfaced.
+func TestOrchRun_CancelledRunListsNotStarted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := &scriptRunner{cancel: cancel, script: map[int]string{1: "cancel+pass"}}
+	cfg := &config.Config{Banks: []string{writeBank(t, cancelBank)}, Platforms: []config.Platform{config.PlatformDesktop, config.PlatformWeb},
+		OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
+		Timeout: time.Minute, StepTimeout: 10 * time.Second}
+	res, err := New(cfg, WithRunner(r)).Run(ctx)
+	cancel()
+	st := statusOf(res)
+	for _, k := range []string{"desktop:O2", "desktop:O3", "web:O1", "web:O2", "web:O3"} {
+		if st[k] != "skipped" {
+			t.Errorf("%s = %q, want a SKIPPED not-started record (all %v)", k, st[k], st)
+		}
+	}
+	if err == nil || exitLike(res, err) != 2 {
+		t.Fatalf("err=%v exit=%d", err, exitLike(res, err))
+	}
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	r2 := &scriptRunner{cancel: cancel2, script: map[int]string{3: "cancel+pass"}}
+	cfg.Platforms = []config.Platform{config.PlatformDesktop}
+	cfg.OutputDir = t.TempDir()
+	cfg.Banks = []string{writeBank(t, cancelBank)}
+	_, err = New(cfg, WithRunner(r2)).Run(ctx2)
+	cancel2()
+	if err == nil {
+		t.Fatal("a cancellation during the last challenge was not surfaced")
+	}
+}

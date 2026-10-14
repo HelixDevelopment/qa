@@ -129,5 +129,13 @@ func TestShellStep_ACommandThatNeverStartedFailsEvenWhenExit0IsExpected(t *testi
 		assert.Equal(t, challenge.StatusSkipped, res.Status,
 			"a step whose command never started must not pass: %+v", step.Action)
 		assert.True(t, hasSkipSentinel(res), "the interruption must carry the skip sentinel")
+		// Round 8: the interruption carries the marker AND a passing
+		// definition-loaded assertion, so the runner's anti-bluff gate
+		// cannot turn it into a FAILED challenge.
+		assert.True(t, hasInterruptedMarker(res), "the interruption must carry the interrupted marker")
+		require.NotEmpty(t, res.Assertions)
+		for _, a := range res.Assertions {
+			assert.True(t, a.Passed, "interrupted result carries a failing assertion: %+v", a)
+		}
 	}
 }

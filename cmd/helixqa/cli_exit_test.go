@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"digital.vasic.helixqa/pkg/autonomous"
 	"digital.vasic.helixqa/pkg/orchestrator"
@@ -199,5 +200,43 @@ func TestCLIExit_TimeoutKeepsFailure(t *testing.T) {
 		"--platform", "desktop", "--validate=false", "--record=false", "--tickets=false", "--speed", "fast", "--timeout", "2s")
 	if got != 1 {
 		t.Fatalf("failure then timeout: exit %d, want 1", got)
+	}
+}
+
+// Review round 7, finding 1, through the real binary: SIGINT two seconds
+// into `shell: sleep 38; true` — the interrupted challenge is not a
+// failure: exit 2, promptly, and no `sleep` outlives the process.
+func TestCLIExit_SigintDuringShellStep(t *testing.T) {
+	dir := t.TempDir()
+	bank := filepath.Join(dir, "bank.yaml")
+	body := "version: \"1.0\"\nname: cli\ntest_cases:\n" +
+		"  - id: SI-1\n    name: one\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n" +
+		"  - id: SI-2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 38; true\"\n" +
+		"  - id: SI-3\n    name: three\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n"
+	if err := os.WriteFile(bank, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"run", "--banks", bank, "--output", filepath.Join(dir, "out"), "--platform", "desktop",
+		"--validate=false", "--record=false", "--tickets=false", "--speed", "fast"}
+	enc, _ := json.Marshal(args)
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "HELIXQA_CLI_EXIT_CHILD=1", "HELIXQA_CLI_EXIT_ARGS="+string(enc))
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+	start := time.Now()
+	_ = cmd.Process.Signal(os.Interrupt)
+	err := cmd.Wait()
+	var ee *exec.ExitError
+	code := 0
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("exit took %v after SIGINT", d)
+	}
+	if code != 2 {
+		t.Fatalf("SIGINT during a shell step: exit %d, want 2", code)
 	}
 }

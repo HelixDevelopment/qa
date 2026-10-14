@@ -40,14 +40,15 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"digital.vasic.challenges/pkg/challenge"
 	"digital.vasic.challenges/pkg/registry"
 
 	"digital.vasic.helixqa/pkg/config"
+	"digital.vasic.helixqa/pkg/shellexec"
 	"digital.vasic.helixqa/pkg/testbank"
 	"digital.vasic.helixqa/pkg/validator"
 )
@@ -287,6 +288,13 @@ type definitionChallenge struct {
 	// platform is the target platform this wrapper executes against.
 	// Set by the orchestrator per runPlatform iteration.
 	platform config.Platform
+
+	// last is the result Execute itself produced. The challenges runner
+	// replaces it with "timed out" when the run's deadline passed; the
+	// orchestrator reads it back so a step that FAILED before the
+	// cancellation keeps its verdict, and an interruption stays one.
+	lastMu sync.Mutex
+	last   *challenge.Result
 }
 
 // newDefinitionChallenge constructs a wrapper with no executable
@@ -408,16 +416,60 @@ func (d *definitionChallenge) executableShellSteps() []testbank.TestStep {
 // explicit reason (never a hollow PASS).
 func (d *definitionChallenge) Execute(ctx context.Context) (*challenge.Result, error) {
 	start := time.Now()
+	var res *challenge.Result
 
 	// Real execution path: desktop platform + executable shell steps.
 	if d.platform == config.PlatformDesktop {
 		if steps := d.executableShellSteps(); len(steps) > 0 {
-			return d.executeDesktopShellSteps(ctx, start, steps), nil
+			res = d.executeDesktopShellSteps(ctx, start, steps)
 		}
 	}
+	if res == nil {
+		// Honest-skip path: nothing this platform/wrapper can execute.
+		res = d.skippedResult(start)
+	}
+	d.lastMu.Lock()
+	d.last = snapshotResult(res)
+	d.lastMu.Unlock()
+	return res, nil
+}
 
-	// Honest-skip path: nothing this platform/wrapper can execute.
-	return d.skippedResult(start), nil
+// lastResult returns a copy of the result Execute last produced, or nil.
+func (d *definitionChallenge) lastResult() *challenge.Result {
+	d.lastMu.Lock()
+	defer d.lastMu.Unlock()
+	return snapshotResult(d.last)
+}
+
+// snapshotResult copies the verdict-bearing fields of r (Result holds a
+// mutex and must not be copied whole).
+func snapshotResult(r *challenge.Result) *challenge.Result {
+	if r == nil {
+		return nil
+	}
+	return &challenge.Result{
+		ChallengeID: r.ChallengeID, ChallengeName: r.ChallengeName, Status: r.Status, Error: r.Error,
+		StartTime: r.StartTime, EndTime: r.EndTime, Duration: r.Duration,
+		RecordedActions: append([]string(nil), r.RecordedActions...),
+		Assertions:      append([]challenge.AssertionResult(nil), r.Assertions...),
+	}
+}
+
+// interruptedMarker tags a result whose case the RUN's cancellation /
+// timeout cut short.
+const interruptedMarker = "interrupted-by-run-cancellation"
+
+// hasInterruptedMarker reports a result carrying interruptedMarker.
+func hasInterruptedMarker(r *challenge.Result) bool {
+	if r == nil {
+		return false
+	}
+	for _, a := range r.RecordedActions {
+		if strings.Contains(a, interruptedMarker) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeDesktopShellSteps runs every `shell:` step of the bank case
@@ -447,10 +499,9 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 		}
 
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
-		cmd := exec.CommandContext(stepCtx, "sh", "-c", command)
-		// When the context kills sh, a child it started may keep the
-		// output pipe open; do not wait for it beyond WaitDelay.
-		cmd.WaitDelay = 500 * time.Millisecond
+		// Own process group, killed whole on cancellation (no orphaned
+		// children), Wait bounded by shellexec.WaitDelay.
+		cmd := shellexec.Command(stepCtx, command)
 		output, runErr := cmd.CombinedOutput()
 		exitCode := 0
 		if cmd.ProcessState != nil {
@@ -464,7 +515,7 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 			now := time.Now()
 			recorded = append(recorded,
 				fmt.Sprintf("shell-step[%d]: %s — interrupted by the run's cancellation / timeout (%v)", i, command, ctx.Err()),
-				definitionWrapperSkipSentinel+" the run was cancelled / timed out while step "+fmt.Sprintf("%d", i)+
+				definitionWrapperSkipSentinel+" "+interruptedMarker+": the run was cancelled / timed out while step "+fmt.Sprintf("%d", i)+
 					" ran — the case was not executed to the end and is not PASSED")
 			return &challenge.Result{
 				ChallengeID:     d.def.ID,
@@ -473,8 +524,15 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 				EndTime:         now,
 				Duration:        now.Sub(start),
 				RecordedActions: recorded,
-				Assertions:      assertions,
-				Status:          challenge.StatusSkipped,
+				// The same evidence the honest-skip path carries, so the
+				// runner's anti-bluff gate does not turn the interruption
+				// into a failure.
+				Assertions: append(assertions, challenge.AssertionResult{
+					Type: "definition-loaded", Target: "definition.ID",
+					Expected: string(d.def.ID), Actual: string(d.def.ID), Passed: true,
+					Message: "bank-loaded definition bridged to Challenge interface; interrupted by the run's cancellation / timeout",
+				}),
+				Status: challenge.StatusSkipped,
 			}
 		}
 

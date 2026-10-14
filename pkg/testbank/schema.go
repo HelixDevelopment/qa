@@ -10,6 +10,7 @@ package testbank
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -710,7 +711,9 @@ func VisionTokenKey(s string) string {
 		if unicode.Is(unicode.Cf, r) || isInvisibleNonFormat(r) {
 			continue
 		}
-		if isOptionalVowelMark(r) {
+		if isOptionalVowelMark(r) || r == '\u0640' {
+			// Optional vowel marks and the Arabic tatweel (kashida, a
+			// stretching glyph) are not letters of the word.
 			continue
 		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
@@ -882,4 +885,61 @@ func (st TestStep) CheckShellOutcome(exitCode int, output string) (bool, string)
 		}
 	}
 	return true, ""
+}
+
+// DependencyOrder orders ids so that every id comes after the ids it
+// depends on (Kahn's algorithm; among the ids that are ready the smallest
+// comes first, so the order is deterministic and ID is the tie-break).
+// A dependency on an id outside the set is ignored (it is not part of this
+// run). Ids in a dependency cycle, or depending on one, cannot be ordered:
+// they are returned, sorted, in cyclic — callers must not run them.
+func DependencyOrder(ids []string, deps map[string][]string) (order, cyclic []string) {
+	in := map[string]bool{}
+	for _, id := range ids {
+		in[id] = true
+	}
+	indeg := map[string]int{}
+	users := map[string][]string{}
+	for _, id := range ids {
+		seen := map[string]bool{}
+		for _, d := range deps[id] {
+			if !in[d] || seen[d] {
+				continue
+			}
+			seen[d] = true
+			indeg[id]++
+			users[d] = append(users[d], id)
+		}
+	}
+	var ready []string
+	for _, id := range ids {
+		if indeg[id] == 0 {
+			ready = append(ready, id)
+		}
+	}
+	sort.Strings(ready)
+	placed := map[string]bool{}
+	for len(ready) > 0 {
+		id := ready[0]
+		ready = ready[1:]
+		if placed[id] {
+			continue
+		}
+		placed[id] = true
+		order = append(order, id)
+		for _, u := range users[id] {
+			indeg[u]--
+			if indeg[u] == 0 {
+				ready = append(ready, u)
+			}
+		}
+		sort.Strings(ready)
+	}
+	for _, id := range ids {
+		if !placed[id] {
+			cyclic = append(cyclic, id)
+		}
+	}
+	sort.Strings(cyclic)
+	return order, cyclic
 }
