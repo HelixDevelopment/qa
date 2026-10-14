@@ -477,11 +477,24 @@ In the structured phase, a bank step that declares `vision_verify: true`,
 only when every requested check succeeds on the exact after-action frame;
 otherwise it is FAILED (the frame contradicts the expectation) or BLOCKED
 (could not determine: no provider gave a definite `VERIFIED: yes|no` line
-or a usable `TEXT:` transcription, blank or missing frame, missing golden).
-The summary line reads `N passed, N failed, N blocked (could not
-determine), ...`. A blocked case is never counted as passed: it files a
-finding, is persisted under `structured` in `pipeline-report.json`, and
+or a strict JSON transcription, blank or missing frame, missing golden, a
+gated step whose action was skipped, frames that cannot be compared, or no
+executor for the platform). The summary line reads `N passed, N failed, N
+blocked (could not determine), ...`. A blocked case is never counted as
+passed: it files an `environment` finding (never ticketed or reproduced as
+an app bug), is persisted under `structured` in `pipeline-report.json`, and
 makes the session exit with code 2 (a failed case exits 1).
+
+`recognize` / `forbid` ask the model for exactly one JSON object
+`{"texts": [...], "description": "..."}` and match tokens only inside
+single `texts` elements — never the description. A reply in any other shape
+is unusable (the next provider is asked, then BLOCKED). A model that writes
+commentary inside `texts` is not detected; pair `recognize` with `golden`
+where you have a reference screenshot.
+
+`helixqa run` uses the same contract: exit 0 all passed, 1 a failure /
+crash / ANR, 2 nothing failed but not everything executed (`INCOMPLETE`).
+Scripts must treat 2 as "not a pass", never as a warning.
 
 Banks that already used `vision_verify: true` are now gated: run them with
 a vision provider that answers in the `VERIFIED:` format, or expect those
@@ -498,6 +511,10 @@ HELIXQA_GOLDENS_DIR=/path/to/goldens   # only for `golden:` steps
 ```
 
 At startup the session prints `Vision endpoint: <url> (model: ..., api key: set|unset)`.
+The endpoint URL must not contain user info, a query, a fragment, an encoded
+`?`/`#` or a `;` parameter — such a value is refused at startup (put a key in
+`HELIX_VISION_API_KEY`). The local endpoint is asked with `temperature: 0`,
+a fixed seed and a JSON-schema `response_format` for transcriptions.
 Full semantics: [docs/vision/NO_BLUFF_VISION.md](docs/vision/NO_BLUFF_VISION.md).
 
 ---

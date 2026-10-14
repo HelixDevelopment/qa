@@ -22,7 +22,7 @@ Code: `pkg/autonomous/vision_gate.go` (`judgeStep`),
 |---|---|
 | PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; non-gated prose/placeholder steps may have been skipped |
 | FAILED | an action failed, or a frame was read and contradicts the expectation |
-| BLOCKED | a vision-gated step's outcome could not be determined — including a gated step whose action had to be skipped (prose action, `playwright:` without a CDP URL) — never a pass |
+| BLOCKED | the outcome could not be determined: a vision-gated step without a usable verdict, a gated step whose action had to be skipped (`playwright:` without a CDP URL), a capture problem (`frame_diff` on undecodable or differently sized frames, `expect_change` on non-comparable frames), or no executor for the platform (no device / display / browser) — never a pass, never an app defect |
 | SKIPPED | bank placeholder / `requires_env` unset |
 
 The structured outcome is stored on the session result
@@ -34,10 +34,14 @@ is never sent to bug reproduction, never ticketed, and not counted in
 `issues_found`.
 
 The bank runner (`helixqa run`, `pkg/orchestrator`) executes only `shell:`
-steps on desktop. A case whose shell steps pass but which also has a
-vision-gated or other asserting step the runner cannot execute is an honest
-SKIPPED that names the unexecuted step — never PASSED, and never promoted to
-PASSED on crash-absence.
+steps on desktop. A case whose shell steps pass but which also has an
+asserting step the runner cannot execute — a vision-gated step of any action
+kind, or an `http:` / `tap:` / `frame_diff:` / `playwright:` / … action — is
+an honest SKIPPED whose reason lists every such step as
+`step <index> "<name>" (<action>[, vision-gated])` — never PASSED, and never
+promoted to PASSED on crash-absence. A step pinned to another platform
+(`platform:`) or explicitly skipped (`_skip: true`) is not this run's
+assertion and does not stop the case.
 
 ## Exit-code contract (read this before wiring a script)
 
@@ -48,6 +52,15 @@ PASSED on crash-absence.
 | 0 | pass | no failure and no blocked case — including a session whose structured phase ran no case (it makes no structured claim) |
 | 1 | **fail** | the session failed, or any structured case FAILED (a finding outranks could-not-determine) |
 | 2 | **blocked / nothing passed** | any structured case BLOCKED; structured cases ran but none passed (e.g. all skipped); or the structured phase could not run its banks |
+
+`helixqa run` (the bank runner) exits with `orchestrator.Result.ExitCode()`
+on the same three values:
+
+| Exit | Meaning | When |
+|---|---|---|
+| 0 | pass | every challenge executed and passed, no crash, no ANR |
+| 1 | **fail** | any challenge failed / errored / timed out / stuck, or a crash or ANR was detected |
+| 2 | **incomplete** | nothing failed, but not every challenge passed: nothing executed, or some/all challenges SKIPPED (e.g. a case whose vision-gated step the bank runner cannot execute); the summary line reads `INCOMPLETE - …` |
 
 **Exit 2 is not a warning and not a pass.** A wrapper must branch on it.
 Consumer scripts measured on 2026-10-14 in the catalogizer checkout
@@ -71,8 +84,8 @@ decision.
 | Key | Effect | Needs a vision model |
 |---|---|---|
 | `vision_verify: true` | the model's reply must contain exactly one standalone line `VERIFIED: yes` (nothing else on that line) for the step's `expected` | yes |
-| `recognize: [..]` | every token must appear, as a whole normalised word/phrase, in the `TEXT:` transcription of an expectation-blind reading of the frame | yes |
-| `forbid: [..]` | no token may appear in that `TEXT:` transcription | yes |
+| `recognize: [..]` | every token must appear, as whole normalised words, inside ONE element of the `texts` array of an expectation-blind JSON reading of the frame | yes |
+| `forbid: [..]` | no token may appear in any `texts` element | yes |
 | `golden: <id>` | the frame's 64-bit pHash must be within `phash_max_distance` of `<goldens dir>/<id>.png\|.jpg\|.jpeg` | no |
 | `phash_max_distance: N` | 0..16, default 8; only valid with `golden` | no |
 | `expect_change: true` | the after-frame must differ from the before-frame | no |
@@ -89,9 +102,8 @@ Any of these keys makes the step **vision-gated**. Load-time validation
 - `phash_max_distance` without `golden` or outside 0..16 (two unrelated
   frames differ by ~32 of 64 bits);
 - an empty (after normalisation) token, a token both recognized and
-  forbidden, the prompt heading words `text` / `description` as tokens,
-  "no text" filler as a token (`no`, `none`, `n/a`, `nothing`, `empty`, …),
-  and a `golden` id with path separators or `..`.
+  forbidden, "no text" filler as a token (`no`, `none`, `n/a`, `nothing`,
+  `empty`, …), and a `golden` id with path separators or `..`.
 
 Normalisation: lower-case; every run of non-letter/non-digit characters
 becomes one space. `"Sign-In!"` matches token `sign in`; token `error`
@@ -103,27 +115,48 @@ does NOT match `errors` or `terror`.
   Only a line consisting of `VERIFIED: yes` or `VERIFIED: no` (optional full
   stop) is an answer; an echoed template (`VERIFIED: yes/no`),
   `UNVERIFIED: yes`, the phrase inside prose, or two answer lines are not.
-- `recognize` / `forbid`: a separate expectation-BLIND prompt that carries
-  neither the expectation nor the tokens asks for a `TEXT:` heading on the
-  first line, the verbatim on-screen text below it, then a `DESCRIPTION:`
-  heading. The reply is usable ONLY in exactly that shape: its first
-  non-blank line is a standalone `TEXT:` heading (`**TEXT:**` allowed; text
-  on the same line is not), and a `DESCRIPTION:` heading closes the section.
-  Any other heading-like line before it — markdown `#`, a whole-line
-  `**bold**`, `Word -`, a bare `Word:` — makes the reply unusable, because
-  the model's own prose could follow it. Tokens are matched against the
-  `TEXT:` section ONLY; the description ("the Settings screen is not
-  shown", "no error is visible") never satisfies `recognize` nor trips
-  `forbid`. Filler lines (`(none)`, `No text visible`, `n/a`, …) are an empty
-  transcription. Recall cost: a transcription that contains a bare label
-  line such as `Username:` is unusable (the step is BLOCKED), never passed.
+- `recognize` / `forbid`: a separate expectation-BLIND prompt — it carries
+  neither the expectation nor the tokens — asks for exactly one JSON object:
+
+  ```json
+  {"texts": ["each visible text string, verbatim, one per UI element"], "description": "free prose"}
+  ```
+
+  The local endpoint additionally receives
+  `response_format: {"type": "json_object", "schema": {...}}` (the
+  schema-constrained form documented for `/v1/chat/completions` in
+  llama.cpp's `tools/server/README.md`); cloud providers keep their request
+  shape. **Every** reply is strict-parsed: one object, exactly the keys
+  `texts` (array of strings) and `description` (string), case-sensitive,
+  each once, nothing before or after it. The only tolerated wrapper is a
+  single code fence that is the whole reply (it cannot carry prose: the
+  inside must still be the strict object). Anything else — the old
+  `TEXT:`/`DESCRIPTION:` text, a heading of any style, an extra key, a
+  `null` element, trailing commentary — is unusable: the next provider is
+  asked, and if none qualifies the step is BLOCKED.
+
+  Tokens are matched ONLY against individual `texts` elements, as whole
+  normalised words within one element (elements are never joined, so a
+  phrase cannot be assembled across two elements). The `description` is
+  never consulted, so prose such as "the Login button is not shown" or
+  "(no search bar visible)" cannot satisfy `recognize` nor trip `forbid`.
+  Filler elements (`(none)`, `N/A`, `No text visible`, …) are dropped.
+  There are no heading heuristics any more.
+
+  **Residual limit:** the parser cannot tell whether the model obeyed the
+  instruction to put only on-screen text in `texts`. A model that writes
+  commentary INSIDE `texts` ("(no search bar visible)") has that string
+  treated as screen text: it can satisfy `recognize` (a false pass) or trip
+  `forbid` (a false fail). Pair `recognize` with `golden` (pHash against a
+  reference screenshot) where a stable reference exists — that is the
+  second, model-independent oracle.
 
 ### Which provider is asked
 
 The structured executor expands an adaptive provider into its
 vision-capable members and asks them in order — the operator-configured
 `HELIX_VISION_ENDPOINT` provider first. A provider error, an empty or
-ambiguous reply, or a blind reply without a `TEXT:` section moves on to the
+ambiguous reply, or a blind reply that is not the strict JSON object moves on to the
 next provider. A DEFINITE answer (`VERIFIED: yes` or `VERIFIED: no`) is
 final: the next provider is never asked for a second opinion. When no
 provider qualifies the step is BLOCKED and the reason names every provider
@@ -161,8 +194,8 @@ stateDiagram-v2
     GoldenCheck --> BLOCKED: golden dir / file missing or undecodable
     GoldenCheck --> FAILED: pHash distance above limit
     GoldenCheck --> ModelChecks
-    ModelChecks --> BLOCKED: no provider gave a well-formed TEXT/DESCRIPTION\nreply or a definite VERIFIED line
-    ModelChecks --> FAILED: forbidden token in TEXT,\nrecognize token absent from TEXT, VERIFIED no
+    ModelChecks --> BLOCKED: no provider gave a strict JSON\ntranscription or a definite VERIFIED line
+    ModelChecks --> FAILED: forbidden token in a texts element,\nrecognize token in no texts element, VERIFIED no
     ModelChecks --> Bind
     Bind --> BLOCKED: frame bytes changed during verification
     Bind --> NoPositive: only expect_change / forbid ran
@@ -223,29 +256,38 @@ cases BLOCKED (exit 2) where it previously reported PASSED.
 - A vision model's answer is evidence about the frame it was shown, not
   proof the feature works end to end; pair it with deterministic checks
   (`golden`, `expect_change`, action assertions).
-- `recognize` depends on the model transcribing the frame: a model that
-  misses text that is on screen produces a FAILED step (token absent), not
-  a pass; a model that writes no `TEXT:` section produces BLOCKED.
+- The `texts` array is strict-parsed, but whether the model put only
+  on-screen text in it is not checked: commentary written INSIDE `texts`
+  is treated as screen text (a false `recognize` pass or a false `forbid`
+  fail). A model that misses on-screen text produces a FAILED step. `golden`
+  + pHash is the model-independent second oracle.
+- `response_format` with a JSON schema is sent only to the local endpoint
+  (llama-server); cloud providers are strict-parsed without it, so a cloud
+  model that ignores the instruction is simply unusable (BLOCKED), never
+  matched.
 - `expect_change` and the `frame_diff` action use the same 17×17
   sampled-pixel comparison (≥1 % of sampled points differing by >30) on
   frames of equal size; undecodable or differently sized frames are not
-  comparable (BLOCKED for `expect_change`, a FAILED `frame_diff` step), never
-  "motion".
-- The answer format and the transcription shape are checked mechanically;
-  whether the model READ the screen correctly is not — a model that
-  hallucinates text in the `TEXT:` section can still satisfy `recognize`.
-  Pair it with `golden` where a stable reference exists.
-- `IssuesFound` excludes environment findings at its call site, but only the
-  `appDefectFindings` helper is covered by a mutant; the call site is
-  covered by reading, not by a test.
-- The redaction covers the configured endpoint URL and `*url.Error`
-  transport errors. A provider's error BODY is quoted (up to 512 bytes) as
-  the server sent it; a server that echoes a secret in its error body is
-  not scrubbed.
-- The exit-code contract is honoured by `cmd/helixqa`; no consumer script
+  comparable — BLOCKED (environment) for both, never "motion" and never an
+  app-defect finding. Consumer note: catalogizer's
+  `challenges/helixqa-banks/catalogizer-androidtv-negative-paths-executable.yaml`
+  uses `frame_diff: 2000` at lines 451 and 504 (measured at `d211f574`); a
+  capture problem there now reports BLOCKED (exit 2) instead of FAILED.
+- Secrets: `HELIX_VISION_ENDPOINT` with user info, a query, a fragment, an
+  encoded `?`/`#` (`%3F`/`%23`) or a `;` parameter in the path is refused at
+  startup without echoing it. A secret written as a plain path segment
+  (`/key/<secret>/`) cannot be told from a real path and is NOT detected.
+  Transport errors of every provider (OpenAI-style, anthropic, google,
+  ollama, astica) are scrubbed to `scheme://host/path`; an error body is
+  quoted up to 512 bytes with the provider's own API key replaced by
+  `[REDACTED]`; any OTHER secret a server echoes in its body is not scrubbed.
+- `IssuesFound` excludes environment findings at its call site; that call
+  site is covered by reading, not by a mutant (reviewer mutant N23 —
+  documented, not killed).
+- The exit-code contracts are honoured by `cmd/helixqa`; no consumer script
   outside this repository was changed (see the table above).
 - Non-gated steps keep their historic behaviour (an explicit
   `VERIFIED: no` still fails them); they are labelled honestly.
 - No live run against a real llama-server was made while building this;
-  the endpoint is exercised by an httptest server speaking the
-  OpenAI chat-completions protocol.
+  the endpoint, its `response_format` and the JSON replies are exercised by
+  an httptest server speaking the OpenAI chat-completions protocol.

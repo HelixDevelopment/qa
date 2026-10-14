@@ -39,6 +39,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **recognize / forbid redesigned (breaking):** the vision model now returns
+  exactly one strict JSON object `{"texts": [...], "description": "..."}`
+  (the local endpoint also gets a JSON-schema `response_format`); tokens
+  match only whole words inside single `texts` elements, never the
+  description. The `TEXT:`/`DESCRIPTION:` text format and all heading
+  heuristics are removed; any non-JSON reply is unusable (next provider,
+  then BLOCKED). Residual: commentary a model writes inside `texts` is
+  treated as screen text — pair with `golden`.
+- **`helixqa run` exit codes:** 0 all passed, 1 failure / crash / ANR,
+  2 nothing failed but not every challenge executed (`INCOMPLETE`). A
+  SKIPPED-only bank used to print `FAILED 0/1` and exit 1.
+- The bank runner's SKIPPED reason names every unexecuted asserting step;
+  steps pinned to another platform or `_skip`ped are not counted.
+- Capture problems (`frame_diff` on undecodable / differently sized frames)
+  and a missing executor (no device / display / browser) are BLOCKED
+  environment findings, not FAILED app defects. Catalogizer's
+  `catalogizer-androidtv-negative-paths-executable.yaml` uses `frame_diff`
+  at lines 451 and 504 (measured at `d211f574`).
+- Endpoint secrets: encoded `?`/`#` and `;` parameters in the path are
+  refused; an error body that echoes the provider's own key is redacted;
+  all providers scrub transport errors; a base URL already ending in
+  `/chat/completions` is no longer doubled. Plain path-segment secrets are
+  not detectable (documented).
+- `EnhancedAdaptiveProvider.VisionVia` returns `llm.ErrCircuitOpen` when the
+  member's circuit is open and a cancelled context's error unchanged.
 - **Exit-code contract (consumers must branch on it):** 0 pass, 1 fail,
   2 blocked / nothing passed / banks not runnable. Exit 2 is not a warning.
   Catalogizer wrappers that need updating (not changed here; measured at
@@ -52,10 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The desktop bank runner no longer PASSES a case whose `shell:` steps
   passed while a vision-gated or other asserting step was never executed
   (honest SKIPPED instead).
-- `recognize` / `forbid` need the exact blind-reply shape: a standalone
-  `TEXT:` first line closed by `DESCRIPTION:`; any other heading-like line
-  makes the reply unusable; filler (`(none)`, `No text visible`) is empty;
-  filler tokens are refused at load.
+- Filler tokens (`no`, `none`, `n/a`, …) are refused at load.
 - BLOCKED findings are category `environment` (new
   `analysis.CategoryEnvironment`): never reproduced as a bug, never
   ticketed, not counted in `issues_found`.
@@ -78,8 +100,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vision provider; a definite answer is final; if none answers the gated
   step is BLOCKED (no more "falling back to action success"). A non-gated
   step the model could not confirm is labelled `UNVERIFIED-by-vision`.
-- `recognize` / `forbid` match only the `TEXT:` transcription of an
-  expectation-blind reading, never the model's own prose.
+- `recognize` / `forbid` match only the transcribed on-screen text of an
+  expectation-blind reading (now the `texts` array of a strict JSON reply),
+  never the model's own prose.
 - Non-gated `shell:` / `http:` / `assert:` steps are no longer judged by a
   screenshot (previously a model's `VERIFIED: no` about an unrelated screen
   failed a passing shell step).
