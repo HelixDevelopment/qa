@@ -149,3 +149,24 @@ func TestDesktopShellCase_HonoursPlatformAndSkip(t *testing.T) {
 		t.Error("android-pinned step not counted for android")
 	}
 }
+
+// Review round 5, finding 5: an error AFTER cases ran (here: the report
+// cannot be written) must not erase their verdict — Run returns the result
+// with its report alongside the error, so a FAILED case still exits 1.
+func TestOrchRun_FailedVerdictSurvivesPostExecutionError(t *testing.T) {
+	out := t.TempDir()
+	// A directory where the markdown report file must go makes the write fail.
+	if err := os.MkdirAll(filepath.Join(out, "qa-report.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Banks: []string{writeBank(t, bankHead+"      - name: cli\n        action: \"shell: exit 3\"\n")},
+		Platforms: []config.Platform{config.PlatformDesktop}, OutputDir: out, Speed: config.SpeedNormal,
+		ReportFormat: config.ReportMarkdown, Timeout: 2 * time.Minute, StepTimeout: 30 * time.Second}
+	res, err := New(cfg).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "write report") {
+		t.Fatalf("report write failure not reported: %v", err)
+	}
+	if res == nil || res.Report == nil || res.Report.FailedChallenges != 1 || res.ExitCode() != 1 {
+		t.Fatalf("FAILED verdict lost with the post-execution error: %+v", res)
+	}
+}

@@ -48,10 +48,12 @@ const version = "0.2.0"
 func main() {
 	// An unrecovered panic must not exit 2 (that means "blocked"): it is
 	// mapped to exitCodePanic (70). Normal paths exit from inside realMain.
-	if code := guardPanic(realMain); code != 0 {
+	if code := guardPanic(realMainFn); code != 0 {
 		os.Exit(code)
 	}
 }
+
+var realMainFn = realMain
 
 func realMain() {
 	if len(os.Args) < 2 {
@@ -221,10 +223,16 @@ func cmdRun(args []string) {
 
 	result, err := orch.Run(ctx)
 	if err != nil {
-		// No challenge verdict exists (e.g. a bank could not be loaded):
-		// nothing was executed — exit 2, never 1 (a failure verdict).
-		fmt.Fprintf(os.Stderr, "error: %v — nothing executed (exit %d)\n", err, exitCodeNotExecuted)
-		os.Exit(runExitCode(nil, err))
+		// Nothing executed (a bank could not be loaded), or an error after
+		// execution (report write, cancellation). A FAILED case that already
+		// ran still exits 1; otherwise the run is incomplete — exit 2.
+		code := runExitCode(result, err)
+		fmt.Fprintf(os.Stderr, "error: %v (exit %d)\n", err, code)
+		if result != nil && result.Report != nil {
+			fmt.Fprintf(os.Stderr, "executed before the error: %d/%d challenges passed, %d failed\n",
+				result.Report.PassedChallenges, result.Report.TotalChallenges, result.Report.FailedChallenges)
+		}
+		os.Exit(runExitCode(result, err))
 	}
 
 	// Print summary. CONST-035 anti-bluff: a "PASSED" summary that
@@ -971,9 +979,11 @@ func cmdAutonomous(args []string) {
 	fmt.Println()
 	result, err := pipeline.Run(context.Background())
 	if err != nil {
+		// The session could not start (its memory store): nothing about
+		// the app was judged — exit 2, never 1.
 		fmt.Fprintf(os.Stderr,
-			"error: pipeline failed: %v\n", err)
-		os.Exit(1)
+			"error: pipeline could not run: %v (exit %d)\n", err, exitCodeNotExecuted)
+		os.Exit(exitCodeNotExecuted)
 	}
 	if err := pipeline.WriteReport(result); err != nil {
 		fmt.Fprintf(os.Stderr,
@@ -983,6 +993,12 @@ func cmdAutonomous(args []string) {
 		fmt.Fprintf(os.Stderr,
 			"Session failed: %s\n", result.Error)
 		os.Exit(1)
+	}
+	if result.Status == autonomous.StatusBlocked {
+		// Network / VPN preflight, provider outage or timeout: could not
+		// determine (2) — unless a structured case already FAILED (1).
+		fmt.Fprintf(os.Stderr,
+			"Session BLOCKED (could not determine): %s\n", result.Error)
 	}
 	// Structured bank outcome -> exit code (1 a case FAILED, 2 a case
 	// BLOCKED / could not determine / banks not runnable; 1 outranks 2).

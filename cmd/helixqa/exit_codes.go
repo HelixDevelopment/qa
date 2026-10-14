@@ -24,11 +24,20 @@ const (
 	exitCodePanic = 70
 )
 
-// runExitCode maps a `helixqa run` outcome onto the contract: an orch.Run
-// error means no challenge verdict exists (nothing executed) -> 2;
-// otherwise the result's own three-valued code.
+// runExitCode maps a `helixqa run` outcome onto the contract. A FAILED
+// verdict (a failed case, crash or ANR in the result's report) is 1 even
+// when orch.Run also returned an error raised after execution (report write
+// failure, cancellation): a finding outranks could-not-determine. Any other
+// error means the run is incomplete or nothing executed -> 2; otherwise the
+// result's own three-valued code.
 func runExitCode(result *orchestrator.Result, err error) int {
+	if result != nil && result.Report != nil && result.ExitCode() == 1 {
+		return 1
+	}
 	if err != nil {
+		return exitCodeNotExecuted
+	}
+	if result == nil {
 		return exitCodeNotExecuted
 	}
 	return result.ExitCode()

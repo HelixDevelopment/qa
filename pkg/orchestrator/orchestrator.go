@@ -189,11 +189,16 @@ func (o *Orchestrator) Run(
 	// 3. Run challenges for each platform.
 	platforms := o.config.ExpandedPlatforms()
 	var platformResults []*reporter.PlatformResult
+	// runErr is an error raised after execution began (cancellation): the
+	// platforms that already ran keep their verdicts in the report.
+	var runErr error
 
+platforms:
 	for _, platform := range platforms {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			runErr = ctx.Err()
+			break platforms
 		default:
 		}
 
@@ -220,17 +225,18 @@ func (o *Orchestrator) Run(
 		return nil, fmt.Errorf("generate report: %w", err)
 	}
 
+	result.Report = qaReport
+	result.EndTime = time.Now()
+	result.Duration = result.EndTime.Sub(result.StartTime)
 	reportPath, err := rep.WriteReport(
 		qaReport, o.config.OutputDir,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("write report: %w", err)
+		// Cases already ran: return their verdicts WITH the error, so a
+		// FAILED case still decides the exit code (1 outranks the error).
+		return result, fmt.Errorf("write report: %w", err)
 	}
-
-	result.Report = qaReport
 	result.ReportPath = reportPath
-	result.EndTime = time.Now()
-	result.Duration = result.EndTime.Sub(result.StartTime)
 	// CONST-035 anti-bluff: a run with 0 executed challenges is NOT a
 	// success — it's a PASS-bluff (the absence-of-crash check passes
 	// trivially when no app was launched, but no actual behavior was
@@ -256,7 +262,7 @@ func (o *Orchestrator) Run(
 		reportPath,
 	)
 
-	return result, nil
+	return result, runErr
 }
 
 // runPlatform executes all challenges for a single platform.
