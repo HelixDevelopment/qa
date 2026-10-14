@@ -123,8 +123,10 @@ transcription), or the frame is blank or missing. A blocked case files a
 finding and makes `helixqa autonomous` exit **2** (a failed case exits
 **1**). A non-gated step the model could not confirm is reported
 **UNVERIFIED-by-vision**. Vision keys are refused on `shell:`/`http:`/
-`assert:` steps, and `expect_change`/`forbid` need `vision_verify`,
-`recognize` or `golden` beside them.
+`assert:` and prose steps, and `expect_change`/`forbid` need `vision_verify`,
+`recognize` or `golden` beside them. A blocked case is an `environment`
+finding, never an app bug. **Exit codes: 0 pass, 1 fail, 2 blocked /
+nothing passed** — wrappers must branch on 2 (see the reference).
 
 ```yaml
       - name: "Open settings"

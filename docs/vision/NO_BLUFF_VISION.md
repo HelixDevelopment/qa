@@ -20,23 +20,51 @@ Code: `pkg/autonomous/vision_gate.go` (`judgeStep`),
 
 | Case verdict | Meaning |
 |---|---|
-| PASSED | every step's action succeeded and, for a gated step, every requested check positively succeeded on the bound frame |
+| PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; non-gated prose/placeholder steps may have been skipped |
 | FAILED | an action failed, or a frame was read and contradicts the expectation |
-| BLOCKED | a vision-gated step's outcome could not be determined — never a pass |
+| BLOCKED | a vision-gated step's outcome could not be determined — including a gated step whose action had to be skipped (prose action, `playwright:` without a CDP URL) — never a pass |
 | SKIPPED | bank placeholder / `requires_env` unset |
 
 The structured outcome is stored on the session result
 (`PipelineResult.Structured`, persisted in `pipeline-report.json` with every
 case's verdict and every step's frame evidence). A BLOCKED case also files a
-`Test Case BLOCKED (could not determine)` finding that names the cause.
+`Test Case BLOCKED (could not determine)` finding that names the cause. Its
+category is **`environment`** (`FindingCategory.IsAppDefect()` is false): it
+is never sent to bug reproduction, never ticketed, and not counted in
+`issues_found`.
+
+The bank runner (`helixqa run`, `pkg/orchestrator`) executes only `shell:`
+steps on desktop. A case whose shell steps pass but which also has a
+vision-gated or other asserting step the runner cannot execute is an honest
+SKIPPED that names the unexecuted step — never PASSED, and never promoted to
+PASSED on crash-absence.
+
+## Exit-code contract (read this before wiring a script)
 
 `helixqa autonomous` exits with `PipelineResult.ExitCode()`:
 
-| Exit | When |
-|---|---|
-| 1 | the session failed, or any structured case FAILED (a finding outranks could-not-determine) |
-| 2 | any structured case BLOCKED; structured cases ran but none passed (e.g. all skipped); or the structured phase could not run its banks |
-| 0 | otherwise — including a session whose structured phase ran no case (it makes no structured claim) |
+| Exit | Meaning | When |
+|---|---|---|
+| 0 | pass | no failure and no blocked case — including a session whose structured phase ran no case (it makes no structured claim) |
+| 1 | **fail** | the session failed, or any structured case FAILED (a finding outranks could-not-determine) |
+| 2 | **blocked / nothing passed** | any structured case BLOCKED; structured cases ran but none passed (e.g. all skipped); or the structured phase could not run its banks |
+
+**Exit 2 is not a warning and not a pass.** A wrapper must branch on it.
+Consumer scripts measured on 2026-10-14 in the catalogizer checkout
+(`d211f574`; this repository does not edit them) and what to change:
+
+| Script:line | Today | Change to |
+|---|---|---|
+| `scripts/helixqa-orchestrator.sh:314` (`if [[ $helixqa_rc -ne 0 ]]` → "HelixQA failed") | 1 and 2 both reported as "failed" | branch: `1` → failed; `2` → "BLOCKED / could not determine (see pipeline-report.json structured.cases)", also non-zero |
+| `scripts/run-helixqa-all.sh:68` (`if "$HELIXQA_BIN" autonomous … \| tee` under `pipefail`) | 1 and 2 both land in the same failure branch | capture `${PIPESTATUS[0]}` and report 2 as BLOCKED, distinct from FAILED |
+| `scripts/run-helixqa-web.sh:131-133` (`… \| tee … \|\| warn "…completed with warnings"`, then `ok "…complete"`) | 1 and 2 are swallowed as a warning and the run prints "complete" | stop treating non-zero as a warning: exit 1 = failed, exit 2 = blocked; never print "complete" for either |
+
+**OPEN QUESTION for the operator:** a run whose structured cases were ALL
+skipped (e.g. every case gated by `requires_env`) exits **2** ("nothing
+passed"), not 0. That is the current decision (a skip is not a pass); if
+all-skipped runs should exit 0 instead, it is a one-line change in
+`StructuredExecutionResult.ExitCode` plus its tests — not made without a
+decision.
 
 ## Bank keys (per step)
 
@@ -53,15 +81,17 @@ Any of these keys makes the step **vision-gated**. Load-time validation
 (`TestCase.IsValid`) refuses:
 
 - vision keys on a `shell:` / `http:` / `assert:` step (their verdict is an
-  exit code or a response, not the screen);
+  exit code or a response, not the screen), or on a prose/description step
+  (including `# CONVERT:` placeholders) that the executor would skip;
 - `expect_change` or `forbid` without a positive check (`vision_verify`,
   `recognize` or `golden`) — "something changed" (a crash dialog counts)
   and "no forbidden text" are not evidence of the expected screen;
 - `phash_max_distance` without `golden` or outside 0..16 (two unrelated
   frames differ by ~32 of 64 bits);
 - an empty (after normalisation) token, a token both recognized and
-  forbidden, the prompt heading words `text` / `description` as tokens, and
-  a `golden` id with path separators or `..`.
+  forbidden, the prompt heading words `text` / `description` as tokens,
+  "no text" filler as a token (`no`, `none`, `n/a`, `nothing`, `empty`, …),
+  and a `golden` id with path separators or `..`.
 
 Normalisation: lower-case; every run of non-letter/non-digit characters
 becomes one space. `"Sign-In!"` matches token `sign in`; token `error`
@@ -74,12 +104,19 @@ does NOT match `errors` or `terror`.
   stop) is an answer; an echoed template (`VERIFIED: yes/no`),
   `UNVERIFIED: yes`, the phrase inside prose, or two answer lines are not.
 - `recognize` / `forbid`: a separate expectation-BLIND prompt that carries
-  neither the expectation nor the tokens asks for a `TEXT:` section
-  (verbatim on-screen text) and a `DESCRIPTION:` section. Tokens are matched
-  against the `TEXT:` section ONLY — the description is the model's own
-  prose ("the Settings screen is not shown", "no error is visible") and
-  never satisfies `recognize` nor trips `forbid`. A reply without a `TEXT:`
-  section is not usable.
+  neither the expectation nor the tokens asks for a `TEXT:` heading on the
+  first line, the verbatim on-screen text below it, then a `DESCRIPTION:`
+  heading. The reply is usable ONLY in exactly that shape: its first
+  non-blank line is a standalone `TEXT:` heading (`**TEXT:**` allowed; text
+  on the same line is not), and a `DESCRIPTION:` heading closes the section.
+  Any other heading-like line before it — markdown `#`, a whole-line
+  `**bold**`, `Word -`, a bare `Word:` — makes the reply unusable, because
+  the model's own prose could follow it. Tokens are matched against the
+  `TEXT:` section ONLY; the description ("the Settings screen is not
+  shown", "no error is visible") never satisfies `recognize` nor trips
+  `forbid`. Filler lines (`(none)`, `No text visible`, `n/a`, …) are an empty
+  transcription. Recall cost: a transcription that contains a bare label
+  line such as `Username:` is unusable (the step is BLOCKED), never passed.
 
 ### Which provider is asked
 
@@ -90,7 +127,10 @@ ambiguous reply, or a blind reply without a `TEXT:` section moves on to the
 next provider. A DEFINITE answer (`VERIFIED: yes` or `VERIFIED: no`) is
 final: the next provider is never asked for a second opinion. When no
 provider qualifies the step is BLOCKED and the reason names every provider
-tried; the answering provider is recorded as `vision_provider`.
+tried; the answering provider is recorded as `vision_provider`. Each member
+is asked through its wrapper (`llm.VisionRouter.VisionVia`), so availability
+marking, rate limiting, the circuit breaker and cost tracking still apply,
+and no further provider is asked once the context is cancelled.
 
 Goldens directory: `PipelineConfig.VisionGoldensDir`, else env
 `HELIXQA_GOLDENS_DIR`. Neither set → a golden step is BLOCKED.
@@ -101,6 +141,7 @@ Goldens directory: `PipelineConfig.VisionGoldensDir`, else env
 stateDiagram-v2
     [*] --> Action
     Action --> FAILED: action failed
+    Action --> BLOCKED: gated step's action was skipped
     Action --> Gated: step is vision-gated
     Action --> Advisory: step not gated
 
@@ -120,7 +161,7 @@ stateDiagram-v2
     GoldenCheck --> BLOCKED: golden dir / file missing or undecodable
     GoldenCheck --> FAILED: pHash distance above limit
     GoldenCheck --> ModelChecks
-    ModelChecks --> BLOCKED: no provider gave a usable TEXT section\nor a definite VERIFIED line
+    ModelChecks --> BLOCKED: no provider gave a well-formed TEXT/DESCRIPTION\nreply or a definite VERIFIED line
     ModelChecks --> FAILED: forbidden token in TEXT,\nrecognize token absent from TEXT, VERIFIED no
     ModelChecks --> Bind
     Bind --> BLOCKED: frame bytes changed during verification
@@ -153,8 +194,13 @@ The endpoint joins the vision provider pool (`cmd/helixqa`) as provider
 with `temperature: 0` and a fixed `seed` so the same frame gets the same
 answer. No `Authorization` header is sent when no key is set. Replies are
 read up to 8 MiB (larger is refused) and error replies are quoted to 512
-bytes. The startup line prints `scheme://host/path` only (userinfo, query
-and fragment redacted; an unparsable URL is not printed), the model, and
+bytes. `HELIX_VISION_ENDPOINT` must be `http(s)://host[:port][/path]`:
+user info, a query string or a fragment (where secrets get pasted) is
+**refused at startup** with an error that does not echo the value — put a
+key in `HELIX_VISION_API_KEY`. Transport errors are scrubbed to
+`scheme://host/path` before they can reach a BLOCKED reason, a finding, the
+report or stdout, and the request path is appended to the URL path. The
+startup line prints `scheme://host/path`, the model, and
 `api key: set|unset`. `HELIX_VISION_MODEL` is also read by the remote
 Ollama auto-deploy (`HELIX_VISION_HOST`); set it to a name valid for
 whichever you use.
@@ -180,10 +226,24 @@ cases BLOCKED (exit 2) where it previously reported PASSED.
 - `recognize` depends on the model transcribing the frame: a model that
   misses text that is on screen produces a FAILED step (token absent), not
   a pass; a model that writes no `TEXT:` section produces BLOCKED.
-- `expect_change` uses the same 17×17 sampled-pixel comparison as the
-  `frame_diff` action (≥1 % of sampled points differing by >30) on frames
-  of equal size. The `frame_diff` action itself still treats undecodable or
-  differently sized frames as "differ" — unchanged by this work.
+- `expect_change` and the `frame_diff` action use the same 17×17
+  sampled-pixel comparison (≥1 % of sampled points differing by >30) on
+  frames of equal size; undecodable or differently sized frames are not
+  comparable (BLOCKED for `expect_change`, a FAILED `frame_diff` step), never
+  "motion".
+- The answer format and the transcription shape are checked mechanically;
+  whether the model READ the screen correctly is not — a model that
+  hallucinates text in the `TEXT:` section can still satisfy `recognize`.
+  Pair it with `golden` where a stable reference exists.
+- `IssuesFound` excludes environment findings at its call site, but only the
+  `appDefectFindings` helper is covered by a mutant; the call site is
+  covered by reading, not by a test.
+- The redaction covers the configured endpoint URL and `*url.Error`
+  transport errors. A provider's error BODY is quoted (up to 512 bytes) as
+  the server sent it; a server that echoes a secret in its error body is
+  not scrubbed.
+- The exit-code contract is honoured by `cmd/helixqa`; no consumer script
+  outside this repository was changed (see the table above).
 - Non-gated steps keep their historic behaviour (an explicit
   `VERIFIED: no` still fails them); they are labelled honestly.
 - No live run against a real llama-server was made while building this;

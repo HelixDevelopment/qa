@@ -39,6 +39,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Exit-code contract (consumers must branch on it):** 0 pass, 1 fail,
+  2 blocked / nothing passed / banks not runnable. Exit 2 is not a warning.
+  Catalogizer wrappers that need updating (not changed here; measured at
+  `d211f574`): `scripts/helixqa-orchestrator.sh:314` (reports 2 as
+  "failed"), `scripts/run-helixqa-all.sh:68` (2 lands in the failure
+  branch), `scripts/run-helixqa-web.sh:131-133` (1 and 2 swallowed as a
+  warning, then "complete"). See `docs/vision/NO_BLUFF_VISION.md`.
+  **Open question for the operator:** an all-skipped structured run exits 2.
+- A vision-gated step whose action is skipped (prose action, `playwright:`
+  without CDP) BLOCKS its case; vision keys are refused on prose steps.
+- The desktop bank runner no longer PASSES a case whose `shell:` steps
+  passed while a vision-gated or other asserting step was never executed
+  (honest SKIPPED instead).
+- `recognize` / `forbid` need the exact blind-reply shape: a standalone
+  `TEXT:` first line closed by `DESCRIPTION:`; any other heading-like line
+  makes the reply unusable; filler (`(none)`, `No text visible`) is empty;
+  filler tokens are refused at load.
+- BLOCKED findings are category `environment` (new
+  `analysis.CategoryEnvironment`): never reproduced as a bug, never
+  ticketed, not counted in `issues_found`.
+- `HELIX_VISION_ENDPOINT` with user info, a query or a fragment is refused
+  at startup (error never echoes it); transport errors are scrubbed; the
+  request path is appended to the URL path.
+- Member-by-member vision calls go through the wrapper
+  (`llm.VisionRouter`) so availability, rate limit, circuit breaker and
+  cost accounting apply; a cancelled context stops the provider loop.
+- `frame_diff` FAILS on undecodable or differently sized frames instead of
+  reporting motion (pre-existing defect).
 - **Behaviour change for existing banks:** steps that already carried
   `vision_verify: true` were ignored and are now gated. In the catalogizer
   checkout that is 27 steps across 4 banks (measured 2026-10-14); without a
