@@ -69,7 +69,7 @@ returns the result — including the partial result of a platform that was
 cancelled mid-way — with the error, and a failed challenge / crash / ANR in
 it still exits **1** (`error: … (exit 1)` plus the counts on stderr). A
 challenge whose outcome the cancellation produced (an interrupted command,
-a runner timeout) is recorded as SKIPPED "interrupted", never FAILED.
+a runner timeout) is recorded as SKIPPED "interrupted", never FAILED. Challenges run in ID order (the bank is a map: the order used to differ from run to run, so a timeout cut a different challenge each time).
 
 Both commands also use:
 

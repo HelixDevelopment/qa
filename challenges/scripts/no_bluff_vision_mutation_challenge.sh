@@ -268,6 +268,7 @@ M = [
  ("Y32-autonomous-report-error-ignored", C+"exit_codes.go", C, [("if reportErr != nil && code == 0 {", "if false {")]),
  ("Y33-crash-not-outranking-error", C+"exit_codes.go", C, [("if result != nil && result.Report != nil && result.ExitCode() == 1 {", "if result != nil && result.Report != nil && result.Report.FailedChallenges > 0 {")]),
  ("Y34-learn-error-is-failed", A+"pipeline.go", A, [("// The project could not be read: environment, not an app verdict.\n\t\tresult.Status = StatusBlocked", "// The project could not be read: environment, not an app verdict.\n\t\tresult.Status = StatusFailed")]),
+ ("Y35-challenge-order-random", O+"orchestrator.go", O, [("\tsort.SliceStable(definitions, func(i, j int) bool { return definitions[i].ID < definitions[j].ID })\n", "\t_ = sort.SliceStable\n")]),
  ("X45-main-without-guard-panic", C+"main.go", C, [("if code := guardPanic(realMainFn); code != 0 {", "if code := func() int { realMainFn(); return 0 }(); code != 0 {")]),
 ]
 os.makedirs(work, exist_ok=True)

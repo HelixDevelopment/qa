@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"digital.vasic.challenges/pkg/bank"
@@ -169,6 +170,10 @@ func (o *Orchestrator) Run(
 	}
 
 	definitions := o.bank.All()
+	// The bank is a map: without an explicit order every run would execute
+	// the challenges in a different random order (and a timeout would cut
+	// a different one). Run them in ID order.
+	sort.SliceStable(definitions, func(i, j int) bool { return definitions[i].ID < definitions[j].ID })
 	o.log("Loaded %d challenge definitions from %d sources",
 		len(definitions), len(o.bank.Sources()))
 

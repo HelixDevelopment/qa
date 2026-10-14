@@ -265,17 +265,17 @@ func TestOrchRun_CancellationKeepsPartialPlatformResults(t *testing.T) {
 }
 
 // Finding 1, real execution: `shell: exit 3` FAILS, then a session timeout
-// cuts `shell: sleep 4` — the failure is kept (exit 1), the cut case is
+// cuts `shell: sleep 6` — the failure is kept (exit 1), the cut case is
 // not counted as a failure of its own.
 func TestOrchRun_TimeoutKeepsExecutedFailure(t *testing.T) {
 	bank := "version: \"1.0\"\nname: to\ntest_cases:\n" +
 		"  - id: T1\n    name: fails\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: exit 3\"\n" +
-		"  - id: T2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 4\"\n" +
+		"  - id: T2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 6\"\n" +
 		"  - id: T3\n    name: never\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n"
 	cfg := &config.Config{Banks: []string{writeBank(t, bank)}, Platforms: []config.Platform{config.PlatformDesktop},
 		OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
 		Timeout: time.Minute, StepTimeout: 30 * time.Second}
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
 	res, err := New(cfg).Run(ctx)
 	if err == nil {
@@ -284,14 +284,46 @@ func TestOrchRun_TimeoutKeepsExecutedFailure(t *testing.T) {
 	if res == nil || res.Report == nil || res.Report.FailedChallenges != 1 || exitLike(res, err) != 1 {
 		t.Fatalf("executed failure lost or cut case counted as failure: %+v err=%v", res.Report, err)
 	}
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel2()
 	cut := "version: \"1.0\"\nname: to2\ntest_cases:\n" +
-		"  - id: T2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 4\"\n"
+		"  - id: T2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 6\"\n"
 	cfg.Banks = []string{writeBank(t, cut)}
 	cfg.OutputDir = t.TempDir()
 	res, err = New(cfg).Run(ctx2)
 	if got := exitLike(res, err); got != 2 {
 		t.Fatalf("a case cut by the timeout exits %d, want 2 (not a failure): %+v err=%v", got, res, err)
+	}
+}
+
+// orderRunner records the order challenges are run in.
+type orderRunner struct {
+	scriptRunner
+	ids []string
+}
+
+func (r *orderRunner) Run(ctx context.Context, id challenge.ID, c *challenge.Config) (*challenge.Result, error) {
+	r.ids = append(r.ids, string(id))
+	return r.scriptRunner.Run(ctx, id, c)
+}
+
+// Round 7: challenges run in a deterministic (ID) order, so a timeout cuts
+// the same challenge on every run instead of a random one.
+func TestOrchRun_DeterministicChallengeOrder(t *testing.T) {
+	bank := "version: \"1.0\"\nname: ord\ntest_cases:\n"
+	for _, id := range []string{"C5", "C2", "C6", "C1", "C4", "C3"} {
+		bank += "  - id: " + id + "\n    name: " + id + "\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n"
+	}
+	for i := 0; i < 5; i++ {
+		r := &orderRunner{}
+		cfg := &config.Config{Banks: []string{writeBank(t, bank)}, Platforms: []config.Platform{config.PlatformDesktop},
+			OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
+			Timeout: time.Minute, StepTimeout: 10 * time.Second}
+		if _, err := New(cfg, WithRunner(r)).Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(r.ids, ","); got != "C1,C2,C3,C4,C5,C6" {
+			t.Fatalf("run %d: challenge order %s, want C1..C6", i, got)
+		}
 	}
 }
