@@ -119,6 +119,7 @@ M = [
  ("M66-verify-loop-ignores-cancelled-ctx", A+"structured_executor.go", A, [('if ctx.Err() != nil {\n\t\t\ttried = append(tried, "context cancelled before asking "+p.Name())', 'if false {\n\t\t\ttried = append(tried, "context cancelled before asking "+p.Name())')]),
  ("M67-blind-loop-ignores-cancelled-ctx", A+"vision_gate.go", A, [('if ctx.Err() != nil {\n\t\t\ttried = append(tried, "context cancelled before asking "+p.Name())', 'if false {\n\t\t\ttried = append(tried, "context cancelled before asking "+p.Name())')]),
  ("M68-enhanced-routed-cost-not-recorded", L+"vision_via.go", L, [('eap.recordCost(name, resp, "vision", true)', "_ = resp")]),
+ ("M69-frame-diff-noncomparable-is-motion", A+"structured_executor.go", A, [("changed, diffPct, cmpErr := compareFrames(first, second)\n\t\tif cmpErr != nil {", "changed, diffPct, cmpErr := compareFrames(first, second)\n\t\tif cmpErr != nil && false {")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),

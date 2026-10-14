@@ -612,7 +612,12 @@ func (ste *StructuredTestExecutor) performAction(
 		if err != nil || len(second) == 0 {
 			return ActionResult{Success: false, Message: fmt.Sprintf("second screenshot failed: %v", err)}
 		}
-		changed, diffPct := framesDiffer(first, second)
+		changed, diffPct, cmpErr := compareFrames(first, second)
+		if cmpErr != nil {
+			// Undecodable or differently sized frames say nothing about
+			// motion — never report them as "motion detected".
+			return ActionResult{Success: false, Message: fmt.Sprintf("frame_diff: %v — not comparable, cannot confirm motion", cmpErr)}
+		}
 		if !changed {
 			return ActionResult{Success: false, Message: fmt.Sprintf("frames identical (diff %.1f%%) — playback appears frozen", diffPct)}
 		}
@@ -1410,8 +1415,9 @@ func framesDiffer(aBytes, bBytes []byte) (bool, float64) {
 	a, _, errA := image.Decode(bytes.NewReader(aBytes))
 	b, _, errB := image.Decode(bytes.NewReader(bBytes))
 	if errA != nil || errB != nil {
-		// If we can't decode, be conservative and say they differ
-		// so we do not block a test on a decoding bug.
+		// Not comparable. Callers that judge a step use compareFrames,
+		// which refuses this case before calling here; this fallback
+		// value is never a verdict.
 		return true, 100.0
 	}
 	ba := a.Bounds()
@@ -1419,6 +1425,7 @@ func framesDiffer(aBytes, bBytes []byte) (bool, float64) {
 	w := ba.Dx()
 	h := ba.Dy()
 	if w != bb.Dx() || h != bb.Dy() {
+		// Not comparable either (see compareFrames); never a verdict.
 		return true, 100.0
 	}
 	const gridN = 17

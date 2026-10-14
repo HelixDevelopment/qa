@@ -292,7 +292,9 @@ func TestNoBluffVision_ProviderLoopKeepsAccountingAndHonoursCtx(t *testing.T) {
 // so the executor's own between-provider ctx check is the only guard.
 type listProvider struct{ ps []llm.Provider }
 
-func (l listProvider) Chat(context.Context, []llm.Message) (*llm.Response, error) { return nil, errTest("no chat") }
+func (l listProvider) Chat(context.Context, []llm.Message) (*llm.Response, error) {
+	return nil, errTest("no chat")
+}
 func (l listProvider) Vision(context.Context, []byte, string) (*llm.Response, error) {
 	return nil, errTest("listProvider.Vision must not be called directly")
 }
@@ -316,5 +318,31 @@ func TestNoBluffVision_ProviderLoopStopsOnCancelledCtxWithoutRouter(t *testing.T
 			t.Fatalf("%s: provider asked after the context was cancelled", mode)
 		}
 		requireBlocked(t, r, mode+" cancelled context")
+	}
+}
+
+// Review round 2, finding 9 (MEDIUM, pre-existing): frame_diff reported
+// "motion detected" when the frames could not be decoded or had different
+// sizes. Non-comparable frames now FAIL the step with the reason; real
+// motion still passes and identical frames still fail.
+func TestFrameDiff_NonComparableFramesAreNotMotion(t *testing.T) {
+	step := testbank.TestStep{Action: "frame_diff: 10"}
+	cases := []struct {
+		name    string
+		a, b    []byte
+		success bool
+		mustSay string
+	}{
+		{"undecodable", []byte("not an image at all"), []byte("still not an image"), false, "not comparable"},
+		{"size mismatch", noisePNGSized(t, 1, 160, 120), noisePNGSized(t, 2, 200, 100), false, "not comparable"},
+		{"identical", noisePNG(t, 5), noisePNG(t, 5), false, "identical"},
+		{"real motion", noisePNG(t, 5), noisePNG(t, 6), true, "motion"},
+	}
+	for _, c := range cases {
+		ex := &screenExec{frames: [][]byte{c.a, c.b}}
+		res := (&StructuredTestExecutor{}).performAction(context.Background(), ex, step)
+		if res.Success != c.success || !strings.Contains(res.Message, c.mustSay) {
+			t.Errorf("%s: success=%v msg=%q (want %v, %q)", c.name, res.Success, res.Message, c.success, c.mustSay)
+		}
 	}
 }
