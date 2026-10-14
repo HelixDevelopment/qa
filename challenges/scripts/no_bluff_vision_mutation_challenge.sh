@@ -42,7 +42,7 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic'
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic|TestCLIExit'
 PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/ ./cmd/helixqa/)
 
 echo "== control (unmutated tree)"
@@ -72,7 +72,7 @@ M = [
  ("M07-frame-hash-unbound", A+"vision_gate.go", A, [("r.FrameSHA256 = frameSHA256(frame)", "r.FrameSHA256 = frameSHA256(before)")]),
  ("M08-unchanged-frame-accepted", A+"vision_gate.go", A, [("\t\tif !changed {\n\t\t\trefute(", "\t\tif !changed && false {\n\t\t\trefute(")]),
  ("M08b-incomparable-frames-judged", A+"vision_gate.go", A, [('if cmpErr != nil {\n\t\t\tblock("expect_change: " + cmpErr.Error())', 'if false {\n\t\t\tblock("expect_change: " + cmpErr.Error())')]),
- ("M22-tokens-matched-in-model-prose", A+"vision_gate.go", A, [("matchTokensInTexts(texts, step.Recognize, step.Forbid, step.RecognizeExact)", "matchTokensInTexts(append(texts, desc), step.Recognize, step.Forbid, step.RecognizeExact)")]),
+ ("M22-tokens-matched-in-model-prose", A+"vision_gate.go", A, [("matchTokensInTexts(texts, step.Recognize, step.Forbid, step.ExactRecognize())", "matchTokensInTexts(append(texts, desc), step.Recognize, step.Forbid, step.ExactRecognize())")]),
  ("M23-reply-without-transcription-judged", A+"vision_gate.go", A, [("if perr != nil {\n\t\t\ttried = append(tried, p.Name()+\": \"+perr.Error())", "if perr != nil && false {\n\t\t\ttried = append(tried, p.Name()+\": \"+perr.Error())")]),
  ("M25-phash-cap-removed", T+"schema.go", T, [("d > MaxPHashMaxDistance {", "d > 64 {")]),
  ("M26-change-only-labelled-verified", A+"vision_gate.go", A, [("if !step.HasPositiveVisionCheck() {", "if false {")]),
@@ -176,7 +176,7 @@ M = [
  ("V03-invalid-utf8-accepted", A+"vision_transcript.go", A, [("if !utf8.ValidString(reply) {", "if !utf8.ValidString(reply) && false {")]),
  ("V04-exact-mode-ignored", A+"vision_transcript.go", A, [("found = equals(k)", "found = equals(k) || has(k)")]),
  ("V05-nfkc-dropped", T+"schema.go", A, [("s = norm.NFKC.String(s)", "s = norm.NFKC.String(\"\") + s")]),
- ("V06-zero-width-kept", T+"schema.go", A, [("if unicode.Is(unicode.Cf, r) {\n\t\t\tcontinue", "if unicode.Is(unicode.Cf, r) && false {\n\t\t\tcontinue")]),
+ ("V06-zero-width-kept", T+"schema.go", A, [("if unicode.Is(unicode.Cf, r) || isInvisibleNonFormat(r) {", "if isInvisibleNonFormat(r) {")]),
  ("V07-recognize-exact-alone-loaded", T+"schema.go", T, [("if st.RecognizeExact && len(st.Recognize) == 0 {", "if false && st.RecognizeExact {")]),
  ("W01-run-load-error-exits-1", C+"exit_codes.go", C, [("if err != nil {\n\t\treturn exitCodeNotExecuted", "if err != nil {\n\t\treturn 1")]),
  ("W02-panic-swallowed", C+"exit_codes.go", C, [("if r := recover(); r != nil {", "if r := recover(); r != nil && false {")]),
@@ -194,6 +194,52 @@ M = [
  ("M19-endpoint-requires-key", L+"provider.go", L, [("case ProviderOllama, ProviderUITars, ProviderVisionEndpoint:", "case ProviderOllama, ProviderUITars:")]),
  ("M20-contradictory-tokens-loaded", T+"schema.go", T, [("if recognized[k] {", "if recognized[k] && false {")]),
  ("M21-phash-without-golden-loaded", T+"schema.go", T, [('if st.Golden == "" {\n\t\t\treturn fmt.Sprintf("test case %s step %d: phash_max_distance without golden', 'if false {\n\t\t\treturn fmt.Sprintf("test case %s step %d: phash_max_distance without golden')]),
+ # ── review round 5 (fix round 6) ──
+ ("X01-no-asserting-step-passes", A+"structured_executor.go", A, [("if !testBlocked && testPassed && assertingSteps == 0 && ", "if false && !testBlocked && testPassed && assertingSteps == 0 && ")]),
+ ("X02-sleep-counts-as-asserting", A+"structured_executor.go", A, [("case testbank.ActionTypeSleep, testbank.ActionTypeScreenshot, testbank.ActionTypeDescription:\n\t\treturn false", "case testbank.ActionTypeScreenshot, testbank.ActionTypeDescription:\n\t\treturn false")]),
+ ("X03-unconfirmed-screenshot-asserts", A+"structured_executor.go", A, [("case testbank.ActionTypeSleep, testbank.ActionTypeScreenshot, testbank.ActionTypeDescription:\n\t\treturn false", "case testbank.ActionTypeSleep, testbank.ActionTypeDescription:\n\t\treturn false")]),
+ ("X04-vision-verified-not-asserting", A+"structured_executor.go", A, [("if r.VisionStatus == VisionVerified {\n\t\treturn true", "if false {\n\t\treturn true")]),
+ ("X05-verified-stray-lines-ignored", A+"structured_executor.go", A, [('case len(answers) == 1 && strayReplyLine(response) != "":', "case false:")]),
+ ("X06-second-actual-line-allowed", A+"structured_executor.go", A, [("if actuals++; actuals == 1 {", "if actuals++; actuals >= 1 {")]),
+ ("X07-empty-transcription-usable", A+"vision_transcript.go", A, [("if screenText == 0 {", "if false {")]),
+ ("X08-refusal-element-usable", A+"vision_transcript.go", A, [("if modelStatementRe.MatchString(k) {", "if false {")]),
+ ("X09-transcript-usability-unchecked", A+"vision_gate.go", A, [("\t\t\tperr = transcriptUsable(t)", "\t\t\t_ = transcriptUsable")]),
+ ("X10-line-separator-accepted", A+"vision_transcript.go", A, [("if strings.IndexFunc(v, isLineOrParagraphSeparator) >= 0 {", "if strings.IndexFunc(v, isLineOrParagraphSeparator) >= 0 && false {")]),
+ ("X11-recognize-contains-by-default", T+"schema.go", A, [("return !st.RecognizeContains", "return st.RecognizeExact")]),
+ ("X12-contains-without-recognize-loaded", T+"schema.go", T, [("if st.RecognizeContains && len(st.Recognize) == 0 {", "if false {")]),
+ ("X13-contains-and-exact-loaded", T+"schema.go", T, [("if st.RecognizeContains && st.RecognizeExact {", "if false {")]),
+ ("X14-default-ignorables-kept", T+"schema.go", T, [("if unicode.Is(unicode.Cf, r) || isInvisibleNonFormat(r) {", "if unicode.Is(unicode.Cf, r) {")]),
+ ("X15-variation-selectors-kept", T+"schema.go", T, [(" || unicode.Is(unicode.Variation_Selector, r)", "")]),
+ ("X16-http-without-base-url-fails", A+"structured_executor.go", A, [('return ActionResult{Blocked: true, Message: "http: no base URL configured', 'return ActionResult{Success: false, Message: "http: no base URL configured')]),
+ ("X17-device-gone-is-app-failure", A+"structured_executor.go", A, [("if !deviceUnreachableRe.MatchString(text) {", "if !deviceUnreachableRe.MatchString(text) || true {")]),
+ ("X18-keypress-device-gone-unclassified", A+"structured_executor.go", A, [('deviceUnreachable("keypress", err, nil); gone {', 'deviceUnreachable("keypress", err, nil); gone && false {')]),
+ ("X19-adb-shell-device-gone-unclassified", A+"structured_executor.go", A, [('deviceUnreachable("adb_shell", err, out); gone {', 'deviceUnreachable("adb_shell", err, out); gone && false {')]),
+ ("X20-playback-device-gone-unclassified", A+"structured_executor.go", A, [('deviceUnreachable("playback_check", err, out); gone {', 'deviceUnreachable("playback_check", err, out); gone && false {')]),
+ ("X21-failed-screenshot-capture-passes", A+"structured_executor.go", A, [("kind == testbank.ActionTypeScreenshot && !step.IsVisionGated() && executor != nil && len(afterSS) == 0 {", "kind == testbank.ActionTypeScreenshot && !step.IsVisionGated() && executor != nil && len(afterSS) == 0 && false {")]),
+ ("X22-blank-frames-judged", A+"structured_executor.go", A, [("if IsBlankScreenshot(first) || IsBlankScreenshot(second) {", "if false {")]),
+ ("X23-one-blank-frame-judged", A+"structured_executor.go", A, [("if IsBlankScreenshot(first) || IsBlankScreenshot(second) {", "if IsBlankScreenshot(first) && IsBlankScreenshot(second) {")]),
+ ("X24-reachability-probe-ignored", A+"structured_executor.go", A, [("if perr := ste.probeReachable(ctx, platform); perr != nil {", "if perr := ste.probeReachable(ctx, platform); perr != nil && false {")]),
+ ("X25-probe-not-cached", A+"structured_executor.go", A, [("if err, done := ste.reach[platform]; done {", "if err, done := ste.reach[platform]; done && false {")]),
+ ("X26-adb-state-not-checked", A+"executor_factory.go", A, [('if err != nil || state != "device" {', "if err != nil {")]),
+ ("X27-capture-probe-error-ignored", A+"executor_factory.go", A, [('if err != nil {\n\t\t\treturn fmt.Errorf("%s capture probe failed: %w", platform, err)', 'if false {\n\t\t\treturn fmt.Errorf("%s capture probe failed: %w", platform, err)')]),
+ ("X28-empty-capture-probe-accepted", A+"executor_factory.go", A, [('if len(shot) == 0 {\n\t\t\treturn fmt.Errorf("%s capture probe returned no image data"', 'if len(shot) == 0 && false {\n\t\t\treturn fmt.Errorf("%s capture probe returned no image data"')]),
+ ("X29-real-factory-never-probes", A+"real_executor.go", A, [("return probePlatformReachable(ctx, platform, f.config.AndroidDevice, runner, f.Create)", "_ = runner\n\treturn nil")]),
+ ("X30-preflight-failure-is-failed", A+"pipeline.go", A, [("// judged — BLOCKED (exit 2), never a FAILED verdict.\n\t\tresult.Status = StatusBlocked", "// judged — BLOCKED (exit 2), never a FAILED verdict.\n\t\tresult.Status = StatusFailed")]),
+ ("X31-plan-error-is-failed", A+"pipeline.go", A, [("// Provider outage / timeout while planning: no test ran.\n\t\tresult.Status = StatusBlocked", "// Provider outage / timeout while planning: no test ran.\n\t\tresult.Status = StatusFailed")]),
+ ("X32-timeout-is-failed", A+"pipeline.go", A, [("// never judged — BLOCKED, not FAILED.\n\t\t\tresult.Status = StatusBlocked", "// never judged — BLOCKED, not FAILED.\n\t\t\tresult.Status = StatusFailed")]),
+ ("X33-blocked-session-exits-0", A+"pipeline.go", A, [("if r.Status == StatusBlocked {\n\t\t// The session stopped", "if false {\n\t\t// The session stopped")]),
+ ("X34-blocked-outranks-failed-case", A+"pipeline.go", A, [("\tif r.Status == StatusFailed {\n\t\treturn 1\n\t}\n\tif r.Structured", "\tif r.Status == StatusFailed {\n\t\treturn 1\n\t}\n\tif r.Status == StatusBlocked {\n\t\treturn 2\n\t}\n\tif r.Structured")]),
+ ("X35-astica-status-unredacted", L+"astica.go", L, [("errorBodyText([]byte(apiResp.Status), p.apiKey),", "apiResp.Status,")]),
+ ("X36-embedded-base64-not-redacted", L+"http_body.go", L, [("forms = append(forms, embeddedBase64Cores(raw)...)", "_ = embeddedBase64Cores")]),
+ ("X37-embedded-base64-one-alignment", L+"http_body.go", L, [("skip := (3 - lead) % 3", "skip := 0 * lead")]),
+ ("X38-percent-all-not-redacted", L+"http_body.go", L, [("percentEncodeAll(raw),", "strings.Repeat(percentEncodeAll(raw), 0),")]),
+ ("X39-hex-not-redacted", L+"http_body.go", L, [("hex.EncodeToString(raw),", "strings.Repeat(hex.EncodeToString(raw), 0),")]),
+ ("X40-json-escapes-not-redacted", L+"http_body.go", L, [("jsonUnicodeEscapes(secret),", "strings.Repeat(jsonUnicodeEscapes(secret), 0),")]),
+ ("X41-orch-post-exec-error-drops-verdicts", O+"orchestrator.go", O, [('return result, fmt.Errorf("write report: %w", err)', 'return nil, fmt.Errorf("write report: %w", err)')]),
+ ("X42-error-outranks-failed-verdict", C+"exit_codes.go", C, [("if result != nil && result.Report != nil && result.ExitCode() == 1 {", "if false {")]),
+ ("X43-main-run-error-exits-1", C+"main.go", C, [("os.Exit(runExitCode(result, err))", "os.Exit(1)")]),
+ ("X44-main-run-error-drops-result", C+"main.go", C, [("os.Exit(runExitCode(result, err))", "os.Exit(runExitCode(nil, err))")]),
+ ("X45-main-without-guard-panic", C+"main.go", C, [("if code := guardPanic(realMainFn); code != 0 {", "if code := func() int { realMainFn(); return 0 }(); code != 0 {")]),
 ]
 os.makedirs(work, exist_ok=True)
 want = set(x for x in only.split(",") if x)
