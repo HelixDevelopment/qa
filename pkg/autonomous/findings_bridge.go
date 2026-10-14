@@ -65,6 +65,12 @@ func (b *FindingsBridge) Process(
 	var skipped int
 
 	for _, af := range findings {
+		// Environment findings (e.g. a BLOCKED vision-gated case) say the
+		// run could not judge; they are not app defects and are never
+		// ticketed as one.
+		if !af.Category.IsAppDefect() {
+			continue
+		}
 		// ── Dedup: skip if same title already exists ──
 		if seenTitles[af.Title] {
 			skipped++

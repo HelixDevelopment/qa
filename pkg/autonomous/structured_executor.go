@@ -272,7 +272,9 @@ func (ste *StructuredTestExecutor) executeTestCase(
 		// count. The finding names the cause; it does not claim an app
 		// defect.
 		finding := analysis.AnalysisFinding{
-			Category: analysis.CategoryFunctional,
+			// Environment, not an app defect: kept out of bug
+			// reproduction, ticketing and the issues-found count.
+			Category: analysis.CategoryEnvironment,
 			Severity: ste.priorityToSeverity(tc.Priority),
 			Title: fmt.Sprintf(
 				"Test Case BLOCKED (could not determine): %s", tc.Name,

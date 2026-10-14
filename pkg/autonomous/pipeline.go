@@ -3053,7 +3053,7 @@ func (sp *SessionPipeline) Run(
 		}
 	}
 
-	result.IssuesFound = len(allFindings)
+	result.IssuesFound = len(appDefectFindings(allFindings))
 
 	// ── BugReproducer: confirm high-severity bugs ───────
 	// After analysis finds issues, attempt to reproduce
@@ -4556,11 +4556,28 @@ func sanitizeFilename(s string) string {
 // findingsToReproBugs converts high-severity analysis
 // findings into Bug structs for the BugReproducer. Only
 // findings with "critical" or "high" severity are included.
+// appDefectFindings keeps only findings that claim a defect in the app
+// under test (drops environment findings such as BLOCKED vision cases).
+func appDefectFindings(findings []analysis.AnalysisFinding) []analysis.AnalysisFinding {
+	out := make([]analysis.AnalysisFinding, 0, len(findings))
+	for _, f := range findings {
+		if f.Category.IsAppDefect() {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func findingsToReproBugs(
 	findings []analysis.AnalysisFinding,
 ) []reproduce.Bug {
 	var bugs []reproduce.Bug
 	for i, f := range findings {
+		if !f.Category.IsAppDefect() {
+			// The QA run could not judge (e.g. vision unavailable):
+			// there is no app bug to reproduce.
+			continue
+		}
 		sev := strings.ToLower(string(f.Severity))
 		if sev != "critical" && sev != "high" {
 			continue
