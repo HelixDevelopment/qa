@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cancellation) follows execution. Provider error bodies also redact the
   key as base64 inside larger blobs (e.g. an echoed `Bearer` header), every
   byte percent-encoded, hex and JSON `\u` escapes; astica's status text is
-  redacted. Mutants X01-X45 added to the no_bluff_vision challenge.
+  redacted. Mutants X01-X46 added to the no_bluff_vision challenge (178 mutants, all killed by assertion).
 - **Round-5 hardening:** a `frame_diff` whose screenshot fails and
   `playback_check:` / `adb_shell:` on a non-Android executor are BLOCKED
   (environment), not FAILED app defects; with no executor, host-only steps
