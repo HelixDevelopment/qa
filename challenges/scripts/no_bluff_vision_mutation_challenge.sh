@@ -97,7 +97,7 @@ M = [
  ("M45-desktop-shell-pass-ignores-unrun-steps", O+"definition_challenge.go", O, [("case allPassed && caseHasUnrunAssertingStep(d.testCase, d.platform):", "case allPassed && caseHasUnrunAssertingStep(d.testCase, d.platform) && false:")]),
  ("M46-skipped-gated-step-ignored", A+"structured_executor.go", A, [("\tif actionResult.Skipped {\n\t\tif step.IsVisionGated() {", "\tif actionResult.Skipped {\n\t\tif step.IsVisionGated() && false {")]),
  ("M47-loader-accepts-vision-on-prose", T+"schema.go", T, [("kind == ActionTypeDescription {\n\t\t\treturn fmt.Sprintf(\"test case %s step %d: vision keys on a prose", "kind == ActionTypeDescription && false {\n\t\t\treturn fmt.Sprintf(\"test case %s step %d: vision keys on a prose")]),
- ("M51-filler-kept-as-screen-text", A+"vision_transcript.go", A, [("if k == \"\" || testbank.IsVisionFiller(k) {", "if k == \"\" {")]),
+ ("M51-filler-kept-as-screen-text", A+"vision_transcript.go", A, [("if k == \"\" || testbank.IsVisionFiller(k) {\n\t\t\tcontinue\n\t\t}\n\t\tkeys = append", "if k == \"\" {\n\t\t\tcontinue\n\t\t}\n\t\tkeys = append")]),
  ("M52-loader-accepts-filler-token", T+"schema.go", T, [('if IsVisionFiller(k) {\n\t\t\treturn fmt.Sprintf("test case %s step %d: recognize token', 'if false {\n\t\t\treturn fmt.Sprintf("test case %s step %d: recognize token')]),
  ("M53-endpoint-userinfo-accepted", L+"vision_endpoint.go", L, [('case u.User != nil:\n\t\treturn refuse("it carries user info")', 'case u.User != nil && false:\n\t\treturn refuse("it carries user info")')]),
  ("M54-endpoint-query-accepted", L+"vision_endpoint.go", L, [("case u.RawQuery != \"\" || u.ForceQuery:", "case false:")]),
@@ -239,6 +239,7 @@ M = [
  ("X42-error-outranks-failed-verdict", C+"exit_codes.go", C, [("if result != nil && result.Report != nil && result.ExitCode() == 1 {", "if false {")]),
  ("X43-main-run-error-exits-1", C+"main.go", C, [("os.Exit(runExitCode(result, err))", "os.Exit(1)")]),
  ("X44-main-run-error-drops-result", C+"main.go", C, [("os.Exit(runExitCode(result, err))", "os.Exit(runExitCode(nil, err))")]),
+ ("X46-filler-counted-as-screen-text", A+"vision_transcript.go", A, [("if k == \"\" || testbank.IsVisionFiller(k) {\n\t\t\tcontinue\n\t\t}\n\t\tif modelStatementRe", "if k == \"\" {\n\t\t\tcontinue\n\t\t}\n\t\tif modelStatementRe")]),
  ("X45-main-without-guard-panic", C+"main.go", C, [("if code := guardPanic(realMainFn); code != 0 {", "if code := func() int { realMainFn(); return 0 }(); code != 0 {")]),
 ]
 os.makedirs(work, exist_ok=True)

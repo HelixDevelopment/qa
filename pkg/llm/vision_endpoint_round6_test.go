@@ -88,6 +88,14 @@ func TestProviders_R6_RedactsEchoForms(t *testing.T) {
 			t.Errorf("%s: redaction not visible: %q", name, out)
 		}
 	}
+	// The key echoed ALONE in any base64 variant is redacted whole — no
+	// partial trailing characters (which would carry its last bytes).
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		body := `{"echo":"` + enc.EncodeToString([]byte(r6Key)) + `"}`
+		if out := errorBodyText([]byte(body), r6Key); out != `{"echo":"[REDACTED]"}` {
+			t.Errorf("standalone base64 form not redacted whole: %q", out)
+		}
+	}
 	// Ordinary text near the key's alphabet is not mangled.
 	if out := errorBodyText([]byte(`{"error":"invalid model gpt-4o"}`), r6Key); out != `{"error":"invalid model gpt-4o"}` {
 		t.Errorf("unrelated body altered: %q", out)
