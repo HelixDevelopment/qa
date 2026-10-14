@@ -139,8 +139,6 @@ func TestVisionFields_ReviewLoadRules(t *testing.T) {
 		want string
 	}{
 		{"phash 17 above cap", TestStep{Action: "screenshot", Golden: "g", PHashMaxDistance: &d17}, "0..16"},
-		{"recognize heading word Text", TestStep{Action: "screenshot", VisionVerify: true, Recognize: []string{"Text"}}, "heading"},
-		{"forbid heading word Description", TestStep{Action: "screenshot", VisionVerify: true, Forbid: []string{"description:"}}, "heading"},
 		{"expect_change alone", TestStep{Action: "keypress: X", ExpectChange: true}, "positive"},
 		{"forbid alone", TestStep{Action: "screenshot", Forbid: []string{"Error"}}, "positive"},
 		{"vision_verify on shell", TestStep{Action: "shell: true", VisionVerify: true}, "screen"},
@@ -165,6 +163,9 @@ func TestVisionFields_ReviewLoadRules(t *testing.T) {
 		{Action: "keypress: X", ExpectChange: true, Golden: "g"},
 		{Action: "screenshot", Forbid: []string{"Error"}, Recognize: []string{"Settings"}},
 		{Action: "sleep: 100", VisionVerify: true},
+		// "Text" / "Description" are ordinary screen words now that the
+		// reply is a JSON object (no heading words exist).
+		{Action: "screenshot", Recognize: []string{"Text"}, Forbid: []string{"Description"}},
 	}
 	for i, st := range good {
 		tc := TestCase{ID: "TC-G", Name: "g", Steps: []TestStep{st}}

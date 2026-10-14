@@ -42,7 +42,7 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_'
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_'
 PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/)
 
 echo "== control (unmutated tree)"
@@ -72,9 +72,8 @@ M = [
  ("M07-frame-hash-unbound", A+"vision_gate.go", A, [("r.FrameSHA256 = frameSHA256(frame)", "r.FrameSHA256 = frameSHA256(before)")]),
  ("M08-unchanged-frame-accepted", A+"vision_gate.go", A, [("\t\tif !changed {\n\t\t\trefute(", "\t\tif !changed && false {\n\t\t\trefute(")]),
  ("M08b-incomparable-frames-judged", A+"vision_gate.go", A, [('if cmpErr != nil {\n\t\t\tblock("expect_change: " + cmpErr.Error())', 'if false {\n\t\t\tblock("expect_change: " + cmpErr.Error())')]),
- ("M22-tokens-matched-in-model-prose", A+"vision_gate.go", A, [("matchVisionTokens(transcript, step.Recognize", "matchVisionTokens(transcript+desc, step.Recognize")]),
- ("M23-reply-without-transcription-judged", A+"vision_gate.go", A, [('if !ok {\n\t\t\ttried = append(tried, p.Name()+": blind reply has no TEXT:', 'if !ok && false {\n\t\t\ttried = append(tried, p.Name()+": blind reply has no TEXT:')]),
- ("M24-heading-word-token-loaded", T+"schema.go", T, [('if visionHeadingWords[k] {\n\t\t\treturn fmt.Sprintf("test case %s step %d: recognize token', 'if false {\n\t\t\treturn fmt.Sprintf("test case %s step %d: recognize token')]),
+ ("M22-tokens-matched-in-model-prose", A+"vision_gate.go", A, [("matchTokensInTexts(texts, step.Recognize, step.Forbid)", "matchTokensInTexts(append(texts, desc), step.Recognize, step.Forbid)")]),
+ ("M23-reply-without-transcription-judged", A+"vision_gate.go", A, [("if perr != nil {\n\t\t\ttried = append(tried, p.Name()+\": \"+perr.Error())", "if perr != nil && false {\n\t\t\ttried = append(tried, p.Name()+\": \"+perr.Error())")]),
  ("M25-phash-cap-removed", T+"schema.go", T, [("d > MaxPHashMaxDistance {", "d > 64 {")]),
  ("M26-change-only-labelled-verified", A+"vision_gate.go", A, [("if !step.HasPositiveVisionCheck() {", "if false {")]),
  ("M27-loader-accepts-negative-only-check", T+"schema.go", T, [("if !st.HasPositiveVisionCheck() {", "if false {")]),
@@ -90,7 +89,7 @@ M = [
  ("M37-ambiguous-reply-stops-the-search", A+"structured_executor.go", A, [('tried = append(tried, p.Name()+": "+actual)', 'tried = append(tried, p.Name()+": "+actual)\n\t\tbreak')]),
  ("M38-endpoint-asked-last", A+"vision_gate.go", A, [("return append(endpoint, rest...)", "return append(rest, endpoint...)")]),
  ("M39-definite-no-shopped-for-yes", A+"structured_executor.go", A, [("if err == nil {\n\t\t\treturn ok, actual, p.Name(), nil", "if err == nil && ok {\n\t\t\treturn ok, actual, p.Name(), nil")]),
- ("M40-blind-reply-without-text-stops-the-search", A+"vision_gate.go", A, [("cannot be told apart from the model's prose\")\n\t\t\tcontinue", "cannot be told apart from the model's prose\")\n\t\t\tbreak")]),
+ ("M40-blind-reply-without-text-stops-the-search", A+"vision_gate.go", A, [("tried = append(tried, p.Name()+\": \"+perr.Error())\n\t\t\tcontinue", "tried = append(tried, p.Name()+\": \"+perr.Error())\n\t\t\tbreak")]),
  ("M41-structured-outcome-not-on-session", A+"pipeline.go", A, [("result.Structured = structuredResult", "result.Structured = nil")]),
  ("M42-session-exit-ignores-structured", A+"pipeline.go", A, [("if c := r.Structured.ExitCode(); c != 0 {", "if c := r.Structured.ExitCode(); c != 0 && false {")]),
  ("M43-unloadable-banks-exit-0", A+"pipeline.go", A, [('if r.StructuredError != "" {\n\t\treturn 2', 'if false {\n\t\treturn 2')]),
@@ -98,10 +97,7 @@ M = [
  ("M45-desktop-shell-pass-ignores-unrun-steps", O+"definition_challenge.go", O, [("case allPassed && caseHasUnrunAssertingStep(d.testCase):", "case allPassed && caseHasUnrunAssertingStep(d.testCase) && false:")]),
  ("M46-skipped-gated-step-ignored", A+"structured_executor.go", A, [("\tif actionResult.Skipped {\n\t\tif step.IsVisionGated() {", "\tif actionResult.Skipped {\n\t\tif step.IsVisionGated() && false {")]),
  ("M47-loader-accepts-vision-on-prose", T+"schema.go", T, [("kind == ActionTypeDescription {\n\t\t\treturn fmt.Sprintf(\"test case %s step %d: vision keys on a prose", "kind == ActionTypeDescription && false {\n\t\t\treturn fmt.Sprintf(\"test case %s step %d: vision keys on a prose")]),
- ("M48-description-heading-not-required", A+"vision_gate.go", A, [('return "", false // no DESCRIPTION: heading closed the TEXT: section', 'return b.String(), true // no DESCRIPTION: heading closed the TEXT: section')]),
- ("M49-other-headings-do-not-close-text", A+"vision_gate.go", A, [('if isHeadingLike(line) {\n\t\t\treturn "", false', 'if isHeadingLike(line) && false {\n\t\t\treturn "", false')]),
- ("M50-text-heading-anywhere", A+"vision_gate.go", A, [("if i == len(lines) || !transcriptionHeadRe.MatchString(lines[i]) {", "if i == len(lines) {")]),
- ("M51-filler-kept-as-screen-text", A+"vision_gate.go", A, [("if key == \"\" || testbank.IsVisionFiller(key) {", "if key == \"\" {")]),
+ ("M51-filler-kept-as-screen-text", A+"vision_transcript.go", A, [("if k == \"\" || testbank.IsVisionFiller(k) {", "if k == \"\" {")]),
  ("M52-loader-accepts-filler-token", T+"schema.go", T, [('if IsVisionFiller(k) {\n\t\t\treturn fmt.Sprintf("test case %s step %d: recognize token', 'if false {\n\t\t\treturn fmt.Sprintf("test case %s step %d: recognize token')]),
  ("M53-endpoint-userinfo-accepted", L+"vision_endpoint.go", L, [('case u.User != nil:\n\t\treturn refuse("it carries user info")', 'case u.User != nil && false:\n\t\treturn refuse("it carries user info")')]),
  ("M54-endpoint-query-accepted", L+"vision_endpoint.go", L, [("case u.RawQuery != \"\" || u.ForceQuery:", "case false:")]),
@@ -120,10 +116,20 @@ M = [
  ("M67-blind-loop-ignores-cancelled-ctx", A+"vision_gate.go", A, [('if ctx.Err() != nil {\n\t\t\ttried = append(tried, "context cancelled before asking "+p.Name())', 'if false {\n\t\t\ttried = append(tried, "context cancelled before asking "+p.Name())')]),
  ("M68-enhanced-routed-cost-not-recorded", L+"vision_via.go", L, [('eap.recordCost(name, resp, "vision", true)', "_ = resp")]),
  ("M69-frame-diff-noncomparable-is-motion", A+"structured_executor.go", A, [("changed, diffPct, cmpErr := compareFrames(first, second)\n\t\tif cmpErr != nil {", "changed, diffPct, cmpErr := compareFrames(first, second)\n\t\tif cmpErr != nil && false {")]),
+ ("J01-trailing-content-accepted", A+"vision_transcript.go", A, [("if _, terr := dec.Token(); terr != io.EOF {", "if _, terr := dec.Token(); terr != io.EOF && false {")]),
+ ("J02-unknown-key-accepted", A+"vision_transcript.go", A, [('if key != "texts" && key != "description" {', "if false {")]),
+ ("J03-duplicate-key-accepted", A+"vision_transcript.go", A, [("if seen[key] {", "if false {")]),
+ ("J04-non-string-element-accepted", A+"vision_transcript.go", A, [("if len(e) == 0 || e[0] != '\"' || json.Unmarshal(e, &v) != nil {", "if json.Unmarshal(e, &v) != nil && false {")]),
+ ("J05-elements-joined", A+"vision_transcript.go", A, [('keys = append(keys, " "+k+" ")', 'if len(keys) == 0 {\n\t\t\tkeys = append(keys, " ")\n\t\t}\n\t\tkeys[0] += k + " "')]),
+ ("J06-endpoint-gets-no-response-format", L+"openai.go", A, [("if schema := responseSchemaFrom(ctx); schema != nil {", "if schema := responseSchemaFrom(ctx); schema != nil && false {")]),
+ ("J07-schema-not-attached", A+"vision_gate.go", A, [("sctx := llm.WithResponseSchema(ctx, blindTranscriptSchema)", "sctx := ctx")]),
+ ("J08-missing-key-accepted", A+"vision_transcript.go", A, [('if !seen["texts"] || !seen["description"] {', "if false {")]),
+ ("J09-description-type-unchecked", A+"vision_transcript.go", A, [("if len(raw) == 0 || raw[0] != '\"' || json.Unmarshal(raw, &description) != nil {", "if json.Unmarshal(raw, &description) != nil && false {")]),
+ ("J10-response-format-sent-to-cloud", L+"openai.go", L, [("\tif p.providerName == ProviderVisionEndpoint {\n\t\tif schema := responseSchemaFrom(ctx); schema != nil {", "\tif true {\n\t\tif schema := responseSchemaFrom(ctx); schema != nil {")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),
- ("M12-tokens-leak-into-prompt", A+"vision_gate.go", A, [("blindTranscription(ctx context.Context, frame []byte)", "blindTranscription(ctx context.Context, frame []byte, leak string)"), ("p.Vision(ctx, frame, blindDescribePrompt)", "p.Vision(ctx, frame, blindDescribePrompt+leak)"), ("ste.blindTranscription(ctx, frame)", 'ste.blindTranscription(ctx, frame, strings.Join(step.Recognize, " "))')]),
+ ("M12-tokens-leak-into-prompt", A+"vision_gate.go", A, [("blindTranscription(ctx context.Context, frame []byte)", "blindTranscription(ctx context.Context, frame []byte, leak string)"), ("p.Vision(sctx, frame, blindDescribePrompt)", "p.Vision(sctx, frame, blindDescribePrompt+leak)"), ("ste.blindTranscription(ctx, frame)", 'ste.blindTranscription(ctx, frame, strings.Join(step.Recognize, " "))')]),
  ("M13-forbid-substring-match", A+"vision_gate.go", A, [('if k != "" && strings.Contains(hay, " "+k+" ")', 'if k != "" && strings.Contains(hay, k)')]),
  ("M14-screenshot-judges-shell", T+"schema.go", A, [("return true\n\t}\n\treturn false\n}\n\n// TestStep", "return false\n\t}\n\treturn false\n}\n\n// TestStep")]),
  ("M15-blocked-case-counted-passed", A+"structured_executor.go", A, [("case testBlocked && testPassed:", "case testBlocked && testPassed && false:")]),

@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -106,4 +107,21 @@ func DescribeVisionEndpoint(cfg ProviderConfig) string {
 		key = "set"
 	}
 	return fmt.Sprintf("%s (model: %s, api key: %s)", shown, model, key)
+}
+
+type responseSchemaKey struct{}
+
+// WithResponseSchema asks for a JSON reply constrained by schema. The
+// operator's local endpoint (llama-server) receives it as
+// response_format {"type":"json_object","schema":...} (documented in
+// llama.cpp tools/server/README.md for /v1/chat/completions), which
+// grammar-constrains generation. Other providers ignore it; the caller
+// must strict-parse the reply in every case.
+func WithResponseSchema(ctx context.Context, schema map[string]any) context.Context {
+	return context.WithValue(ctx, responseSchemaKey{}, schema)
+}
+
+func responseSchemaFrom(ctx context.Context) map[string]any {
+	s, _ := ctx.Value(responseSchemaKey{}).(map[string]any)
+	return s
 }

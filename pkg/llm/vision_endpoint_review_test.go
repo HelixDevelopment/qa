@@ -276,3 +276,32 @@ func TestVisionEndpoint_EnhancedVisionViaKeepsAccounting(t *testing.T) {
 		t.Fatalf("cancelled ctx: err=%v server calls=%d", err, calls)
 	}
 }
+
+// Round 4: the JSON-schema response_format goes ONLY to the operator's local
+// endpoint; cloud OpenAI-compatible providers keep their request shape.
+func TestVisionEndpoint_ResponseSchemaOnlyForEndpoint(t *testing.T) {
+	var bodies []map[string]any
+	srv := captureServer(t, &bodies)
+	ctx := WithResponseSchema(context.Background(), map[string]any{"type": "object"})
+	if _, err := NewOpenAIProvider(ProviderConfig{Name: ProviderVisionEndpoint, BaseURL: srv.URL + "/v1"}).Vision(ctx, []byte("x"), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if rf, _ := bodies[len(bodies)-1]["response_format"].(map[string]any); rf == nil || rf["type"] != "json_object" {
+		t.Fatalf("endpoint lacks response_format: %v", bodies[len(bodies)-1]["response_format"])
+	}
+	for _, name := range []string{ProviderOpenAI, "qwen", "openrouter"} {
+		if _, err := NewOpenAIProvider(ProviderConfig{Name: name, APIKey: "k", BaseURL: srv.URL}).Vision(ctx, []byte("x"), "q"); err != nil {
+			t.Fatal(err)
+		}
+		if _, has := bodies[len(bodies)-1]["response_format"]; has {
+			t.Fatalf("%s request carries response_format — cloud request shape changed", name)
+		}
+	}
+	// No schema in the context: the endpoint request is unchanged too.
+	if _, err := NewOpenAIProvider(ProviderConfig{Name: ProviderVisionEndpoint, BaseURL: srv.URL + "/v1"}).Vision(context.Background(), []byte("x"), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := bodies[len(bodies)-1]["response_format"]; has {
+		t.Fatal("response_format sent without a requested schema")
+	}
+}

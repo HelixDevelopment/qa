@@ -77,6 +77,9 @@ type openaiRequest struct {
 	// deterministic sampling); other providers keep their defaults.
 	Temperature *float64 `json:"temperature,omitempty"`
 	Seed        *int     `json:"seed,omitempty"`
+	// ResponseFormat is sent only to the vision endpoint, when the caller
+	// asked for a schema-constrained JSON reply (WithResponseSchema).
+	ResponseFormat map[string]any `json:"response_format,omitempty"`
 }
 
 // openaiReqMsg is a single outbound message whose content is an
@@ -252,6 +255,11 @@ func (p *openaiProvider) Vision(
 		Model:     p.model,
 		MaxTokens: 4096,
 		Messages:  msgs,
+	}
+	if p.providerName == ProviderVisionEndpoint {
+		if schema := responseSchemaFrom(ctx); schema != nil {
+			req.ResponseFormat = map[string]any{"type": "json_object", "schema": schema}
+		}
 	}
 	return p.doRequest(ctx, req)
 }

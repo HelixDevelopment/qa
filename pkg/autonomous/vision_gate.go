@@ -12,7 +12,6 @@ import (
 	"image"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"digital.vasic.helixqa/pkg/llm"
@@ -22,17 +21,6 @@ import (
 
 // EnvGoldensDir is the fallback for PipelineConfig.VisionGoldensDir.
 const EnvGoldensDir = "HELIXQA_GOLDENS_DIR"
-
-// blindDescribePrompt asks for an expectation-BLIND reading of the
-// frame. It deliberately carries neither the step's expectation nor its
-// recognize/forbid tokens, so the model cannot parrot them back.
-const blindDescribePrompt = "Describe what this screenshot shows.\n" +
-	"On the first line write the heading TEXT: alone. Below it, transcribe every piece of " +
-	"text that is visible on the screen, verbatim, one item per line. If no text is " +
-	"visible, write nothing under it.\n" +
-	"Then write the heading DESCRIPTION: and describe the layout and state of the " +
-	"screen in one paragraph. Use no other headings.\n" +
-	"Report only what is visible; do not infer or guess anything that is not shown."
 
 // frameSHA256 is the hex sha256 of the exact frame bytes.
 func frameSHA256(b []byte) string {
@@ -47,70 +35,6 @@ func framePHash(b []byte) (uint64, error) {
 		return 0, err
 	}
 	return hash.PHasher{}.Hash(img)
-}
-
-// Structure of a blind reply, enforced strictly (see extractTranscription).
-var (
-	// a standalone TEXT: heading (optionally markdown/bold-decorated)
-	transcriptionHeadRe = regexp.MustCompile(`(?i)^[ \t]*(?:#+[ \t]*)?[*_]*[ \t]*TEXT[ \t]*[*_]*[ \t]*:[ \t]*[*_]*[ \t]*$`)
-	// a DESCRIPTION: heading (content may follow on the same line)
-	descriptionHeadRe = regexp.MustCompile(`(?i)^[ \t]*(?:#+[ \t]*)?[*_]*[ \t]*DESCRIPTION[ \t]*[*_]*[ \t]*:`)
-	// any other heading-like line: markdown heading, whole-line bold, or a
-	// few words ending in ':' or a dash with nothing after them
-	headingLikeRes = []*regexp.Regexp{
-		regexp.MustCompile(`^[ \t]*#`),
-		regexp.MustCompile(`^[ \t]*\*\*[^*]+\*\*[ \t]*:?[ \t]*$`),
-		regexp.MustCompile(`^[ \t]*__[^_]+__[ \t]*:?[ \t]*$`),
-		regexp.MustCompile(`^[ \t]*[A-Za-z][A-Za-z ]{0,40}[ \t]*(?::|-|–|—)[ \t]*$`),
-	}
-)
-
-func isHeadingLike(line string) bool {
-	for _, re := range headingLikeRes {
-		if re.MatchString(line) {
-			return true
-		}
-	}
-	return false
-}
-
-// extractTranscription returns the TEXT: section of a blind reply — the
-// verbatim on-screen text — and whether the reply has the required shape:
-// its first non-blank line is a standalone TEXT: heading and the section is
-// closed by a DESCRIPTION: heading. Any other heading-like line before the
-// DESCRIPTION: heading (markdown "#", a whole-line **bold**, "Word -",
-// "Word:") makes the shape invalid, because the model's own prose could
-// follow it. Only this section is evidence of what is ON the screen; the
-// DESCRIPTION is the model's prose ("the Settings screen is not shown")
-// and must never satisfy recognize or trip forbid. Filler lines such as
-// "(none)" or "No text visible" are dropped: they mean "no text", not text.
-// Recall cost: a screen whose transcription has a bare label line such as
-// "Username:" is reported unusable (the step is BLOCKED), never passed.
-func extractTranscription(reply string) (string, bool) {
-	lines := strings.Split(strings.ReplaceAll(reply, "\r", ""), "\n")
-	i := 0
-	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
-		i++
-	}
-	if i == len(lines) || !transcriptionHeadRe.MatchString(lines[i]) {
-		return "", false
-	}
-	var b strings.Builder
-	for _, line := range lines[i+1:] {
-		if descriptionHeadRe.MatchString(line) {
-			return b.String(), true
-		}
-		if isHeadingLike(line) {
-			return "", false
-		}
-		key := testbank.VisionTokenKey(line)
-		if key == "" || testbank.IsVisionFiller(key) {
-			continue
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
-	}
-	return "", false // no DESCRIPTION: heading closed the TEXT: section
 }
 
 // compareFrames decides whether two decodable frames differ. Frames that
@@ -280,14 +204,15 @@ func (ste *StructuredTestExecutor) judgeStep(
 			return
 		}
 		if len(step.Recognize) > 0 || len(step.Forbid) > 0 {
-			desc, transcript, who, reason := ste.blindTranscription(ctx, frame)
+			texts, desc, who, reason := ste.blindTranscription(ctx, frame)
 			if who == "" {
 				block(reason)
 				return
 			}
+			r.VisionTexts = texts
 			r.VisionDescription = desc
 			r.VisionProvider = who
-			missing, forbidden := matchVisionTokens(transcript, step.Recognize, step.Forbid)
+			missing, forbidden := matchTokensInTexts(texts, step.Recognize, step.Forbid)
 			if len(forbidden) > 0 {
 				refute(fmt.Sprintf("forbidden token(s) present: %s", strings.Join(forbidden, ", ")))
 				return
@@ -377,41 +302,40 @@ func (r routedProvider) Vision(ctx context.Context, image []byte, prompt string)
 }
 
 // blindTranscription asks providers in order for the expectation-blind
-// reading and returns the first reply that carries a TEXT: section. A
-// provider error, an empty reply or a reply without the section moves on
-// to the next provider; if none qualifies, who is "" and reason names
-// every provider tried.
-func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame []byte) (desc, transcript, who, reason string) {
+// reading and returns the first reply that strict-parses as the
+// {"texts": [...], "description": "..."} object (parseBlindReply). A
+// provider error or a reply that does not parse moves on to the next
+// provider; if none qualifies, who is "" and reason names every provider
+// tried. The request carries the JSON schema (sent as response_format to
+// the local endpoint only).
+func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame []byte) (texts []string, desc, who, reason string) {
 	var tried []string
+	sctx := llm.WithResponseSchema(ctx, blindTranscriptSchema)
 	for _, p := range ste.visionCandidates() {
 		if ctx.Err() != nil {
 			tried = append(tried, "context cancelled before asking "+p.Name())
 			break
 		}
-		resp, err := p.Vision(ctx, frame, blindDescribePrompt)
+		resp, err := p.Vision(sctx, frame, blindDescribePrompt)
 		if err != nil {
 			tried = append(tried, p.Name()+": blind description failed: "+err.Error())
 			continue
 		}
-		d := ""
+		content := ""
 		if resp != nil {
-			d = strings.TrimSpace(resp.Content)
+			content = resp.Content
 		}
-		if d == "" {
-			tried = append(tried, p.Name()+": blind description was empty")
+		t, d, perr := parseBlindReply(content)
+		if perr != nil {
+			tried = append(tried, p.Name()+": "+perr.Error())
 			continue
 		}
-		t, ok := extractTranscription(d)
-		if !ok {
-			tried = append(tried, p.Name()+": blind reply has no TEXT: transcription section — on-screen text cannot be told apart from the model's prose")
-			continue
-		}
-		return d, t, p.Name(), ""
+		return t, d, p.Name(), ""
 	}
 	if len(tried) == 0 {
-		return "", "", "", "no vision-capable provider is configured"
+		return nil, "", "", "no vision-capable provider is configured"
 	}
-	return "", "", "", strings.Join(tried, " | ")
+	return nil, "", "", strings.Join(tried, " | ")
 }
 
 // judgeAdvisory handles a NON-gated step: the action decides, the model
@@ -528,25 +452,4 @@ func (r *StructuredExecutionResult) ExitCode() int {
 // recognize/forbid tokens with.
 func normalizeVisionText(s string) string {
 	return testbank.VisionTokenKey(s)
-}
-
-// matchVisionTokens checks recognize/forbid tokens against a description
-// as WHOLE normalised words/phrases (so "sign" does not match "signal").
-// It returns the normalised recognize tokens that are absent and the
-// normalised forbid tokens that are present.
-func matchVisionTokens(description string, recognize, forbid []string) (missing, forbidden []string) {
-	hay := " " + normalizeVisionText(description) + " "
-	for _, tok := range recognize {
-		k := normalizeVisionText(tok)
-		if k == "" || !strings.Contains(hay, " "+k+" ") {
-			missing = append(missing, k)
-		}
-	}
-	for _, tok := range forbid {
-		k := normalizeVisionText(tok)
-		if k != "" && strings.Contains(hay, " "+k+" ") {
-			forbidden = append(forbidden, k)
-		}
-	}
-	return missing, forbidden
 }

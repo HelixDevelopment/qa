@@ -321,16 +321,16 @@ type TestStep struct {
 	PHashMaxDistance *int `yaml:"phash_max_distance,omitempty" json:"phash_max_distance,omitempty"`
 
 	// Recognize lists tokens that MUST appear, as whole words after
-	// normalisation (lower-case, punctuation folded to spaces), in the TEXT:
-	// transcription section of an expectation-BLIND reading of the frame by
-	// the vision model — never in the model's own prose. The tokens are
-	// never sent to the model; the heading words "text"/"description" are
+	// normalisation (lower-case, punctuation folded to spaces), within ONE
+	// element of the "texts" array of an expectation-BLIND JSON reading of the frame by
+	// the vision model — never in its "description" or any prose. The
+	// tokens are never sent to the model; "no text" filler tokens are
 	// refused. Setting it gates the step and requires a vision model.
 	Recognize []string `yaml:"recognize,omitempty" json:"recognize,omitempty"`
 
-	// Forbid lists tokens that MUST NOT appear in that same TEXT:
-	// transcription (e.g. an error banner; a description saying "no error
-	// is visible" does not count). Same matching rules as Recognize; it is
+	// Forbid lists tokens that MUST NOT appear in any "texts" element
+	// (e.g. an error banner; a "description" saying "no error is visible"
+	// does not count). Same matching rules as Recognize; it is
 	// negative evidence only, so it must be paired with vision_verify,
 	// recognize or golden. Setting it gates the step.
 	Forbid []string `yaml:"forbid,omitempty" json:"forbid,omitempty"`
@@ -628,11 +628,6 @@ const DefaultPHashMaxDistance = 8
 // by ~32 of 64 bits, so a tolerance above 16 would accept a different screen.
 const MaxPHashMaxDistance = 16
 
-// visionHeadingWords are the section headings of the transcription prompt
-// (TEXT: / DESCRIPTION:). The model writes them on every reply, so they can
-// never be recognize/forbid tokens.
-var visionHeadingWords = map[string]bool{"text": true, "description": true}
-
 // visionFillerKeys are normalised phrases a model writes to say "there is
 // no text". They are never screen text: dropped from a transcription and
 // refused as recognize/forbid tokens.
@@ -746,10 +741,6 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 			return fmt.Sprintf("test case %s step %d: recognize token %q is filler a model writes "+
 				"when there is NO text (it is dropped from the transcription)", caseID, idx, tok)
 		}
-		if visionHeadingWords[k] {
-			return fmt.Sprintf("test case %s step %d: recognize token %q is a heading word of the "+
-				"transcription prompt — the model writes it whatever the screen shows", caseID, idx, tok)
-		}
 		recognized[k] = true
 	}
 	for _, tok := range st.Forbid {
@@ -761,10 +752,6 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 		if IsVisionFiller(k) {
 			return fmt.Sprintf("test case %s step %d: forbid token %q is filler a model writes "+
 				"when there is NO text (it is dropped from the transcription)", caseID, idx, tok)
-		}
-		if visionHeadingWords[k] {
-			return fmt.Sprintf("test case %s step %d: forbid token %q is a heading word of the "+
-				"transcription prompt — the model writes it whatever the screen shows", caseID, idx, tok)
 		}
 		if recognized[k] {
 			return fmt.Sprintf("test case %s step %d: token %q is both recognized and "+

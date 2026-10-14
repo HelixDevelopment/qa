@@ -367,7 +367,7 @@ func TestNoBluffVision_RecognizeForbidTokens(t *testing.T) {
 	yes := "VERIFIED: yes\nACTUAL: login form"
 
 	// Golden-good: tokens present after normalisation (case, punctuation, spacing).
-	fv := &fakeVision{verify: yes, blind: "TEXT:\nSIGN-IN!\nE-mail\npassword;\nContinue\nDESCRIPTION: A login form with two fields and a button."}
+	fv := &fakeVision{verify: yes, blind: `{"texts":["SIGN-IN!","E-mail","password;","Continue"],"description":"A login form with two fields and a button."}`}
 	ste, _ := newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	r := run(ste, step())
 	if !r.Passed {
@@ -393,14 +393,14 @@ func TestNoBluffVision_RecognizeForbidTokens(t *testing.T) {
 	}
 
 	// Golden-bad: missing token fails.
-	fv = &fakeVision{verify: yes, blind: "TEXT:\nSign in\nUsername\nDESCRIPTION: A form with a password-free login."}
+	fv = &fakeVision{verify: yes, blind: `{"texts":["Sign in","Username"],"description":"A form with a password-free login."}`}
 	ste, _ = newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	if r = run(ste, step()); r.Passed || r.Blocked || !strings.Contains(r.Actual, "password") {
 		t.Fatalf("missing recognize token not a FAIL naming it: %+v", r)
 	}
 
 	// Golden-bad: forbidden token fails even when VERIFIED: yes.
-	fv = &fakeVision{verify: yes, blind: "TEXT:\nSign in\nPassword\nError 500\nDESCRIPTION: A form with a red banner."}
+	fv = &fakeVision{verify: yes, blind: `{"texts":["Sign in","Password","Error 500"],"description":"A form with a red banner."}`}
 	ste, _ = newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	if r = run(ste, step()); r.Passed || !strings.Contains(r.Actual, "error") {
 		t.Fatalf("forbidden token not a FAIL: %+v", r)
@@ -409,7 +409,7 @@ func TestNoBluffVision_RecognizeForbidTokens(t *testing.T) {
 	// Carrier decoy: a token is matched as a word, not a substring
 	// ("Errors" / "terror" must not trip forbid "Error"... but whole-word
 	// "error" must).
-	fv = &fakeVision{verify: yes, blind: "TEXT:\nSign in\nPassword\nTerrorist-free zone\nErrorsList\nDESCRIPTION: A list widget."}
+	fv = &fakeVision{verify: yes, blind: `{"texts":["Sign in","Password","Terrorist-free zone","ErrorsList"],"description":"A list widget."}`}
 	ste, _ = newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	if r = run(ste, step()); !r.Passed {
 		t.Fatalf("substring decoy tripped the forbid check: %+v", r)
@@ -425,11 +425,11 @@ func TestNoBluffVision_NormalizeAndMatch(t *testing.T) {
 	if got := normalizeVisionText("  Sign-In!\n\tPASSWORD: ok  "); got != "sign in password ok" {
 		t.Fatalf("normalizeVisionText = %q", got)
 	}
-	missing, hit := matchVisionTokens("the sign in page, password field", []string{"Sign In", "password", "user name"}, []string{"error"})
+	missing, hit := matchTokensInTexts([]string{"Sign in", "Password field"}, []string{"Sign In", "password", "user name"}, []string{"error"})
 	if len(missing) != 1 || missing[0] != "user name" || len(hit) != 0 {
 		t.Fatalf("missing=%v hit=%v", missing, hit)
 	}
-	_, hit = matchVisionTokens("signal strength; errors none", nil, []string{"sign", "error"})
+	_, hit = matchTokensInTexts([]string{"signal strength", "errors none"}, nil, []string{"sign", "error"})
 	if len(hit) != 0 {
 		t.Fatalf("substring matched as a word: %v", hit)
 	}

@@ -1247,6 +1247,9 @@ type TestStepResult struct {
 	// VisionDescription is the expectation-blind description the model
 	// gave (recognize/forbid evidence), when one was requested.
 	VisionDescription string `json:"vision_description"`
+	// VisionTexts is the verbatim on-screen text the model transcribed
+	// (the only text recognize/forbid are matched against).
+	VisionTexts []string `json:"vision_texts,omitempty"`
 	// VisionProvider names the provider whose definite answer (or
 	// transcription) the verdict rests on.
 	VisionProvider string `json:"vision_provider"`

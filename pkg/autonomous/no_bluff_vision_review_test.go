@@ -38,34 +38,6 @@ func noisePNGSized(t *testing.T, seed int64, w, h int) []byte {
 	return buf.Bytes()
 }
 
-// Finding 4 (HIGH): recognize/forbid are matched against the TEXT:
-// transcription section only — never against the model's own prose, the
-// section headings, or a description that negates the token.
-func TestNoBluffVision_RecognizeMatchesTranscriptionOnly(t *testing.T) {
-	step := func(rec, forb []string) testbank.TestStep {
-		return testbank.TestStep{Name: "s", Action: "keypress: X", Expected: "settings", Recognize: rec, Forbid: forb}
-	}
-	cases := []struct {
-		name, reply   string
-		rec, forb     []string
-		pass, blocked bool
-	}{
-		{"negated in description is not on screen", "TEXT:\n(none)\nDESCRIPTION: The Settings screen is not shown.", []string{"Settings"}, nil, false, false},
-		{"recognize found in transcription", "TEXT:\nSettings\nWi-Fi\nDESCRIPTION: A list; no error message is visible.", []string{"Settings"}, []string{"Error"}, true, false},
-		{"same-line TEXT: content is prose, not a heading", "TEXT: Settings | Wi-Fi\nDESCRIPTION: list", []string{"Settings"}, nil, false, true},
-		{"forbid in transcription fails", "TEXT:\nSettings\nError 500\nDESCRIPTION: banner", []string{"Settings"}, []string{"Error"}, false, false},
-		{"heading words are not screen text", "TEXT:\n\nDESCRIPTION: blank list", []string{"Description"}, nil, false, false},
-		{"no TEXT section cannot be judged", "The screen shows Settings and Wi-Fi.", []string{"Settings"}, nil, false, true},
-	}
-	for _, c := range cases {
-		ste, _ := newSTE(&fakeVision{blind: c.reply}, noisePNG(t, 1), noisePNG(t, 2))
-		r := run(ste, step(c.rec, c.forb))
-		if r.Passed != c.pass || r.Blocked != c.blocked {
-			t.Fatalf("%s: passed=%v blocked=%v (want %v/%v) actual=%q", c.name, r.Passed, r.Blocked, c.pass, c.blocked, r.Actual)
-		}
-	}
-}
-
 // Finding 5 (MEDIUM): expect_change alone proves only that SOMETHING
 // changed (a crash dialog counts) — it is not a positive content check, so
 // the step is labelled UNVERIFIED-by-vision, never VISION-VERIFIED.
@@ -152,13 +124,13 @@ func TestNoBluffVision_ProviderFallThroughAndOrdering(t *testing.T) {
 		t.Fatalf("definite no was shopped around: passed=%v b-calls=%d status=%q", r.Passed, b.calls(), r.VisionStatus)
 	}
 
-	// Blind transcription: a reply without a TEXT: section falls through too.
+	// Blind transcription: a reply that is not the JSON object falls through too.
 	a = &fakeVision{name: "a", blind: "A settings list."}
-	b = &fakeVision{name: "b", blind: "TEXT:\nSettings\nDESCRIPTION: list"}
+	b = &fakeVision{name: "b", blind: `{"texts":["Settings"],"description":"list"}`}
 	ste, _ = newSTE(llm.NewAdaptiveProvider(a, b), noisePNG(t, 1), noisePNG(t, 2))
 	r = run(ste, testbank.TestStep{Name: "s", Action: "keypress: X", Expected: "x", Recognize: []string{"Settings"}})
 	if !r.Passed {
-		t.Fatalf("blind reply without TEXT: did not fall through: %+v", r)
+		t.Fatalf("non-JSON blind reply did not fall through: %+v", r)
 	}
 
 	// Every provider unusable -> BLOCKED, naming each.
@@ -186,7 +158,7 @@ func TestNoBluffVision_SkippedGatedStepBlocksCase(t *testing.T) {
 		"playwright (no CDP) + recognize": {Name: "nav", Action: "playwright: navigate http://127.0.0.1:1/", Expected: "home", Recognize: []string{"Home"}},
 	}
 	for name, st := range gatedSkips {
-		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes", blind: "TEXT:\nHome\nDESCRIPTION: x"}, noisePNG(t, 1), noisePNG(t, 2))
+		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes", blind: `{"texts":["Home"],"description":"x"}`}, noisePNG(t, 1), noisePNG(t, 2))
 		res := &StructuredExecutionResult{}
 		tc := testbank.TestCase{ID: "TC-SKG", Name: "skipped gated", Steps: []testbank.TestStep{{Name: "ok", Action: "keypress: X", Expected: "x"}, st}}
 		if err := ste.executeTestCase(context.Background(), tc, res); err != nil {
@@ -204,40 +176,6 @@ func TestNoBluffVision_SkippedGatedStepBlocksCase(t *testing.T) {
 	_ = ste.executeTestCase(context.Background(), tc, res)
 	if res.TestCasesSkipped != 1 || res.TestCasesBlocked != 0 {
 		t.Fatalf("ungated prose step: %+v", res)
-	}
-}
-
-// Review round 2, finding 3 (HIGH): the TEXT: section must be exactly the
-// block between a standalone TEXT: heading (the reply's first line) and a
-// DESCRIPTION: heading. Any other heading-like line ends it and the reply is
-// BLOCKED; filler such as "(none)" / "No text visible" is an empty
-// transcription, never screen text.
-func TestNoBluffVision_TranscriptionStructureStrict(t *testing.T) {
-	cases := []struct {
-		name, reply   string
-		rec           []string
-		pass, blocked bool
-	}{
-		{"markdown heading closes", "TEXT:\nSettings\n## Description\nno Login button is visible", []string{"Login"}, false, true},
-		{"bold heading closes", "TEXT:\nSettings\n**Description**\nno Login button is visible", []string{"Login"}, false, true},
-		{"dash heading closes", "TEXT:\nSettings\nDescription -\nno Login button is visible", []string{"Login"}, false, true},
-		{"word-colon heading closes", "TEXT:\nSettings\nSummary:\nthe Login button is not visible", []string{"Login"}, false, true},
-		{"extra section before DESCRIPTION", "TEXT:\nSettings\n## Notes\nno Login button is visible\nDESCRIPTION: settings list", []string{"Login"}, false, true},
-		{"bold section before DESCRIPTION", "TEXT:\nSettings\n**Notes**\nthe Login link is missing\nDESCRIPTION: list", []string{"Login"}, false, true},
-		{"prose line starting Text:", "Text: the Login button is not visible here.\nDESCRIPTION: blank", []string{"Login"}, false, true},
-		{"TEXT not first", "Here you go.\nTEXT:\nLogin\nDESCRIPTION: form", []string{"Login"}, false, true},
-		{"no DESCRIPTION heading", "TEXT:\nLogin\nPassword", []string{"Login"}, false, true},
-		{"filler (none) is empty", "TEXT:\n(none)\nDESCRIPTION: blank", []string{"None"}, false, false},
-		{"filler no text visible is empty", "TEXT:\nNo text visible\nDESCRIPTION: blank", []string{"No"}, false, false},
-		{"well formed", "TEXT:\nLogin\nPassword: ****\nDESCRIPTION: a login form", []string{"Login", "Password"}, true, false},
-		{"bold well formed", "**TEXT:**\nLogin\n**DESCRIPTION:** a form", []string{"Login"}, true, false},
-	}
-	for _, c := range cases {
-		ste, _ := newSTE(&fakeVision{blind: c.reply}, noisePNG(t, 1), noisePNG(t, 2))
-		r := run(ste, testbank.TestStep{Name: "s", Action: "keypress: X", Expected: "x", Recognize: c.rec})
-		if r.Passed != c.pass || r.Blocked != c.blocked {
-			t.Errorf("%s: passed=%v blocked=%v (want %v/%v) actual=%q", c.name, r.Passed, r.Blocked, c.pass, c.blocked, r.Actual)
-		}
 	}
 }
 
@@ -306,7 +244,7 @@ func TestNoBluffVision_ProviderLoopStopsOnCancelledCtxWithoutRouter(t *testing.T
 	for _, mode := range []string{"verify", "blind"} {
 		ctx, cancel := context.WithCancel(context.Background())
 		a := &fakeVision{name: "a", verify: "unclear", blind: "no headings", onCall: cancel}
-		b := &fakeVision{name: "b", verify: "VERIFIED: yes", blind: "TEXT:\nLogin\nDESCRIPTION: x"}
+		b := &fakeVision{name: "b", verify: "VERIFIED: yes", blind: `{"texts":["Login"],"description":"x"}`}
 		ste, _ := newSTE(listProvider{ps: []llm.Provider{a, b}}, noisePNG(t, 1), noisePNG(t, 2))
 		st := gated(nil)
 		if mode == "blind" {
