@@ -98,8 +98,12 @@ func TestNoBluffVision_BlindReplyLimits(t *testing.T) {
 		"control char in element":         `{"texts":["Log\u0007in"],"description":"x"}`,
 		"invalid UTF-8":                   "{\"texts\":[\"Login\xff\"],\"description\":\"x\"}",
 	}
+	// recognize_contains: without the limits, each reply would PASS on the
+	// contained token — so a BLOCKED verdict here comes from the limit.
+	stC := st
+	stC.RecognizeContains = true
 	for name, reply := range unusable {
-		if r := blindRun(t, reply, st); r.Passed || !r.Blocked {
+		if r := blindRun(t, reply, stC); r.Passed || !r.Blocked {
 			t.Errorf("%s: passed=%v blocked=%v — must be unusable", name, r.Passed, r.Blocked)
 		}
 	}

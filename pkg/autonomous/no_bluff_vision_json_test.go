@@ -117,7 +117,11 @@ func TestNoBluffVision_DescriptionProseNeverMatches(t *testing.T) {
 		"filler-only texts": `{"texts":["(none)","N/A"],"description":"blank"}`,
 	} {
 		ste, _ := newSTE(&fakeVision{blind: reply}, noisePNG(t, 1), noisePNG(t, 2))
-		requireBlocked(t, run(ste, recStep([]string{"Login"}, []string{"Error"})), name)
+		r := run(ste, recStep([]string{"Login"}, []string{"Error"}))
+		requireBlocked(t, r, name)
+		if !strings.Contains(r.Actual, "no screen text") {
+			t.Errorf("%s: BLOCKED reason does not say the reading holds no screen text: %q", name, r.Actual)
+		}
 	}
 }
 

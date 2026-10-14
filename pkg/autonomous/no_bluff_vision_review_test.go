@@ -171,6 +171,14 @@ func TestNoBluffVision_SkippedGatedStepBlocksCase(t *testing.T) {
 			t.Errorf("%s: passed=%d blocked=%d skipped=%d exit=%d — a skipped gated step must BLOCK the case",
 				name, res.TestCasesPassed, res.TestCasesBlocked, res.TestCasesSkipped, res.ExitCode())
 		}
+		// Step level (round 7: a skipped step now also blocks the CASE, so
+		// the step itself must say BLOCKED, not merely be skipped).
+		if len(res.Cases) != 1 || len(res.Cases[0].Steps) != 2 {
+			t.Fatalf("%s: case record %+v", name, res.Cases)
+		}
+		if gs := res.Cases[0].Steps[1]; gs.Skipped || !gs.Blocked || gs.VisionStatus != VisionBlocked {
+			t.Errorf("%s: gated step skipped=%v blocked=%v status=%q — a skipped gated step is BLOCKED", name, gs.Skipped, gs.Blocked, gs.VisionStatus)
+		}
 	}
 	// Golden-good: an UNgated prose step is still an honest SKIP.
 	ste, _ := newSTE(nilProvider, noisePNG(t, 1), noisePNG(t, 2))
