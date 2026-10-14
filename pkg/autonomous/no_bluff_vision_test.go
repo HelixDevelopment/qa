@@ -120,6 +120,7 @@ func (f screenFactory) Create(string) (navigator.ActionExecutor, error) { return
 // the VERIFIED call by the prompt's requested format.
 type fakeVision struct {
 	mu          sync.Mutex
+	name        string
 	unsupported bool
 	verify      string
 	verifyErr   error
@@ -132,7 +133,12 @@ type fakeVision struct {
 func (f *fakeVision) Chat(context.Context, []llm.Message) (*llm.Response, error) {
 	return nil, errors.New("chat not used")
 }
-func (f *fakeVision) Name() string         { return "fake-vision" }
+func (f *fakeVision) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "fake-vision"
+}
 func (f *fakeVision) SupportsVision() bool { return !f.unsupported }
 func (f *fakeVision) Vision(_ context.Context, img []byte, prompt string) (*llm.Response, error) {
 	f.mu.Lock()

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"digital.vasic.helixqa/pkg/llm"
 	"digital.vasic.helixqa/pkg/testbank"
 )
 
@@ -117,3 +118,59 @@ func TestNoBluffVision_VerifiedAnswerMustBeOneStandaloneLine(t *testing.T) {
 		t.Fatalf("standalone no line not a FAIL: %+v", r)
 	}
 }
+
+// Finding 6 (MEDIUM): an ambiguous or failing provider must not freeze
+// every gated step at BLOCKED while a capable provider is configured — the
+// next provider is asked; the operator's HELIX_VISION_ENDPOINT is asked
+// first; and a DEFINITE answer is final (no shopping for a yes).
+func TestNoBluffVision_ProviderFallThroughAndOrdering(t *testing.T) {
+	// Ambiguous first provider -> the next one answers.
+	a := &fakeVision{name: "astica", verify: "The screen shows a settings list with toggles."}
+	b := &fakeVision{name: "qwen", verify: "VERIFIED: yes\nACTUAL: settings"}
+	ste, _ := newSTE(llm.NewAdaptiveProvider(a, b), noisePNG(t, 1), noisePNG(t, 2))
+	r := run(ste, gated(nil))
+	if !r.Passed || r.VisionProvider != "qwen" {
+		t.Fatalf("ambiguous first provider froze the step: passed=%v provider=%q actual=%q", r.Passed, r.VisionProvider, r.Actual)
+	}
+
+	// The operator endpoint is asked before registry providers.
+	a = &fakeVision{name: "astica", verify: "VERIFIED: no"}
+	ep := &fakeVision{name: llm.ProviderVisionEndpoint, verify: "VERIFIED: yes"}
+	ste, _ = newSTE(llm.NewAdaptiveProvider(a, ep), noisePNG(t, 1), noisePNG(t, 2))
+	r = run(ste, gated(nil))
+	if !r.Passed || a.calls() != 0 || r.VisionProvider != llm.ProviderVisionEndpoint {
+		t.Fatalf("endpoint not asked first: passed=%v astica-calls=%d provider=%q", r.Passed, a.calls(), r.VisionProvider)
+	}
+
+	// A definite "no" is final: the next provider is never asked.
+	a = &fakeVision{name: "a", verify: "VERIFIED: no\nACTUAL: home"}
+	b = &fakeVision{name: "b", verify: "VERIFIED: yes"}
+	ste, _ = newSTE(llm.NewAdaptiveProvider(a, b), noisePNG(t, 1), noisePNG(t, 2))
+	r = run(ste, gated(nil))
+	if r.Passed || b.calls() != 0 || r.VisionStatus != VisionRefuted {
+		t.Fatalf("definite no was shopped around: passed=%v b-calls=%d status=%q", r.Passed, b.calls(), r.VisionStatus)
+	}
+
+	// Blind transcription: a reply without a TEXT: section falls through too.
+	a = &fakeVision{name: "a", blind: "A settings list."}
+	b = &fakeVision{name: "b", blind: "TEXT:\nSettings\nDESCRIPTION: list"}
+	ste, _ = newSTE(llm.NewAdaptiveProvider(a, b), noisePNG(t, 1), noisePNG(t, 2))
+	r = run(ste, testbank.TestStep{Name: "s", Action: "keypress: X", Expected: "x", Recognize: []string{"Settings"}})
+	if !r.Passed {
+		t.Fatalf("blind reply without TEXT: did not fall through: %+v", r)
+	}
+
+	// Every provider unusable -> BLOCKED, naming each.
+	a = &fakeVision{name: "a", verify: "maybe"}
+	b = &fakeVision{name: "b", verifyErr: errTest("503")}
+	ste, _ = newSTE(llm.NewAdaptiveProvider(a, b), noisePNG(t, 1), noisePNG(t, 2))
+	r = run(ste, gated(nil))
+	requireBlocked(t, r, "all providers unusable")
+	if !strings.Contains(r.Actual, "a:") || !strings.Contains(r.Actual, "b:") {
+		t.Fatalf("blocked reason does not name every provider tried: %q", r.Actual)
+	}
+}
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }

@@ -1014,10 +1014,35 @@ func (ste *StructuredTestExecutor) verifyOutcome(
 	ctx context.Context,
 	screenshot []byte,
 	expected string,
-) (bool, string, error) {
-	if ste.vision == nil || !ste.vision.SupportsVision() {
-		return false, "No vision provider available - cannot verify outcome", errors.New("no vision provider")
+) (bool, string, string, error) {
+	cands := ste.visionCandidates()
+	if len(cands) == 0 {
+		return false, "No vision provider available - cannot verify outcome", "", errors.New("no vision provider")
 	}
+	// Ask candidates in order until one gives a DEFINITE answer. An error
+	// or an ambiguous/empty reply moves on to the next provider; a definite
+	// "VERIFIED: no" is final — the next provider is never asked (no
+	// shopping for a yes).
+	var tried []string
+	for _, p := range cands {
+		ok, actual, err := askVerified(ctx, p, screenshot, expected)
+		if err == nil {
+			return ok, actual, p.Name(), nil
+		}
+		tried = append(tried, p.Name()+": "+actual)
+	}
+	return false, strings.Join(tried, " | "), "", errors.New("no provider gave a definite VERIFIED answer")
+}
+
+// askVerified asks ONE provider whether the screenshot meets the
+// expectation. Returns (verified, actualDescription, error); a non-nil
+// error means this provider's outcome could not be determined.
+func askVerified(
+	ctx context.Context,
+	vision llm.Provider,
+	screenshot []byte,
+	expected string,
+) (bool, string, error) {
 
 	prompt := fmt.Sprintf(
 		"Analyze this screenshot and determine if the expected state is met.\n\n"+
@@ -1028,7 +1053,7 @@ func (ste *StructuredTestExecutor) verifyOutcome(
 		expected,
 	)
 
-	resp, err := ste.vision.Vision(ctx, screenshot, prompt)
+	resp, err := vision.Vision(ctx, screenshot, prompt)
 	if err != nil {
 		return false, fmt.Sprintf("Vision analysis failed: %v", err), err
 	}
@@ -1174,6 +1199,9 @@ type TestStepResult struct {
 	// VisionDescription is the expectation-blind description the model
 	// gave (recognize/forbid evidence), when one was requested.
 	VisionDescription string
+	// VisionProvider names the provider whose definite answer (or
+	// transcription) the verdict rests on.
+	VisionProvider string
 	// FrameSHA256 / FramePHash identify the exact after-action frame
 	// bytes every verdict on this step refers to (pHash: 16 hex digits).
 	FrameSHA256 string

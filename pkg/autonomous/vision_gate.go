@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"digital.vasic.helixqa/pkg/llm"
 	"digital.vasic.helixqa/pkg/testbank"
 	"digital.vasic.helixqa/pkg/vision/hash"
 )
@@ -243,30 +244,18 @@ func (ste *StructuredTestExecutor) judgeStep(
 	}
 
 	if step.NeedsVisionModel() {
-		if ste.vision == nil || !ste.vision.SupportsVision() {
+		if len(ste.visionCandidates()) == 0 {
 			block("no vision-capable provider is configured for a vision-gated step")
 			return
 		}
 		if len(step.Recognize) > 0 || len(step.Forbid) > 0 {
-			resp, err := ste.vision.Vision(ctx, frame, blindDescribePrompt)
-			if err != nil {
-				block("blind description failed: " + err.Error())
-				return
-			}
-			desc := ""
-			if resp != nil {
-				desc = strings.TrimSpace(resp.Content)
-			}
-			if desc == "" {
-				block("blind description was empty")
+			desc, transcript, who, reason := ste.blindTranscription(ctx, frame)
+			if who == "" {
+				block(reason)
 				return
 			}
 			r.VisionDescription = desc
-			transcript, ok := extractTranscription(desc)
-			if !ok {
-				block("blind reply has no TEXT: transcription section — on-screen text cannot be told apart from the model's prose")
-				return
-			}
+			r.VisionProvider = who
 			missing, forbidden := matchVisionTokens(transcript, step.Recognize, step.Forbid)
 			if len(forbidden) > 0 {
 				refute(fmt.Sprintf("forbidden token(s) present: %s", strings.Join(forbidden, ", ")))
@@ -279,11 +268,12 @@ func (ste *StructuredTestExecutor) judgeStep(
 			notes = append(notes, fmt.Sprintf("tokens: %d recognized, %d forbidden absent", len(step.Recognize), len(step.Forbid)))
 		}
 		if step.VisionVerify {
-			ok, actual, err := ste.verifyOutcome(ctx, frame, step.Expected)
+			ok, actual, who, err := ste.verifyOutcome(ctx, frame, step.Expected)
 			if err != nil {
 				block(actual)
 				return
 			}
+			r.VisionProvider = who
 			if !ok {
 				refute("model answered VERIFIED: no — " + actual)
 				return
@@ -308,6 +298,69 @@ func (ste *StructuredTestExecutor) judgeStep(
 	}
 	r.VisionStatus = VisionVerified
 	r.Actual = "VISION-VERIFIED: " + r.VisionReason + " " + cite()
+}
+
+// visionCandidates lists the vision-capable providers to ask, in order.
+// An adaptive provider is expanded into its members so an ambiguous reply
+// from one can fall through to the next (the adaptive wrapper only falls
+// through on transport errors). The operator-configured
+// HELIX_VISION_ENDPOINT provider is asked first.
+func (ste *StructuredTestExecutor) visionCandidates() []llm.Provider {
+	if ste.vision == nil {
+		return nil
+	}
+	members := []llm.Provider{ste.vision}
+	if multi, ok := ste.vision.(interface{ Providers() []llm.Provider }); ok {
+		if ps := multi.Providers(); len(ps) > 0 {
+			members = ps
+		}
+	}
+	var endpoint, rest []llm.Provider
+	for _, p := range members {
+		if p == nil || !p.SupportsVision() {
+			continue
+		}
+		if p.Name() == llm.ProviderVisionEndpoint {
+			endpoint = append(endpoint, p)
+		} else {
+			rest = append(rest, p)
+		}
+	}
+	return append(endpoint, rest...)
+}
+
+// blindTranscription asks providers in order for the expectation-blind
+// reading and returns the first reply that carries a TEXT: section. A
+// provider error, an empty reply or a reply without the section moves on
+// to the next provider; if none qualifies, who is "" and reason names
+// every provider tried.
+func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame []byte) (desc, transcript, who, reason string) {
+	var tried []string
+	for _, p := range ste.visionCandidates() {
+		resp, err := p.Vision(ctx, frame, blindDescribePrompt)
+		if err != nil {
+			tried = append(tried, p.Name()+": blind description failed: "+err.Error())
+			continue
+		}
+		d := ""
+		if resp != nil {
+			d = strings.TrimSpace(resp.Content)
+		}
+		if d == "" {
+			tried = append(tried, p.Name()+": blind description was empty")
+			continue
+		}
+		t, ok := extractTranscription(d)
+		if !ok {
+			tried = append(tried, p.Name()+": blind reply has no TEXT: transcription section — on-screen text cannot be told apart from the model's prose")
+			continue
+		}
+		return d, t, p.Name(), ""
+	}
+	if len(tried) == 0 {
+		return "", "", "", "no vision-capable provider is configured"
+	}
+	return "", "", "", strings.Join(tried, " | ")
 }
 
 // judgeAdvisory handles a NON-gated step: the action decides, the model
@@ -335,7 +388,7 @@ func (ste *StructuredTestExecutor) judgeAdvisory(
 		r.Actual = act.Message + " | UNVERIFIED-by-vision: " + reason
 	}
 	switch {
-	case ste.vision == nil || !ste.vision.SupportsVision():
+	case len(ste.visionCandidates()) == 0:
 		unverified("no vision-capable provider configured")
 		return
 	case len(frame) == 0:
@@ -345,7 +398,8 @@ func (ste *StructuredTestExecutor) judgeAdvisory(
 		unverified("after-action frame is blank or undecodable")
 		return
 	}
-	ok, actual, err := ste.verifyOutcome(ctx, frame, step.Expected)
+	ok, actual, who, err := ste.verifyOutcome(ctx, frame, step.Expected)
+	r.VisionProvider = who
 	switch {
 	case err != nil:
 		unverified(actual)
