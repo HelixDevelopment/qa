@@ -58,8 +58,11 @@ func errorBodyText(body []byte, secrets ...string) string {
 //     only on secret bytes is redacted (at most 2 secret bytes at each edge
 //     remain in their partial characters).
 //
-// Secrets shorter than minRedactableSecret are left alone (they would
-// match ordinary text).
+// NOT covered: mixed or partial escaping, a partial echo of the key (a
+// prefix of it), base64 wrapped into lines (MIME 76 columns) or of another
+// text encoding (UTF-16), HTML entities, base32 / compressed / reversed
+// forms. Secrets shorter than minRedactableSecret are left alone (they
+// would match ordinary text).
 func redactSecret(text, secret string) string {
 	if len(secret) < minRedactableSecret {
 		return text

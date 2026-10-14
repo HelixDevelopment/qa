@@ -479,9 +479,12 @@ otherwise it is FAILED (the frame contradicts the expectation) or BLOCKED
 (could not determine: no provider gave a definite `VERIFIED: yes|no` line
 or a strict JSON transcription, blank or missing frame, missing golden, a
 gated step whose action was skipped, frames that cannot be compared or are
-blank / black, no executor for the platform, a configured device / display
-that is unreachable, an `http:` step with no base URL, or a case in which
-no asserting step ran — only `sleep:` / `screenshot` / prose steps). The
+black, no executor for the platform, a configured device / display that is
+unreachable — also when it drops mid-session (the probe is re-run after
+any failed device action), the session timing out, an `http:` step with
+no base URL, an `assert:` with no `http:` step in the same case, a case in
+which no step OBSERVED app state — an accepted tap / key press is not
+evidence — or a case with a step skipped as not executable). The
 summary line reads `N passed, N failed, N
 blocked (could not determine), ...`. A blocked case is never counted as
 passed: it files an `environment` finding (never ticketed or reproduced as
@@ -492,8 +495,10 @@ makes the session exit with code 2 (a failed case exits 1).
 `{"texts": [...], "description": "..."}` and match tokens only inside
 single `texts` elements — never the description. A reply in any other shape
 is unusable (the next provider is asked, then BLOCKED), and so is a reading
-with no screen text (empty / filler only) or with a refusal / remark by the
-model in `texts` — such a reading never proves a `forbid` token absent.
+with no screen text (empty / filler only) or made only of refusals /
+remarks by the model. A `forbid` token that is present fails the step; its
+absence counts only when the same reading matched the step's `recognize`
+tokens, so `forbid` needs `recognize`.
 Commentary in other wording inside `texts` is not detected; pair
 `recognize` with `golden` where you have a reference screenshot. A
 `vision_verify` reply is honoured only when it is exactly one
@@ -501,17 +506,21 @@ Commentary in other wording inside `texts` is not detected; pair
 
 `helixqa run` uses the same contract: exit 0 all passed, 1 a failure /
 crash / ANR, 2 nothing failed but not everything executed (`INCOMPLETE`,
-including a bank that could not be loaded, or a report that could not be
-written). A failed challenge still exits 1 when an error follows it. Exit
+including a bank that could not be loaded, a report that could not be
+written, or a run cut by Ctrl-C / `--timeout`). A failed challenge still
+exits 1 when an error or a cancellation follows it. Exit
 70 means an internal HelixQA panic. Scripts must treat 2 as "not a pass",
 never as a warning. `helixqa autonomous` also exits 2 when the session is
 BLOCKED (network / VPN preflight, provider outage in learn / plan,
-timeout), unless a structured case FAILED (1).
+timeout) or when its report cannot be written, unless a structured case
+FAILED (1).
 
 A `recognize` token must equal one whole on-screen element (e.g. a button
 label) by default, so a model's commentary inside the transcription
-("Login not visible") cannot satisfy it. Set `recognize_contains: true` on
-a step only when the token is part of a longer on-screen string.
+("Login not visible") cannot satisfy it; a token found only inside a
+longer element is reported BLOCKED with that hint. Set
+`recognize_contains: true` on a step only when the token is part of a
+longer on-screen string.
 
 Banks that already used `vision_verify: true` are now gated: run them with
 a vision provider that answers in the `VERIFIED:` format, or expect those

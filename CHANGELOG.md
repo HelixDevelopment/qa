@@ -39,6 +39,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Round-7 hardening (review round 6):** a structured case PASSes only
+  when a step OBSERVED app state (vision-confirmed screen, `http:`,
+  `assert:`, `shell:`, `playback_check:`, `frame_diff:`, playwright
+  `assertvisible` / `waitfor`) and no step was skipped as not executable —
+  an accepted `tap:` / `keypress:` is not evidence (catalogizer on a fake
+  device with no app: 313 PASSED -> 0; this repository's banks 203 -> 0).
+  Device loss is decided by re-running the reachability probe UNCACHED
+  after any device-action failure (never by error text); the probe reads
+  the last `adb get-state` line and caches a failure for 15 s only. The
+  structured executor BLOCKS a step once the session context ended (before
+  or during it). `forbid`: a token PRESENT fails first; an absence needs a
+  matched `recognize` anchor in the same reading — **breaking:** `forbid`
+  now requires `recognize` at load (no consumer bank uses `forbid`); a
+  reading is a refusal only when EVERY element is the model talking. A
+  `recognize` token found only inside a longer element is BLOCKED (points
+  to `recognize_contains`). The `ACTUAL:` text is scanned for a second
+  verdict / a refusal. Combining marks are part of a word (Arabic harakat /
+  Hebrew niqqud dropped). `frame_diff` BLOCKs only on black frames.
+  `assert:` reads only a response of the same case (else BLOCKED).
+  `helixqa run` keeps a platform's partial result on cancellation /
+  `--timeout` (a FAILED challenge exits 1; an interrupted one is SKIPPED);
+  `helixqa autonomous` exits 2 when its report cannot be written.
+  Mutants Y01-Y34 added.
 - **Round-6 hardening (review round 5):** a structured case PASSes only
   when at least one ASSERTING step ran (sleep / screenshot / prose-only
   cases are BLOCKED — catalogizer no-executor sweep 12 PASSED -> 0);
@@ -49,14 +72,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code points are dropped from tokens. **Breaking:** `recognize` matches
   whole elements by default; new key `recognize_contains` opts into
   contained-words matching. Missing environment is BLOCKED, not FAILED:
-  `http:` without a base URL, blank / black `frame_diff` frames, an
-  unreachable device / display (probed once per platform: `adb get-state`,
-  one capture for desktop / web; adb / X11 "device not found / offline /
-  cannot open display" action errors), an ungated screenshot whose capture
+  `http:` without a base URL, black `frame_diff` frames (round 6 also
+  blocked any low-contrast frame — corrected in round 7), an unreachable
+  device / display (probed per platform: `adb get-state`, one capture for
+  desktop / web; round 6 matched adb / X11 error TEXT, which the real
+  executors never return — replaced in round 7 by an uncached re-probe
+  after any device-action failure), an ungated screenshot whose capture
   failed. The autonomous session gets `status: blocked` (exit 2) for a
   failed network / VPN preflight, learn / plan errors and timeouts.
-  `helixqa run`: a FAILED verdict exits 1 even when an error (report write,
-  cancellation) follows execution. Provider error bodies also redact the
+  `helixqa run`: a FAILED verdict exits 1 even when an error follows
+  execution (report write; and — only since round 7 — a cancellation /
+  timeout that arrives WHILE a platform runs: round 6 dropped that
+  platform's partial result). Provider error bodies also redact the
   key as base64 inside larger blobs (e.g. an echoed `Bearer` header), every
   byte percent-encoded, hex and JSON `\u` escapes; astica's status text is
   redacted. Mutants X01-X46 added to the no_bluff_vision challenge (178 mutants, all killed by assertion).
