@@ -44,6 +44,8 @@ func NewEnhancedAdaptiveProvider(configs []ProviderConfig) (*EnhancedAdaptivePro
 			provider = NewOllamaProvider(cfg)
 		case "astica":
 			provider = NewAsticaProvider(cfg)
+		case ProviderVisionEndpoint:
+			provider = NewOpenAIProvider(cfg)
 		default:
 			// Check registry for OpenAI-compatible providers
 			if defaults, ok := providerDefaults[cfg.Name]; ok {

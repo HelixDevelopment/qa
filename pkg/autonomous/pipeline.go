@@ -65,6 +65,13 @@ type PipelineConfig struct {
 	// reconciliation.
 	BanksDir string
 
+	// VisionGoldensDir holds the reference images that bank
+	// steps name with `golden: <id>` (<id>.png/.jpg/.jpeg).
+	// When empty, env HELIXQA_GOLDENS_DIR is used; when both
+	// are empty a golden step is BLOCKED (could not determine),
+	// never passed.
+	VisionGoldensDir string
+
 	// HTTPBaseURL is the root URL the structured executor
 	// uses for ActionTypeHTTP steps (e.g.
 	// "http://thinker.local:8092"). When empty, the executor
@@ -1856,10 +1863,12 @@ func (sp *SessionPipeline) Run(
 	} else {
 		fmt.Printf(
 			"  [structured] Completed: %d passed, %d failed, "+
+				"%d blocked (could not determine), "+
 				"%d skipped (bank placeholders), %d total, "+
 				"%d steps executed in %v\n",
 			structuredResult.TestCasesPassed,
 			structuredResult.TestCasesFailed,
+			structuredResult.TestCasesBlocked,
 			structuredResult.TestCasesSkipped,
 			structuredResult.TestCasesRun,
 			structuredResult.StepsExecuted,

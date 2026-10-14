@@ -638,6 +638,17 @@ func cmdAutonomous(args []string) {
 		chatConfigs = append(chatConfigs, cfg)
 	}
 
+	// ── Operator-supplied OpenAI-compatible vision endpoint ──
+	// HELIX_VISION_ENDPOINT (+ optional HELIX_VISION_MODEL,
+	// HELIX_VISION_API_KEY) points at e.g. a local llama-server
+	// (llmctl `vision` on http://127.0.0.1:8082/v1). It joins the
+	// vision pool; the key is never printed.
+	if vcfg, ok := llm.VisionEndpointConfigFromEnv(os.Getenv); ok {
+		providerConfigs = append(providerConfigs, vcfg)
+		visionConfigs = append(visionConfigs, vcfg)
+		fmt.Printf("Vision endpoint:  %s\n", llm.DescribeVisionEndpoint(vcfg))
+	}
+
 	// ── Bridged CLI model discovery ──────────────────────────
 	// Discover CLI-based LLM tools (claude, qwen-coder,
 	// opencode) that can be used as providers with zero

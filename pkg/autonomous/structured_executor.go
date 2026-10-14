@@ -16,6 +16,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ type StructuredTestExecutor struct {
 	// needed; absent config means Playwright steps SKIP rather
 	// than execute.
 	playwright *PlaywrightExecutor
+
+	// settleDelay is the UI settle time before each screenshot.
+	settleDelay time.Duration
 }
 
 // NewStructuredTestExecutor creates a new structured test executor.
@@ -68,6 +72,7 @@ func NewStructuredTestExecutor(
 		vision:       vision,
 		onFinding:    onFinding,
 		onScreenshot: onScreenshot,
+		settleDelay:  500 * time.Millisecond,
 	}
 }
 
@@ -194,6 +199,8 @@ func (ste *StructuredTestExecutor) executeTestCase(
 	}
 
 	testPassed := true
+	testBlocked := false
+	blockedReason := ""
 	executedSteps := 0
 	skippedSteps := 0
 	var stepResults []TestStepResult
@@ -208,6 +215,16 @@ func (ste *StructuredTestExecutor) executeTestCase(
 			continue
 		}
 		executedSteps++
+
+		if stepResult.Blocked {
+			// The step's outcome could not be determined. The case is
+			// neither passed nor failed (no defect ticket is filed for
+			// infrastructure the run could not use); its remaining
+			// steps would build on an unknown state, so stop here.
+			testBlocked = true
+			blockedReason = fmt.Sprintf("step %d: %s", i+1, stepResult.Actual)
+			break
+		}
 
 		if !stepResult.Passed {
 			testPassed = false
@@ -237,8 +254,19 @@ func (ste *StructuredTestExecutor) executeTestCase(
 		}
 	}
 
+	caseRec := StructuredCaseResult{ID: tc.ID, Name: tc.Name, Steps: stepResults}
+	defer func() { result.Cases = append(result.Cases, caseRec) }()
+
 	switch {
+	case testBlocked && testPassed:
+		result.TestCasesBlocked++
+		caseRec.Verdict = CaseVerdictBlocked
+		fmt.Printf(
+			"  [structured] [%s] ⊘ BLOCKED — could not determine (%s)\n",
+			tc.ID, blockedReason,
+		)
 	case executedSteps == 0 && skippedSteps > 0:
+		caseRec.Verdict = CaseVerdictSkipped
 		// Every step was a bank placeholder — nothing actually ran
 		// against the app, so do not count as pass or fail.
 		result.TestCasesSkipped++
@@ -247,6 +275,7 @@ func (ste *StructuredTestExecutor) executeTestCase(
 			tc.ID, skippedSteps,
 		)
 	case testPassed:
+		caseRec.Verdict = CaseVerdictPassed
 		result.TestCasesPassed++
 		if skippedSteps > 0 {
 			fmt.Printf(
@@ -260,6 +289,7 @@ func (ste *StructuredTestExecutor) executeTestCase(
 			)
 		}
 	default:
+		caseRec.Verdict = CaseVerdictFailed
 		result.TestCasesFailed++
 		fmt.Printf(
 			"  [structured] [%s] ✗ FAILED (%d/%d steps passed, %d skipped)\n",
@@ -299,9 +329,8 @@ func (ste *StructuredTestExecutor) executeStep(
 	}
 
 	// Wait for UI to render before screenshot.
-	// 500ms is sufficient for most UI transitions on Android TV.
 	// Cold start handled separately by the test step's own sleep action.
-	time.Sleep(500 * time.Millisecond)
+	ste.settle()
 
 	// FIX-QA-2026-04-21-019: Foreground guard. Before every step,
 	// verify the app under test is still in the foreground. If the
@@ -315,7 +344,10 @@ func (ste *StructuredTestExecutor) executeStep(
 	ste.ensureAppForeground(ctx, platform, tc, stepNum)
 
 	// Take screenshot before action
-	beforeSS, _ := executor.Screenshot(ctx)
+	beforeSS, beforeErr := executor.Screenshot(ctx)
+	if beforeErr != nil {
+		beforeSS = nil
+	}
 	if len(beforeSS) > 0 && !IsBlankScreenshot(beforeSS) && ste.onScreenshot != nil {
 		ste.onScreenshot(platform, beforeSS)
 	}
@@ -344,44 +376,29 @@ func (ste *StructuredTestExecutor) executeStep(
 
 	// Take screenshot after action.
 	// 500ms is enough for UI to settle after a keypress/tap.
-	time.Sleep(500 * time.Millisecond)
-	afterSS, _ := executor.Screenshot(ctx)
+	ste.settle()
+	afterSS, afterErr := executor.Screenshot(ctx)
+	if afterErr != nil {
+		afterSS = nil
+	}
 	if len(afterSS) > 0 && !IsBlankScreenshot(afterSS) && ste.onScreenshot != nil {
 		ste.onScreenshot(platform, afterSS)
 	}
 
-	// Verify expected outcome using vision if available
-	if ste.vision != nil && len(afterSS) > 0 {
-		verified, actual, providerErr := ste.verifyOutcome(
-			ctx, afterSS, step.Expected,
-		)
-		// CRITICAL FIX: Action must succeed BEFORE vision verification matters
-		// If action failed, test fails regardless of what vision says
-		if providerErr != nil {
-			// All vision providers failed (rate limits, auth errors, etc).
-			// Fall back to action success so tests aren't falsely marked as
-			// failing due to broken infrastructure rather than app bugs.
-			result.Passed = actionResult.Success
-			if actionResult.Success {
-				result.Actual = actual + " (vision provider error - falling back to action success)"
-			} else {
-				result.Actual = actionResult.Message + " | Vision error: " + actual
-			}
-		} else {
-			result.Passed = actionResult.Success && verified
-			if actionResult.Success {
-				result.Actual = actual
-			} else {
-				result.Actual = actionResult.Message + " | Vision: " + actual
-			}
-		}
-	} else {
-		// Without vision, rely solely on action success
-		result.Passed = actionResult.Success
-		result.Actual = actionResult.Message
-	}
-
+	// Judge the step. A vision-gated step passes only on positive,
+	// frame-bound evidence; a step whose outcome cannot be determined is
+	// BLOCKED, never passed on action success (see vision_gate.go).
+	ste.judgeStep(ctx, step, actionResult, beforeSS, afterSS, &result)
 	return result
+}
+
+// settle waits for the UI to render between an action and the
+// screenshot that judges it. The constructor sets 500ms (sufficient for
+// most UI transitions on Android TV); a zero value does not wait.
+func (ste *StructuredTestExecutor) settle() {
+	if ste.settleDelay > 0 {
+		time.Sleep(ste.settleDelay)
+	}
 }
 
 // performAction executes the action using the executor.
@@ -985,8 +1002,13 @@ func (ste *StructuredTestExecutor) ensureAppForeground(
 	time.Sleep(3 * time.Second)
 }
 
+// verifiedAnswerRe matches each "VERIFIED: yes|no" answer in a reply.
+var verifiedAnswerRe = regexp.MustCompile(`(?i)verified:\s*(yes|no)\b`)
+
 // verifyOutcome uses LLM vision to verify if the screenshot matches expected state.
-// Returns (verified, actualDescription, providerError).
+// Returns (verified, actualDescription, providerError). A non-nil error
+// means the outcome could NOT be determined (no provider, provider
+// failure, empty or ambiguous reply) — callers must never read it as a pass.
 func (ste *StructuredTestExecutor) verifyOutcome(
 	ctx context.Context,
 	screenshot []byte,
@@ -1025,17 +1047,28 @@ func (ste *StructuredTestExecutor) verifyOutcome(
 	// treated every structured test as failing on vision verification
 	// even when the action succeeded. Fix is tri-state:
 	//
-	//   1. Exact "VERIFIED: yes" / "VERIFIED: no" → honour it.
-	//   2. Response is non-empty natural language → AMBIGUOUS;
-	//      return providerErr so the caller falls back to action
-	//      success (which for structured-bank tests is usually a
-	//      binary "action ran without adb error").
-	//   3. Response empty → providerErr (same fallback).
+	//   1. Exactly one "VERIFIED: yes" / "VERIFIED: no" answer → honour it.
+	//   2. Both answers present, or non-empty natural language →
+	//      AMBIGUOUS; return an error. The caller (judgeStep) makes a
+	//      vision-gated step BLOCKED and a non-gated step
+	//      UNVERIFIED-by-vision — it never turns this into a pass.
+	//   3. Response empty → error (same handling).
 	actual := extractLine(response, "ACTUAL:")
+	saidYes, saidNo := false, false
+	for _, m := range verifiedAnswerRe.FindAllStringSubmatch(response, -1) {
+		if strings.EqualFold(m[1], "yes") {
+			saidYes = true
+		} else {
+			saidNo = true
+		}
+	}
 	switch {
-	case containsIgnoreCase(response, "VERIFIED: yes"):
+	case saidYes && saidNo:
+		return false, "Vision response is self-contradictory (both VERIFIED: yes and VERIFIED: no)",
+			errors.New("vision response ambiguous")
+	case saidYes:
 		return true, actual, nil
-	case containsIgnoreCase(response, "VERIFIED: no"):
+	case saidNo:
 		return false, actual, nil
 	case strings.TrimSpace(response) == "":
 		return false, "Vision response empty — cannot verify",
@@ -1110,8 +1143,14 @@ type StructuredExecutionResult struct {
 	TestCasesPassed  int
 	TestCasesFailed  int
 	TestCasesSkipped int
+	// TestCasesBlocked counts cases that stopped on a step whose
+	// outcome could not be determined (rc semantic 2) — never a pass.
+	TestCasesBlocked int
 	StepsExecuted    int
 	Findings         []analysis.AnalysisFinding
+	// Cases is the per-case evidence record (verdict + step results,
+	// frame hashes included).
+	Cases []StructuredCaseResult
 }
 
 // TestStepResult represents the outcome of a single test step.
@@ -1119,7 +1158,29 @@ type TestStepResult struct {
 	StepName string
 	Passed   bool
 	Skipped  bool
-	Actual   string
+	// Blocked: the step's outcome could not be determined (a
+	// vision-gated step without a usable verdict). Never Passed.
+	Blocked bool
+	Actual  string
+
+	// VisionGated mirrors TestStep.IsVisionGated for the evidence record.
+	VisionGated bool
+	// VisionStatus is what the vision layer established (see VisionStatus).
+	VisionStatus VisionStatus
+	// VisionReason explains VisionStatus in one line.
+	VisionReason string
+	// VisionDescription is the expectation-blind description the model
+	// gave (recognize/forbid evidence), when one was requested.
+	VisionDescription string
+	// FrameSHA256 / FramePHash identify the exact after-action frame
+	// bytes every verdict on this step refers to (pHash: 16 hex digits).
+	FrameSHA256 string
+	FramePHash  string
+	// BeforeFrameSHA256 identifies the before-action frame.
+	BeforeFrameSHA256 string
+	// GoldenDistance is the pHash Hamming distance to the step's golden,
+	// or -1 when no golden was compared.
+	GoldenDistance int
 }
 
 // ActionResult represents the outcome of performing an action.

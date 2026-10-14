@@ -123,7 +123,9 @@ func (c ProviderConfig) Validate() error {
 		return fmt.Errorf("llm: provider config name is required")
 	}
 	switch c.Name {
-	case ProviderOllama, ProviderUITars:
+	case ProviderOllama, ProviderUITars, ProviderVisionEndpoint:
+		// Self-hosted endpoints: the URL is required, an API key is
+		// optional (a local llama-server needs none).
 		if c.BaseURL == "" {
 			return fmt.Errorf(
 				"llm: provider %q requires base_url", c.Name,

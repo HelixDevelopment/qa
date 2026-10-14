@@ -11,6 +11,7 @@ package testbank
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"digital.vasic.challenges/pkg/challenge"
 	"digital.vasic.helixqa/pkg/config"
@@ -285,8 +286,44 @@ type TestStep struct {
 	// Default is 30 seconds.
 	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 
-	// VisionVerify enables LLM vision verification of the result.
+	// VisionVerify makes this step VISION-GATED: it can PASS only when a
+	// vision model positively confirms the expected state on the exact
+	// after-action frame. No provider, a provider error, an ambiguous or
+	// empty reply, or a blank/missing frame make the step BLOCKED
+	// (could-not-determine) — never PASS. Without it, a step's vision
+	// result is advisory and is reported UNVERIFIED-by-vision when the
+	// model could not confirm it.
 	VisionVerify bool `yaml:"vision_verify,omitempty" json:"vision_verify,omitempty"`
+
+	// Golden names a reference image (<id>.png / .jpg / .jpeg) in the
+	// goldens directory (PipelineConfig.VisionGoldensDir or
+	// HELIXQA_GOLDENS_DIR). The after-action frame's pHash must be within
+	// PHashMaxDistance of the golden's pHash. A deterministic oracle — it
+	// needs no vision model. Setting it gates the step.
+	Golden string `yaml:"golden,omitempty" json:"golden,omitempty"`
+
+	// PHashMaxDistance is the largest Hamming distance (0..64) between the
+	// frame's and the golden's 64-bit pHash that still counts as a match.
+	// Only valid together with Golden; nil means DefaultPHashMaxDistance.
+	PHashMaxDistance *int `yaml:"phash_max_distance,omitempty" json:"phash_max_distance,omitempty"`
+
+	// Recognize lists tokens that MUST appear, as whole words after
+	// normalisation (lower-case, punctuation folded to spaces), in an
+	// expectation-BLIND description of the frame produced by the vision
+	// model. The tokens are never sent to the model. Setting it gates the
+	// step and requires a vision model.
+	Recognize []string `yaml:"recognize,omitempty" json:"recognize,omitempty"`
+
+	// Forbid lists tokens that MUST NOT appear in that same blind
+	// description (e.g. an error banner). Same matching rules as
+	// Recognize; setting it gates the step and requires a vision model.
+	Forbid []string `yaml:"forbid,omitempty" json:"forbid,omitempty"`
+
+	// ExpectChange declares that the action must visibly change the
+	// screen: an after-frame that does not differ from the before-frame
+	// FAILS the step, and an unusable before-frame makes it BLOCKED.
+	// Setting it gates the step (no vision model needed).
+	ExpectChange bool `yaml:"expect_change,omitempty" json:"expect_change,omitempty"`
 
 	// Body is the HTTP request body for ActionTypeHTTP. Strings
 	// are sent verbatim; map/slice values are JSON-encoded.
@@ -507,6 +544,9 @@ func (tc *TestCase) IsValid() string {
 		if msg := st.validateShellAssertions(tc.ID, i); msg != "" {
 			return msg
 		}
+		if msg := st.validateVisionAssertions(tc.ID, i); msg != "" {
+			return msg
+		}
 		nc := st.ExpectBodyNotContains
 		if nc == nil {
 			continue
@@ -556,6 +596,95 @@ func (st *TestStep) validateShellAssertions(caseID string, idx int) string {
 	if st.ExpectOutputContains != nil && *st.ExpectOutputContains == "" {
 		return fmt.Sprintf("test case %s step %d: expect_output_contains is empty — "+
 			"an empty substring matches every output, so the assertion is vacuous", caseID, idx)
+	}
+	return ""
+}
+
+// DefaultPHashMaxDistance is the pHash Hamming distance accepted for a
+// golden match when a step sets `golden` without `phash_max_distance`
+// (8 of 64 bits: tolerant of re-encoding / anti-aliasing, far below the
+// ~32 bits two unrelated frames differ by).
+const DefaultPHashMaxDistance = 8
+
+// NeedsVisionModel reports whether the step's verdict requires a vision
+// model's answer (vision_verify, recognize or forbid).
+func (st TestStep) NeedsVisionModel() bool {
+	return st.VisionVerify || len(st.Recognize) > 0 || len(st.Forbid) > 0
+}
+
+// IsVisionGated reports whether the step can PASS only on positive,
+// frame-bound visual evidence: any vision key makes it gated.
+func (st TestStep) IsVisionGated() bool {
+	return st.NeedsVisionModel() || st.Golden != "" || st.ExpectChange
+}
+
+// EffectivePHashMaxDistance returns the golden-match tolerance in bits.
+func (st TestStep) EffectivePHashMaxDistance() int {
+	if st.PHashMaxDistance != nil {
+		return *st.PHashMaxDistance
+	}
+	return DefaultPHashMaxDistance
+}
+
+// VisionTokenKey folds a recognize/forbid token (or any text) to the
+// form the deterministic token check compares: lower-case, every run of
+// non-letter/non-digit characters collapsed to one space, trimmed.
+func VisionTokenKey(s string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			space = false
+			b.WriteRune(r)
+			continue
+		}
+		space = true
+	}
+	return b.String()
+}
+
+// validateVisionAssertions refuses vision keys that would assert nothing
+// or contradict themselves, so a gated step can never pass vacuously.
+func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
+	if st.PHashMaxDistance != nil {
+		if st.Golden == "" {
+			return fmt.Sprintf("test case %s step %d: phash_max_distance without golden — "+
+				"there is no reference to measure the distance to", caseID, idx)
+		}
+		if d := *st.PHashMaxDistance; d < 0 || d > 64 {
+			return fmt.Sprintf("test case %s step %d: phash_max_distance %d is outside 0..64 "+
+				"(a 64-bit pHash)", caseID, idx, d)
+		}
+	}
+	if st.Golden != "" {
+		g := st.Golden
+		if strings.ContainsAny(g, `/\`) || strings.Contains(g, "..") || strings.TrimSpace(g) != g {
+			return fmt.Sprintf("test case %s step %d: golden %q must be a bare id "+
+				"(no path separators, no '..', no surrounding space)", caseID, idx, g)
+		}
+	}
+	recognized := map[string]bool{}
+	for _, tok := range st.Recognize {
+		k := VisionTokenKey(tok)
+		if k == "" {
+			return fmt.Sprintf("test case %s step %d: recognize token %q is empty after "+
+				"normalisation — it would match every description", caseID, idx, tok)
+		}
+		recognized[k] = true
+	}
+	for _, tok := range st.Forbid {
+		k := VisionTokenKey(tok)
+		if k == "" {
+			return fmt.Sprintf("test case %s step %d: forbid token %q is empty after "+
+				"normalisation — it would forbid every description", caseID, idx, tok)
+		}
+		if recognized[k] {
+			return fmt.Sprintf("test case %s step %d: token %q is both recognized and "+
+				"forbidden — the step could never pass", caseID, idx, tok)
+		}
 	}
 	return ""
 }

@@ -48,6 +48,9 @@ var visionCapableProviders = map[string]bool{
 	"qwen":             true, // Alibaba Qwen3-VL — ~90% UI grounding accuracy
 	"stepfun":          true, // Stepfun Step-GUI — GUI-specialized vision
 	"astica":           true, // Astica.AI — specialized vision API (captioning, OCR, object detection)
+	// Operator-supplied OpenAI-compatible vision endpoint
+	// (HELIX_VISION_ENDPOINT, e.g. a local llama-server).
+	ProviderVisionEndpoint: true,
 }
 
 // openaiRequest is the JSON body sent to /v1/chat/completions.
@@ -263,7 +266,11 @@ func (p *openaiProvider) doRequest(
 	if err != nil {
 		return nil, fmt.Errorf("openai: create request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	// A keyless self-hosted endpoint gets no Authorization header
+	// rather than a malformed "Bearer " one.
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := p.client.Do(httpReq)
