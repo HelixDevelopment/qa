@@ -155,38 +155,70 @@ func isLineOrParagraphSeparator(r rune) bool {
 	return unicode.In(r, unicode.Zl, unicode.Zp)
 }
 
-// modelStatementRe matches a normalised (testbank.VisionTokenKey) element
-// that is the MODEL talking — a refusal or a statement about the image —
-// rather than text written on the screen.
-var modelStatementRe = regexp.MustCompile(`^(i m sorry|i am sorry|sorry i|as an ai|as a language model|` +
-	`i (cannot|can t|can not|could not|couldn t|am unable to|m unable to|am not able to|m not able to|do not|don t) ` +
+// modelStatementPattern matches a normalised (testbank.VisionTokenKey)
+// text that is the MODEL talking — a refusal or a remark about the image —
+// rather than text written on the screen. It is a phrase heuristic; how it
+// is used is structural (see transcriptUsable).
+const modelStatementPattern = `(i m sorry|i am sorry|sorry i|sorry but|i apologi[sz]e|unfortunately i|as an ai|as a language model|` +
+	`i (cannot|can t|can not|could not|couldn t|am unable to|m unable to|am not able to|m not able to|do not|don t|won t be able to|will not be able to) ` +
 	`(see|read|view|determine|identify|make out|help|assist|process|analy[sz]e|interpret|transcribe|tell|access the image)|` +
 	`(unable to|cannot|can t) (read|see|view|determine|identify|make out|process|analy[sz]e|interpret|transcribe) ` +
-	`((the|this|any) )?(image|screenshot|text|screen|picture)|` +
-	`(the|this) (image|screenshot|picture) (is|shows|appears|contains|does))( |$)`)
+	`((the|this|any) )?(images?|screenshots?|text|screens?|pictures?)|` +
+	`(the|this) (image|screenshot|picture) (is|shows|appears|contains|does))( |$)`
 
-// transcriptUsable decides whether a strict-parsed transcription can carry
-// a token verdict at all. It cannot when it holds no screen text (empty, or
-// "no text" filler only — then a forbidden token's absence and a recognized
-// token's presence are equally undeterminable), or when any element is the
-// model talking (a refusal or a remark about the image): such a reading did
-// not transcribe the screen, so nothing it lacks is "absent".
+// modelStatementRe matches a whole element that STARTS as a model statement.
+var modelStatementRe = regexp.MustCompile(`^` + modelStatementPattern)
+
+// modelStatementAnywhereRe finds a model statement anywhere in a text (used
+// on the free-text ACTUAL line of a VERIFIED reply).
+var modelStatementAnywhereRe = regexp.MustCompile(`(^| )` + modelStatementPattern)
+
+// transcriptUsable decides — by STRUCTURE — whether a strict-parsed
+// transcription can carry a claim of ABSENCE. It cannot when it holds no
+// screen text (empty, or "no text" filler only), or when EVERY remaining
+// element is the model talking (a refusal or a remark about the image): such
+// a reading did not transcribe the screen. A model-statement-looking element
+// NEXT TO other screen text is treated as screen text (real app copy such as
+// "Unable to process image" or "As an AI developer tool …"). The caller
+// checks forbidden-token PRESENCE before this rule.
 func transcriptUsable(texts []string) error {
-	screenText := 0
+	screenText, statements := 0, 0
+	var first string
 	for _, t := range texts {
 		k := testbank.VisionTokenKey(t)
 		if k == "" || testbank.IsVisionFiller(k) {
 			continue
 		}
-		if modelStatementRe.MatchString(k) {
-			return fmt.Errorf("transcription element %q is a refusal / remark by the model, not screen text — the reading is unusable", t)
-		}
 		screenText++
+		if modelStatementRe.MatchString(k) {
+			if statements == 0 {
+				first = t
+			}
+			statements++
+		}
 	}
 	if screenText == 0 {
 		return errors.New("transcription holds no screen text (empty or filler only) — whether a token is present or absent cannot be determined")
 	}
+	if statements == screenText {
+		return fmt.Errorf("every transcription element is a refusal / remark by the model (e.g. %q), not screen text — the reading is unusable", first)
+	}
 	return nil
+}
+
+// containedOnly returns the (normalised) tokens that appear as whole words
+// INSIDE some texts element although they equal none.
+func containedOnly(texts, tokens []string) []string {
+	var out []string
+	for _, k := range tokens {
+		if k == "" {
+			continue
+		}
+		if _, f := matchTokensInTexts(texts, nil, []string{k}, false); len(f) > 0 {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // stripSingleFence returns the content of a reply that is exactly one

@@ -125,7 +125,9 @@ func TestNoBluffVision_LeftWordBoundary(t *testing.T) {
 // such as "(no Login button visible)" cannot satisfy recognize [Login].
 func TestNoBluffVision_RecognizeExactElement(t *testing.T) {
 	exact := testbank.TestStep{Name: "s", Action: "keypress: X", Expected: "x", Recognize: []string{"Login"}, RecognizeExact: true}
-	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, exact); r.Passed || r.Blocked {
+	// Round 7: a token found only INSIDE a longer element is BLOCKED (with a
+	// pointer to recognize_contains), never a pass.
+	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, exact); r.Passed || !r.Blocked {
 		t.Fatalf("exact mode matched commentary: %+v", r.Actual)
 	}
 	if r := blindRun(t, `{"texts":["Settings","LOGIN"],"description":"x"}`, exact); !r.Passed {
@@ -133,7 +135,7 @@ func TestNoBluffVision_RecognizeExactElement(t *testing.T) {
 	}
 	// Exact is now the default (round 5, finding 10): the same commentary
 	// does not match a plain recognize either.
-	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, recStep([]string{"Login"}, nil)); r.Passed || r.Blocked {
+	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, recStep([]string{"Login"}, nil)); r.Passed {
 		t.Fatalf("default recognize matched commentary: %q", r.Actual)
 	}
 	// With the recognize_contains opt-in the commentary matches

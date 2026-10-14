@@ -126,9 +126,9 @@ func (f *DefaultExecutorFactory) Probe(ctx context.Context, platform string) err
 // that cannot start) BLOCKS the steps that need it instead of being acted
 // on blindly:
 //
-//   - android / androidtv: `adb -s <device> get-state` must print exactly
-//     "device" (offline / unauthorized / not found / no serial are
-//     unreachable);
+//   - android / androidtv: the last non-empty line of
+//     `adb -s <device> get-state` must be exactly "device" (offline /
+//     unauthorized / not found / no serial are unreachable);
 //   - desktop, web: one real capture through the executor itself must
 //     return bytes without error;
 //   - other platforms (cli, api) run on the host and are not probed.
@@ -146,7 +146,9 @@ func probePlatformReachable(
 			return fmt.Errorf("no android device serial configured")
 		}
 		out, err := runner.Run(pctx, "adb", "-s", androidDevice, "get-state")
-		state := strings.TrimSpace(string(out))
+		// adb may print daemon start-up / warning lines first; the state is
+		// the LAST non-empty line.
+		state := lastNonEmptyLine(string(out))
 		if err != nil || state != "device" {
 			return fmt.Errorf("adb -s %s get-state: state %q (%v) — device not reachable",
 				androidDevice, truncateOutput([]byte(state), 120), err)
@@ -175,3 +177,14 @@ func probePlatformReachable(
 // DefaultExecutorFactory; a stub that silently succeeds every UI
 // action without driving a real device is a PASS-bluff if reached
 // from a production binary.
+
+// lastNonEmptyLine returns the last line of s that is not blank, trimmed.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return ""
+}

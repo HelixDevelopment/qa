@@ -697,7 +697,9 @@ func (st TestStep) EffectivePHashMaxDistance() int {
 // non-letter/non-digit characters collapsed to one space, trimmed.
 func VisionTokenKey(s string) string {
 	// NFKC folds compatibility forms (fullwidth, ligatures, mathematical
-	// alphanumerics) to their plain letters; format characters (zero-width
+	// alphanumerics) to their plain letters; combining marks (Mn / Mc) are
+	// part of the word, except the optional Arabic / Hebrew vowel marks,
+	// which are dropped; format characters (zero-width
 	// space / joiner, BOM, soft hyphen, tags — Unicode Cf) and the other
 	// default-ignorable / variation-selector code points (isInvisibleNonFormat)
 	// are dropped, so none can split or disguise a token.
@@ -708,7 +710,10 @@ func VisionTokenKey(s string) string {
 		if unicode.Is(unicode.Cf, r) || isInvisibleNonFormat(r) {
 			continue
 		}
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if isOptionalVowelMark(r) {
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
 			if space && b.Len() > 0 {
 				b.WriteByte(' ')
 			}
@@ -729,6 +734,34 @@ func VisionTokenKey(s string) string {
 // (U+FE00..U+FE0F, U+E0100..U+E01EF, Mongolian U+180B..).
 func isInvisibleNonFormat(r rune) bool {
 	return unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r)
+}
+
+// optionalVowelMarks are the Arabic harakat and the Hebrew niqqud /
+// cantillation marks: optional vowel / reading marks that the same word is
+// written with or without, so they are dropped. Every OTHER combining mark
+// (Devanagari / Thai vowel signs, Latin accents without a precomposed form)
+// is part of the word.
+var optionalVowelMarks = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x0591, Hi: 0x05BD, Stride: 1},
+		{Lo: 0x05BF, Hi: 0x05BF, Stride: 1},
+		{Lo: 0x05C1, Hi: 0x05C2, Stride: 1},
+		{Lo: 0x05C4, Hi: 0x05C5, Stride: 1},
+		{Lo: 0x05C7, Hi: 0x05C7, Stride: 1},
+		{Lo: 0x0610, Hi: 0x061A, Stride: 1},
+		{Lo: 0x064B, Hi: 0x065F, Stride: 1},
+		{Lo: 0x0670, Hi: 0x0670, Stride: 1},
+		{Lo: 0x06D6, Hi: 0x06DC, Stride: 1},
+		{Lo: 0x06DF, Hi: 0x06E4, Stride: 1},
+		{Lo: 0x06E7, Hi: 0x06E8, Stride: 1},
+		{Lo: 0x06EA, Hi: 0x06ED, Stride: 1},
+		{Lo: 0x08D3, Hi: 0x08FF, Stride: 1},
+	},
+}
+
+// isOptionalVowelMark reports an Arabic / Hebrew optional vowel mark.
+func isOptionalVowelMark(r rune) bool {
+	return unicode.Is(unicode.Mn, r) && unicode.Is(optionalVowelMarks, r)
 }
 
 // validateVisionAssertions refuses vision keys that would assert nothing
@@ -809,6 +842,11 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 			return fmt.Sprintf("test case %s step %d: token %q is both recognized and "+
 				"forbidden — the step could never pass", caseID, idx, tok)
 		}
+	}
+	if len(st.Forbid) > 0 && len(st.Recognize) == 0 {
+		return fmt.Sprintf("test case %s step %d: forbid without recognize — the absence of a "+
+			"forbidden token is only credited when the same reading matched a recognize token "+
+			"(proof the model read the screen); add recognize", caseID, idx)
 	}
 	return ""
 }

@@ -204,7 +204,7 @@ func (ste *StructuredTestExecutor) judgeStep(
 			return
 		}
 		if len(step.Recognize) > 0 || len(step.Forbid) > 0 {
-			texts, desc, who, reason := ste.blindTranscription(ctx, frame)
+			texts, desc, who, reason := ste.blindTranscription(ctx, frame, step.Forbid)
 			if who == "" {
 				block(reason)
 				return
@@ -218,7 +218,23 @@ func (ste *StructuredTestExecutor) judgeStep(
 				return
 			}
 			if len(missing) > 0 {
+				if in := containedOnly(texts, missing); len(in) > 0 && step.ExactRecognize() {
+					// Found inside a longer element but equal to none: the
+					// screen may well be right — exact matching cannot tell.
+					block(fmt.Sprintf("recognize token(s) %s appear only INSIDE a longer texts element, never as a whole element "+
+						"(exact matching is the default) — set recognize_contains: true on the step if the token is part of a longer "+
+						"on-screen string", strings.Join(in, ", ")))
+					return
+				}
 				refute(fmt.Sprintf("recognize token(s) absent: %s", strings.Join(missing, ", ")))
+				return
+			}
+			if len(step.Forbid) > 0 && len(step.Recognize) == 0 {
+				// Absence is only credible when the same reading demonstrably
+				// read the screen: a refusal in words no list knows reads
+				// exactly like a screen without the forbidden text.
+				block("forbid: the forbidden token(s) are absent, but no recognize token anchors this reading (a positive " +
+					"match proving the model read the screen) — absence cannot be credited")
 				return
 			}
 			notes = append(notes, fmt.Sprintf("tokens: %d recognized, %d forbidden absent", len(step.Recognize), len(step.Forbid)))
@@ -308,7 +324,7 @@ func (r routedProvider) Vision(ctx context.Context, image []byte, prompt string)
 // provider; if none qualifies, who is "" and reason names every provider
 // tried. The request carries the JSON schema (sent as response_format to
 // the local endpoint only).
-func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame []byte) (texts []string, desc, who, reason string) {
+func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame []byte, forbid []string) (texts []string, desc, who, reason string) {
 	var tried []string
 	sctx := llm.WithResponseSchema(ctx, blindTranscriptSchema)
 	for _, p := range ste.visionCandidates() {
@@ -327,7 +343,12 @@ func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame
 		}
 		t, d, perr := parseBlindReply(content)
 		if perr == nil {
-			// An empty / filler-only / refusing reading carries no
+			if _, present := matchTokensInTexts(t, nil, forbid, true); len(present) > 0 {
+				// A forbidden token PRESENT is decisive whatever else the
+				// reading holds (a refusal-looking element included).
+				return t, d, p.Name(), ""
+			}
+			// An empty / filler-only / all-refusal reading carries no
 			// verdict; ask the next provider.
 			perr = transcriptUsable(t)
 		}

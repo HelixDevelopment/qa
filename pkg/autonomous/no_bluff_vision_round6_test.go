@@ -77,9 +77,10 @@ func TestNoBluffVision_R6_NoAssertingStepIsBlocked(t *testing.T) {
 	// Golden-good neighbours: an asserting step makes the case decidable.
 	requireCaseVerdict(t, runCase(t, noExec(), testbank.TestStep{Name: "cli", Action: "shell: exit 0"},
 		testbank.TestStep{Name: "wait", Action: "sleep: 1"}), CaseVerdictPassed, "shell + sleep")
+	// Round 7: an accepted key press observes nothing — BLOCKED.
 	ste, _ = newSTE(nilProvider, noisePNG(t, 1), noisePNG(t, 2))
 	requireCaseVerdict(t, runCase(t, ste, testbank.TestStep{Name: "press", Action: "keypress: KEYCODE_ENTER"}),
-		CaseVerdictPassed, "device keypress")
+		CaseVerdictBlocked, "device keypress")
 	ste, _ = newSTE(&fakeVision{verify: "VERIFIED: yes\nACTUAL: home"}, noisePNG(t, 1), noisePNG(t, 2))
 	requireCaseVerdict(t, runCase(t, ste, testbank.TestStep{Name: "look", Action: "screenshot", Expected: "home"}),
 		CaseVerdictPassed, "screenshot confirmed by the model")
@@ -170,10 +171,13 @@ func TestNoBluffVision_R6_EmptyOrRefusingTranscriptionBlocks(t *testing.T) {
 	if r := run(ste, withGolden); r.Passed || r.Blocked || r.VisionProvider != "b" {
 		t.Fatalf("readable second provider not used: passed=%v blocked=%v provider=%q", r.Passed, r.Blocked, r.VisionProvider)
 	}
-	// Golden-good: real screen text without the forbidden token.
+	// Golden-good: real screen text anchored by a recognize token, without
+	// the forbidden token (round 7: forbid absence needs that anchor).
 	ste, _ = newSTE(&fakeVision{blind: j(`["Home","Settings"]`)}, noisePNG(t, 1), after)
 	ste.config.VisionGoldensDir = dir
-	if r := run(ste, withGolden); !r.Passed {
+	anchored := withGolden
+	anchored.Recognize = []string{"Home"}
+	if r := run(ste, anchored); !r.Passed {
 		t.Fatalf("readable transcription without the forbidden token: %q", r.Actual)
 	}
 }
@@ -235,6 +239,16 @@ func (*offlineExec) Screenshot(context.Context) ([]byte, error) {
 type offlineFactory struct{}
 
 func (offlineFactory) Create(string) (navigator.ActionExecutor, error) { return &offlineExec{}, nil }
+func (offlineFactory) Probe(context.Context, string) error {
+	return errors.New("error: device 'emulator-5554' not found")
+}
+
+// captureFailFactory: reachable per the factory, but every capture fails.
+type captureFailFactory struct{}
+
+func (captureFailFactory) Create(string) (navigator.ActionExecutor, error) {
+	return &offlineExec{}, nil
+}
 
 type offlineRunner struct{}
 
@@ -246,6 +260,9 @@ type adbOfflineFactory struct{}
 
 func (adbOfflineFactory) Create(string) (navigator.ActionExecutor, error) {
 	return navigator.NewADBExecutor("emulator-5554", offlineRunner{}), nil
+}
+func (f adbOfflineFactory) Probe(ctx context.Context, platform string) error {
+	return probePlatformReachable(ctx, platform, "emulator-5554", offlineRunner{}, f.Create)
 }
 
 // brokenKeyExec: the device answers, the key press itself fails — an app /
@@ -279,7 +296,7 @@ func TestNoBluffVision_R6_MissingEnvironmentIsBlocked(t *testing.T) {
 		CaseVerdictBlocked, "playback_check, device not found")
 	// an ungated screenshot whose capture failed is not a pass, even next
 	// to an asserting step.
-	requireCaseVerdict(t, runCase(t, mk(offlineFactory{}), testbank.TestStep{Name: "cli", Action: "shell: exit 0"},
+	requireCaseVerdict(t, runCase(t, mk(captureFailFactory{}), testbank.TestStep{Name: "cli", Action: "shell: exit 0"},
 		testbank.TestStep{Name: "look", Action: "screenshot", Expected: "home"}),
 		CaseVerdictBlocked, "screenshot on an offline device")
 	// Golden-bad neighbour: a key press the device rejected is a FAILURE.
@@ -336,7 +353,8 @@ func TestNoBluffVision_R6_UnreachableDeviceProbedOnce(t *testing.T) {
 	}
 	ok := &probeFactory{}
 	ste = &StructuredTestExecutor{config: PipelineConfig{Platforms: []string{"android"}}, execFactory: ok}
-	requireCaseVerdict(t, runCase(t, ste, testbank.TestStep{Name: "ui", Action: "keypress: X"}), CaseVerdictPassed, "reachable device")
+	requireCaseVerdict(t, runCase(t, ste, testbank.TestStep{Name: "ui", Action: "keypress: X"},
+		testbank.TestStep{Name: "cli", Action: "shell: exit 0"}), CaseVerdictPassed, "reachable device")
 }
 
 // runnerFunc adapts a function to detector.CommandRunner.
