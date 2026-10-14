@@ -293,8 +293,9 @@ func TestGetAvailableModels(t *testing.T) {
 			// an empty list is the correct return value for an empty daemon.
 			// Asserting non-empty here would assert a property of the host
 			// rather than of the code under test.
+			// SKIP-OK: #env-ollama-no-model-pulled
 			t.Skip("Ollama daemon reachable but reports zero models — pull a vision model " +
-				"(e.g. `ollama pull llava`) to exercise the populated path") // SKIP-OK: #env-ollama-no-model-pulled
+				"(e.g. `ollama pull llava`) to exercise the populated path")
 		}
 
 		assert.NotEmpty(t, models)
