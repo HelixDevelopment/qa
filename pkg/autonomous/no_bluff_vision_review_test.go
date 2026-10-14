@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"digital.vasic.helixqa/pkg/llm"
+	"digital.vasic.helixqa/pkg/navigator"
 	"digital.vasic.helixqa/pkg/testbank"
 )
 
@@ -156,6 +157,8 @@ func TestNoBluffVision_SkippedGatedStepBlocksCase(t *testing.T) {
 	gatedSkips := map[string]testbank.TestStep{
 		"description + vision_verify":     {Name: "look", Action: "Check that the settings screen is shown", Expected: "settings", VisionVerify: true},
 		"playwright (no CDP) + recognize": {Name: "nav", Action: "playwright: navigate http://127.0.0.1:1/", Expected: "home", Recognize: []string{"Home"}},
+		// golden-only: gated, but needs no vision MODEL (pins N13)
+		"playwright (no CDP) + golden only": {Name: "nav", Action: "playwright: navigate http://127.0.0.1:1/", Expected: "home", Golden: "home"},
 	}
 	for name, st := range gatedSkips {
 		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes", blind: `{"texts":["Home"],"description":"x"}`}, noisePNG(t, 1), noisePNG(t, 2))
@@ -266,21 +269,56 @@ func TestNoBluffVision_ProviderLoopStopsOnCancelledCtxWithoutRouter(t *testing.T
 func TestFrameDiff_NonComparableFramesAreNotMotion(t *testing.T) {
 	step := testbank.TestStep{Action: "frame_diff: 10"}
 	cases := []struct {
-		name    string
-		a, b    []byte
-		success bool
-		mustSay string
+		name             string
+		a, b             []byte
+		success, blocked bool
+		mustSay          string
 	}{
-		{"undecodable", []byte("not an image at all"), []byte("still not an image"), false, "not comparable"},
-		{"size mismatch", noisePNGSized(t, 1, 160, 120), noisePNGSized(t, 2, 200, 100), false, "not comparable"},
-		{"identical", noisePNG(t, 5), noisePNG(t, 5), false, "identical"},
-		{"real motion", noisePNG(t, 5), noisePNG(t, 6), true, "motion"},
+		{"undecodable", []byte("not an image at all"), []byte("still not an image"), false, true, "not comparable"},
+		{"size mismatch", noisePNGSized(t, 1, 160, 120), noisePNGSized(t, 2, 200, 100), false, true, "not comparable"},
+		{"identical", noisePNG(t, 5), noisePNG(t, 5), false, false, "identical"},
+		{"real motion", noisePNG(t, 5), noisePNG(t, 6), true, false, "motion"},
 	}
 	for _, c := range cases {
 		ex := &screenExec{frames: [][]byte{c.a, c.b}}
 		res := (&StructuredTestExecutor{}).performAction(context.Background(), ex, step)
-		if res.Success != c.success || !strings.Contains(res.Message, c.mustSay) {
-			t.Errorf("%s: success=%v msg=%q (want %v, %q)", c.name, res.Success, res.Message, c.success, c.mustSay)
+		if res.Success != c.success || res.Blocked != c.blocked || !strings.Contains(res.Message, c.mustSay) {
+			t.Errorf("%s: success=%v blocked=%v msg=%q (want %v/%v, %q)", c.name, res.Success, res.Blocked, res.Message, c.success, c.blocked, c.mustSay)
+		}
+	}
+	// Step and case level: a capture problem is BLOCKED (environment), never
+	// a FAILED app-defect finding (review round 3, finding 6).
+	ste, _ := newSTE(nilProvider, noisePNG(t, 1), []byte("junk"), []byte("junk2"), noisePNG(t, 2))
+	res := &StructuredExecutionResult{}
+	tc := testbank.TestCase{ID: "TC-FD", Name: "fd", Steps: []testbank.TestStep{{Name: "motion", Action: "frame_diff: 10"}}}
+	_ = ste.executeTestCase(context.Background(), tc, res)
+	if res.TestCasesBlocked != 1 || res.TestCasesFailed != 0 {
+		t.Fatalf("non-comparable frame_diff case: %+v", res)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Category.IsAppDefect() {
+		t.Fatalf("capture problem filed as an app defect: %+v", res.Findings)
+	}
+}
+
+type failingFactory struct{}
+
+func (failingFactory) Create(string) (navigator.ActionExecutor, error) {
+	return nil, errTest("no device attached")
+}
+
+// Review round 3, finding 6: "executor cannot be created" is an
+// environment problem — the step is BLOCKED, never a FAILED app defect.
+func TestNoBluffVision_ExecutorCreationFailureBlocks(t *testing.T) {
+	for _, st := range []testbank.TestStep{gated(nil), {Name: "plain", Action: "keypress: X", Expected: "x"}} {
+		ste := &StructuredTestExecutor{config: PipelineConfig{Platforms: []string{"android"}}, execFactory: failingFactory{}}
+		res := &StructuredExecutionResult{}
+		tc := testbank.TestCase{ID: "TC-EX", Name: "ex", Steps: []testbank.TestStep{st}}
+		_ = ste.executeTestCase(context.Background(), tc, res)
+		if res.TestCasesBlocked != 1 || res.TestCasesFailed != 0 {
+			t.Fatalf("%s: executor failure counted as %+v", st.Name, res)
+		}
+		if len(res.Findings) != 1 || res.Findings[0].Category.IsAppDefect() {
+			t.Fatalf("%s: executor failure filed as an app defect: %+v", st.Name, res.Findings)
 		}
 	}
 }

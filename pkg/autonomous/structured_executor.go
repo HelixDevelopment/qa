@@ -349,8 +349,13 @@ func (ste *StructuredTestExecutor) executeStep(
 	// Get executor for platform
 	executor, err := ste.execFactory.Create(platform)
 	if err != nil {
+		// No device / display / browser to act on: the step could not be
+		// run at all. That is an environment problem, never an app
+		// defect — BLOCKED (filed as an environment finding).
+		result.Blocked = true
+		result.VisionGated = step.IsVisionGated()
 		result.Actual = fmt.Sprintf(
-			"Failed to create executor: %v", err,
+			"BLOCKED (could not determine): executor could not be created for %q: %v", platform, err,
 		)
 		return result
 	}
@@ -386,6 +391,12 @@ func (ste *StructuredTestExecutor) executeStep(
 	// Placeholder/skipped actions short-circuit — no verification,
 	// no failure, just propagate the Skipped flag so the test case
 	// loop can account for them separately.
+	if actionResult.Blocked {
+		result.Blocked = true
+		result.VisionGated = step.IsVisionGated()
+		result.Actual = "BLOCKED (could not determine): " + actionResult.Message
+		return result
+	}
 	if actionResult.Skipped {
 		if step.IsVisionGated() {
 			// A vision-gated step asserts what the screen shows; if its
@@ -616,7 +627,7 @@ func (ste *StructuredTestExecutor) performAction(
 		if cmpErr != nil {
 			// Undecodable or differently sized frames say nothing about
 			// motion — never report them as "motion detected".
-			return ActionResult{Success: false, Message: fmt.Sprintf("frame_diff: %v — not comparable, cannot confirm motion", cmpErr)}
+			return ActionResult{Blocked: true, Message: fmt.Sprintf("frame_diff: %v — not comparable, cannot confirm motion (capture problem, not an app defect)", cmpErr)}
 		}
 		if !changed {
 			return ActionResult{Success: false, Message: fmt.Sprintf("frames identical (diff %.1f%%) — playback appears frozen", diffPct)}
@@ -1268,6 +1279,10 @@ type TestStepResult struct {
 type ActionResult struct {
 	Success bool
 	Skipped bool
+	// Blocked: the action could not be judged for an environment reason
+	// (e.g. frames that cannot be compared) — never a pass, never an app
+	// defect.
+	Blocked bool
 	Message string
 }
 
