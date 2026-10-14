@@ -46,6 +46,14 @@ import (
 const version = "0.2.0"
 
 func main() {
+	// An unrecovered panic must not exit 2 (that means "blocked"): it is
+	// mapped to exitCodePanic (70). Normal paths exit from inside realMain.
+	if code := guardPanic(realMain); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func realMain() {
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -213,8 +221,10 @@ func cmdRun(args []string) {
 
 	result, err := orch.Run(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		// No challenge verdict exists (e.g. a bank could not be loaded):
+		// nothing was executed — exit 2, never 1 (a failure verdict).
+		fmt.Fprintf(os.Stderr, "error: %v — nothing executed (exit %d)\n", err, exitCodeNotExecuted)
+		os.Exit(runExitCode(nil, err))
 	}
 
 	// Print summary. CONST-035 anti-bluff: a "PASSED" summary that
@@ -263,7 +273,7 @@ func cmdRun(args []string) {
 
 	// Three-valued contract: 0 all passed, 1 a failure / crash / ANR,
 	// 2 nothing failed but not everything was executed (skipped/blocked).
-	if code := result.ExitCode(); code != 0 {
+	if code := runExitCode(result, nil); code != 0 {
 		os.Exit(code)
 	}
 }

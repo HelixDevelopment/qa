@@ -42,8 +42,8 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_'
-PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/)
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic'
+PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/ ./cmd/helixqa/)
 
 echo "== control (unmutated tree)"
 if ! go test -count=1 -run "${GATE}" "${PKGS[@]}" >"${WORK}/control.log" 2>&1; then
@@ -60,7 +60,7 @@ echo "   control GREEN"
 python3 -I - "${ROOT_DIR}" "${WORK}" "${ONLY}" >"${WORK}/manifest.tsv" <<'PY'
 import json, os, sys
 root, work, only = sys.argv[1], sys.argv[2], sys.argv[3]
-A, L, T, O = "pkg/autonomous/", "pkg/llm/", "pkg/testbank/", "pkg/orchestrator/"
+A, L, T, O, C = "pkg/autonomous/", "pkg/llm/", "pkg/testbank/", "pkg/orchestrator/", "cmd/helixqa/"
 M = [
  ("M01-gating-ignored", A+"vision_gate.go", A, [("r.VisionGated = step.IsVisionGated()", "r.VisionGated = false")]),
  ("M02-no-provider-passes", A+"vision_gate.go", A, [('block("no vision-capable provider is configured for a vision-gated step")', "r.Passed = true")]),
@@ -178,6 +178,9 @@ M = [
  ("V05-nfkc-dropped", T+"schema.go", A, [("s = norm.NFKC.String(s)", "s = norm.NFKC.String(\"\") + s")]),
  ("V06-zero-width-kept", T+"schema.go", A, [("if unicode.Is(unicode.Cf, r) {\n\t\t\tcontinue", "if unicode.Is(unicode.Cf, r) && false {\n\t\t\tcontinue")]),
  ("V07-recognize-exact-alone-loaded", T+"schema.go", T, [("if st.RecognizeExact && len(st.Recognize) == 0 {", "if false && st.RecognizeExact {")]),
+ ("W01-run-load-error-exits-1", C+"exit_codes.go", C, [("if err != nil {\n\t\treturn exitCodeNotExecuted", "if err != nil {\n\t\treturn 1")]),
+ ("W02-panic-swallowed", C+"exit_codes.go", C, [("if r := recover(); r != nil {", "if r := recover(); r != nil && false {")]),
+ ("W03-panic-exits-blocked-code", C+"exit_codes.go", C, [("exitCodePanic = 70", "exitCodePanic = 2")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),
