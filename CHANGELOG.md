@@ -39,6 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Round-5 hardening:** a `frame_diff` whose screenshot fails and
+  `playback_check:` / `adb_shell:` on a non-Android executor are BLOCKED
+  (environment), not FAILED app defects; with no executor, host-only steps
+  (`shell:`, `http:`, `assert:`, `sleep:`) still run and decide on their own.
+- **One reply helper for every provider** (`pkg/llm/http_body.go`): capped
+  read (8 MiB), the provider's own key redacted in the full error body
+  (any case, URL-escaped, base64) BEFORE truncation to 512 bytes. Google
+  accepts a `BaseURL` override (default endpoint unchanged).
+- **Blind JSON reply limits:** invalid UTF-8, >2000 elements, an element
+  >200 characters or containing a line break / control character make the
+  reply unusable. New bank key `recognize_exact` (token must equal a whole
+  element). Token matching folds NFKC and drops zero-width / format
+  characters (cross-script homoglyphs are not folded — documented).
+- **Exit codes:** `helixqa run` exits 2 when nothing executed (missing or
+  malformed bank; was 1); an unrecovered panic exits 70. CLI usage /
+  configuration errors stay 1 (documented). `golang.org/x/text` becomes a
+  direct dependency.
 - **recognize / forbid redesigned (breaking):** the vision model now returns
   exactly one strict JSON object `{"texts": [...], "description": "..."}`
   (the local endpoint also gets a JSON-schema `response_format`); tokens

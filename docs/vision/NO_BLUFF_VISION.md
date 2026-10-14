@@ -22,7 +22,7 @@ Code: `pkg/autonomous/vision_gate.go` (`judgeStep`),
 |---|---|
 | PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; non-gated prose/placeholder steps may have been skipped |
 | FAILED | an action failed, or a frame was read and contradicts the expectation |
-| BLOCKED | the outcome could not be determined: a vision-gated step without a usable verdict, a gated step whose action had to be skipped (`playwright:` without a CDP URL), a capture problem (`frame_diff` on undecodable or differently sized frames, `expect_change` on non-comparable frames), or no executor for the platform (no device / display / browser) — never a pass, never an app defect |
+| BLOCKED | the outcome could not be determined: a vision-gated step without a usable verdict, a gated step whose action had to be skipped (`playwright:` without a CDP URL), a capture problem (`frame_diff` whose screenshot fails or whose frames are undecodable / differently sized, `expect_change` on non-comparable frames), an Android-only action (`playback_check:`, `adb_shell:`) on a non-Android executor, or no executor for the platform (no device / display / browser) for a step that needs one — never a pass, never an app defect. Host-only steps (`shell:`, `http:`, `assert:`, `sleep:`, not vision-gated) still run without an executor and pass or fail on their own result. |
 | SKIPPED | bank placeholder / `requires_env` unset |
 
 The structured outcome is stored on the session result
@@ -60,7 +60,18 @@ on the same three values:
 |---|---|---|
 | 0 | pass | every challenge executed and passed, no crash, no ANR |
 | 1 | **fail** | any challenge failed / errored / timed out / stuck, or a crash or ANR was detected |
-| 2 | **incomplete** | nothing failed, but not every challenge passed: nothing executed, or some/all challenges SKIPPED (e.g. a case whose vision-gated step the bank runner cannot execute); the summary line reads `INCOMPLETE - …` |
+| 2 | **incomplete** | nothing failed, but not every challenge passed: nothing executed (including a bank that could not be loaded — missing file, malformed YAML), or some/all challenges SKIPPED (e.g. a case whose vision-gated step the bank runner cannot execute); the summary line reads `INCOMPLETE - …` |
+
+Both commands also use:
+
+| Exit | When |
+|---|---|
+| 70 | an unrecovered Go panic in the main goroutine (internal HelixQA defect; stack on stderr) — never a verdict about the app |
+| 1 (before anything runs) | CLI usage / configuration errors: missing `--banks`, a bad flag, invalid configuration, a refused `HELIX_VISION_ENDPOINT`; stderr starts with `error:`. This shares the value 1 with "fail" — distinguish by the `error:` line and by the absence of a report |
+
+Residual: a panic in a goroutine other than the main one cannot be recovered
+by `main`; Go's runtime then exits with status 2, which collides with
+"blocked". The panic text on stderr distinguishes it.
 
 **Exit 2 is not a warning and not a pass.** A wrapper must branch on it.
 Consumer scripts measured on 2026-10-14 in the catalogizer checkout
@@ -137,7 +148,17 @@ does NOT match `errors` or `terror`.
 
   Tokens are matched ONLY against individual `texts` elements, as whole
   normalised words within one element (elements are never joined, so a
-  phrase cannot be assembled across two elements). The `description` is
+  phrase cannot be assembled across two elements). Further limits — each
+  makes the whole reply unusable: invalid UTF-8; more than 2000 elements;
+  an element longer than 200 characters; an element containing a line
+  break or control character (one element per UI element; recall cost: a
+  multi-line label must be transcribed as separate elements). Normalisation
+  applies NFKC (fullwidth letters, ligatures, mathematical alphanumerics
+  fold to plain letters) and drops Unicode format characters (zero-width
+  space / joiner, BOM, soft hyphen), so neither can split or disguise a
+  token. With `recognize_exact: true` a recognize token must EQUAL one whole
+  element after normalisation, so commentary such as
+  "(no Login button visible)" cannot satisfy `recognize: [Login]`. The `description` is
   never consulted, so prose such as "the Login button is not shown" or
   "(no search bar visible)" cannot satisfy `recognize` nor trip `forbid`.
   Filler elements (`(none)`, `N/A`, `No text visible`, …) are dropped.
@@ -273,14 +294,23 @@ cases BLOCKED (exit 2) where it previously reported PASSED.
   `challenges/helixqa-banks/catalogizer-androidtv-negative-paths-executable.yaml`
   uses `frame_diff: 2000` at lines 451 and 504 (measured at `d211f574`); a
   capture problem there now reports BLOCKED (exit 2) instead of FAILED.
-- Secrets: `HELIX_VISION_ENDPOINT` with user info, a query, a fragment, an
-  encoded `?`/`#` (`%3F`/`%23`) or a `;` parameter in the path is refused at
-  startup without echoing it. A secret written as a plain path segment
-  (`/key/<secret>/`) cannot be told from a real path and is NOT detected.
-  Transport errors of every provider (OpenAI-style, anthropic, google,
-  ollama, astica) are scrubbed to `scheme://host/path`; an error body is
-  quoted up to 512 bytes with the provider's own API key replaced by
-  `[REDACTED]`; any OTHER secret a server echoes in its body is not scrubbed.
+- Secrets: `HELIX_VISION_ENDPOINT` with user info, a query (also a bare
+  `?`), a fragment (also a bare `#`), an encoded `?`/`#` (`%3F`/`%23`) or a
+  `;` parameter in the path is refused at startup without echoing it. A
+  secret written as a plain path segment (`/key/<secret>/`) cannot be told
+  from a real path and is NOT detected. Every provider (OpenAI-style,
+  anthropic, google, ollama, astica) reads replies through one helper:
+  the read is capped at 8 MiB (+1 byte, over-cap success bodies refused);
+  an error body has the provider's own API key redacted in the FULL body
+  FIRST — raw, any letter case, URL query/path-escaped, base64 (std/URL,
+  padded/raw) — and is only THEN truncated to 512 bytes. Keys shorter than
+  8 characters are not redacted (they would match ordinary text). Any OTHER
+  secret a server echoes (another credential, a cookie) is not scrubbed.
+  Transport errors are scrubbed to `scheme://host/path`.
+- Unicode: NFKC and format-character folding do NOT map cross-script
+  homoglyphs (a Cyrillic `о` in `Lоgin` stays different from Latin `o`):
+  that needs Unicode TS #39 confusable skeletons, which are not
+  implemented. A forbid token disguised with homoglyphs is not detected.
 - `IssuesFound` excludes environment findings at its call site; that call
   site is covered by reading, not by a mutant (reviewer mutant N23 —
   documented, not killed).

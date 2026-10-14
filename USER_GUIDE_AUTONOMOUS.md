@@ -493,8 +493,13 @@ commentary inside `texts` is not detected; pair `recognize` with `golden`
 where you have a reference screenshot.
 
 `helixqa run` uses the same contract: exit 0 all passed, 1 a failure /
-crash / ANR, 2 nothing failed but not everything executed (`INCOMPLETE`).
-Scripts must treat 2 as "not a pass", never as a warning.
+crash / ANR, 2 nothing failed but not everything executed (`INCOMPLETE`,
+including a bank that could not be loaded). Exit 70 means an internal
+HelixQA panic. Scripts must treat 2 as "not a pass", never as a warning.
+
+Use `recognize_exact: true` next to `recognize` when the token must be a
+whole on-screen element (e.g. a button label), so a model's commentary
+inside the transcription cannot satisfy it.
 
 Banks that already used `vision_verify: true` are now gated: run them with
 a vision provider that answers in the `VERIFIED:` format, or expect those
