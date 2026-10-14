@@ -20,9 +20,9 @@ Code: `pkg/autonomous/vision_gate.go` (`judgeStep`),
 
 | Case verdict | Meaning |
 |---|---|
-| PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; non-gated prose/placeholder steps may have been skipped |
+| PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; non-gated prose/placeholder steps may have been skipped; **and at least one ASSERTING step ran** — a vision-confirmed step or any action other than `sleep:` / `screenshot` / prose (those observe or wait and check nothing unless a model confirmed the screen) |
 | FAILED | an action failed, or a frame was read and contradicts the expectation |
-| BLOCKED | the outcome could not be determined: a vision-gated step without a usable verdict, a gated step whose action had to be skipped (`playwright:` without a CDP URL), a capture problem (`frame_diff` whose screenshot fails or whose frames are undecodable / differently sized, `expect_change` on non-comparable frames), an Android-only action (`playback_check:`, `adb_shell:`) on a non-Android executor, or no executor for the platform (no device / display / browser) for a step that needs one — never a pass, never an app defect. Host-only steps (`shell:`, `http:`, `assert:`, `sleep:`, not vision-gated) still run without an executor and pass or fail on their own result. |
+| BLOCKED | the outcome could not be determined — never a pass, never an app defect: a vision-gated step without a usable verdict; a gated step whose action had to be skipped (`playwright:` without a CDP URL); **no asserting step ran** (only `sleep:` / `screenshot` / prose steps, or screens no model confirmed); a capture problem (`frame_diff` whose screenshot fails, whose frames are undecodable / differently sized, or **blank / black** — FLAG_SECURE / DRM surfaces, screen off — `expect_change` on non-comparable frames, an ungated `screenshot` step whose capture failed); an Android-only action (`playback_check:`, `adb_shell:`) on a non-Android executor; no executor for the platform (no device / display / browser); a **configured device / display that is unreachable** (probed once per platform: `adb get-state` must be `device`, desktop / web one real capture must succeed; and an action error reading `device '…' not found`, `no devices/emulators found`, `device offline` / `unauthorized`, `cannot connect to daemon` or `cannot open display`); an `http:` step with **no base URL** configured (`HELIXQA_HTTP_BASE_URL` / `PipelineConfig.HTTPBaseURL`). Host-only steps (`shell:`, `http:`, `assert:`, `sleep:`, not vision-gated) still run without an executor; `shell:` / `http:` / `assert:` decide on their own result, `sleep:` asserts nothing. |
 | SKIPPED | bank placeholder / `requires_env` unset |
 
 The structured outcome is stored on the session result
@@ -50,8 +50,8 @@ assertion and does not stop the case.
 | Exit | Meaning | When |
 |---|---|---|
 | 0 | pass | no failure and no blocked case — including a session whose structured phase ran no case (it makes no structured claim) |
-| 1 | **fail** | the session failed, or any structured case FAILED (a finding outranks could-not-determine) |
-| 2 | **blocked / nothing passed** | any structured case BLOCKED; structured cases ran but none passed (e.g. all skipped); or the structured phase could not run its banks |
+| 1 | **fail** | any structured case FAILED (a finding outranks could-not-determine) |
+| 2 | **blocked / nothing passed** | any structured case BLOCKED; structured cases ran but none passed (e.g. all skipped); the structured phase could not run its banks; or the **session itself was BLOCKED** (`status: blocked`): the preflight network / VPN check failed, the learn or plan phase failed (project unreadable, provider outage), the session timed out, or the session could not start (memory store) — none of these is a verdict about the app |
 
 `helixqa run` (the bank runner) exits with `orchestrator.Result.ExitCode()`
 on the same three values:
@@ -60,7 +60,11 @@ on the same three values:
 |---|---|---|
 | 0 | pass | every challenge executed and passed, no crash, no ANR |
 | 1 | **fail** | any challenge failed / errored / timed out / stuck, or a crash or ANR was detected |
-| 2 | **incomplete** | nothing failed, but not every challenge passed: nothing executed (including a bank that could not be loaded — missing file, malformed YAML), or some/all challenges SKIPPED (e.g. a case whose vision-gated step the bank runner cannot execute); the summary line reads `INCOMPLETE - …` |
+| 2 | **incomplete** | nothing failed, but not every challenge passed: nothing executed (including a bank that could not be loaded — missing file, malformed YAML), some/all challenges SKIPPED (e.g. a case whose vision-gated step the bank runner cannot execute; the summary line reads `INCOMPLETE - …`), or an error after execution (the report could not be written, the run was cancelled) when no executed challenge failed |
+
+An error raised AFTER cases ran never erases their verdict: `orch.Run`
+returns the result with the error, and a failed challenge / crash / ANR in
+it still exits **1** (`error: … (exit 1)` plus the counts on stderr).
 
 Both commands also use:
 
@@ -95,7 +99,9 @@ decision.
 | Key | Effect | Needs a vision model |
 |---|---|---|
 | `vision_verify: true` | the model's reply must contain exactly one standalone line `VERIFIED: yes` (nothing else on that line) for the step's `expected` | yes |
-| `recognize: [..]` | every token must appear, as whole normalised words, inside ONE element of the `texts` array of an expectation-blind JSON reading of the frame | yes |
+| `recognize: [..]` | every token must EQUAL one whole element (after normalisation) of the `texts` array of an expectation-blind JSON reading of the frame | yes |
+| `recognize_exact: true` | states the default explicitly; only valid with `recognize` | — |
+| `recognize_contains: true` | opt-in: a token may appear as whole normalised words INSIDE one element (negations / commentary inside an element then match — use only for tokens that are part of longer on-screen strings); only valid with `recognize`, contradicts `recognize_exact` | — |
 | `forbid: [..]` | no token may appear in any `texts` element | yes |
 | `golden: <id>` | the frame's 64-bit pHash must be within `phash_max_distance` of `<goldens dir>/<id>.png\|.jpg\|.jpeg` | no |
 | `phash_max_distance: N` | 0..16, default 8; only valid with `golden` | no |
@@ -126,6 +132,15 @@ does NOT match `errors` or `terror`.
   Only a line consisting of `VERIFIED: yes` or `VERIFIED: no` (optional full
   stop) is an answer; an echoed template (`VERIFIED: yes/no`),
   `UNVERIFIED: yes`, the phrase inside prose, or two answer lines are not.
+  The reply must have exactly that shape: every non-blank line is the one
+  answer line or ONE `ACTUAL: …` line. Any other line — a refusal
+  ("I cannot view images."), a conditional ("If … I would answer:"), a
+  retraction ("Wait, no."), a second verdict inside prose, a filled
+  template followed by "the screen does not match", a code fence — makes
+  the reply ambiguous: next provider, else BLOCKED. Residual: what the one
+  `ACTUAL:` line says is not read, so `VERIFIED: yes` with an `ACTUAL:` that
+  contradicts it is honoured; multi-line `ACTUAL` descriptions are
+  ambiguous (recall cost).
 - `recognize` / `forbid`: a separate expectation-BLIND prompt — it carries
   neither the expectation nor the tokens — asks for exactly one JSON object:
 
@@ -151,24 +166,40 @@ does NOT match `errors` or `terror`.
   phrase cannot be assembled across two elements). Further limits — each
   makes the whole reply unusable: invalid UTF-8; more than 2000 elements;
   an element longer than 200 characters; an element containing a line
-  break or control character (one element per UI element; recall cost: a
-  multi-line label must be transcribed as separate elements). Normalisation
-  applies NFKC (fullwidth letters, ligatures, mathematical alphanumerics
-  fold to plain letters) and drops Unicode format characters (zero-width
-  space / joiner, BOM, soft hyphen), so neither can split or disguise a
-  token. With `recognize_exact: true` a recognize token must EQUAL one whole
-  element after normalisation, so commentary such as
-  "(no Login button visible)" cannot satisfy `recognize: [Login]`. The `description` is
+  break, a control character or a line / paragraph separator (U+2028 /
+  U+2029) (one element per UI element; recall cost: a multi-line label must
+  be transcribed as separate elements). A reading that holds **no screen
+  text** (empty `texts`, or filler only) or in which **any element is the
+  model talking** — a refusal or a remark about the image ("I'm sorry, I
+  can't …", "I cannot see …", "Unable to read the text in this image",
+  "As an AI …", "The image shows …") — is unusable too: the next provider
+  is asked, else BLOCKED. Such a reading never makes a `forbid` token
+  "absent" (also not next to `vision_verify: yes`) and never makes a
+  `recognize` token "missing". Normalisation applies NFKC (fullwidth
+  letters, ligatures, mathematical alphanumerics fold to plain letters)
+  and drops Unicode format characters (Cf: zero-width space / joiner, BOM,
+  soft hyphen, tag characters) and the other invisible code points —
+  Other_Default_Ignorable_Code_Point (combining grapheme joiner U+034F,
+  Hangul fillers U+115F / U+1160 / U+3164 / U+FFA0, Khmer U+17B4 / U+17B5)
+  and Variation_Selector (U+FE00..U+FE0F, U+E0100..U+E01EF, Mongolian
+  U+180B..U+180F) — so none can split or disguise a token. By default a
+  recognize token must EQUAL one whole element after normalisation, so
+  commentary such as "(no Login button visible)" or "Login not visible"
+  cannot satisfy `recognize: [Login]` (`recognize_contains: true` restores
+  contained-words matching). The `description` is
   never consulted, so prose such as "the Login button is not shown" or
   "(no search bar visible)" cannot satisfy `recognize` nor trip `forbid`.
   Filler elements (`(none)`, `N/A`, `No text visible`, …) are dropped.
   There are no heading heuristics any more.
 
   **Residual limit:** the parser cannot tell whether the model obeyed the
-  instruction to put only on-screen text in `texts`. A model that writes
-  commentary INSIDE `texts` ("(no search bar visible)") has that string
-  treated as screen text: it can satisfy `recognize` (a false pass) or trip
-  `forbid` (a false fail). Pair `recognize` with `golden` (pHash against a
+  instruction to put only on-screen text in `texts`. Refusals and remarks
+  are recognised only by the phrase list above (a heuristic: other wording
+  is not detected, and a real on-screen string that starts like a refusal —
+  "I don't see my device" — makes the reading unusable, BLOCKED). Other
+  commentary written INSIDE `texts` is treated as screen text: with
+  `recognize_contains` it can satisfy `recognize` (a false pass); it can
+  trip `forbid` (a false fail). Pair `recognize` with `golden` (pHash against a
   reference screenshot) where a stable reference exists — that is the
   second, model-independent oracle.
 
@@ -224,6 +255,10 @@ stateDiagram-v2
     Bind --> PASSED: VISION-VERIFIED
 ```
 
+The diagram is per step. At case level, a case whose executed steps all
+PASSED but none of which ASSERTED anything (only `sleep:` / `screenshot` /
+prose, or screens no model confirmed) is BLOCKED, not PASSED.
+
 ## Frame binding (evidence)
 
 Every step result records `frame_sha256` and `frame_phash` (16 hex digits)
@@ -272,6 +307,16 @@ and `sleep` (1) steps. They load unchanged, but a run without a vision
 provider that answers in the `VERIFIED:` format will now report those
 cases BLOCKED (exit 2) where it previously reported PASSED.
 
+Round 6 (re-measured 2026-10-14, same checkout, 15 banks / 1269 cases, all
+loading): none of those 27 steps uses `recognize` / `forbid`, so the
+exact-by-default `recognize` change does not touch them. With no executor,
+no `HELIXQA_HTTP_BASE_URL` and no vision provider (83 cases with `shell:` /
+`adb_shell:` / `playwright:` steps or `requires_env` excluded), the
+structured executor now reports **0 PASSED, 0 FAILED, 1186 BLOCKED**; the
+12 cases that used to PASS there were sleep-only or sleep + prose cases
+(e.g. `android-home-loads`, which is also BLOCKED with a device attached
+because its only other step is unconverted prose).
+
 ## Honest boundary
 
 - A vision model's answer is evidence about the frame it was shown, not
@@ -294,6 +339,15 @@ cases BLOCKED (exit 2) where it previously reported PASSED.
   `challenges/helixqa-banks/catalogizer-androidtv-negative-paths-executable.yaml`
   uses `frame_diff: 2000` at lines 451 and 504 (measured at `d211f574`); a
   capture problem there now reports BLOCKED (exit 2) instead of FAILED.
+- A case PASSes only when an asserting step ran (see the verdict table);
+  "asserting" is decided by the action kind and the vision status, so a
+  `keypress:` / `tap:` the device accepted counts even when nothing checked
+  the screen afterwards (the step is labelled UNVERIFIED-by-vision).
+- Reachability: both production executor factories probe each platform
+  once (`adb -s <serial> get-state` must print `device`; desktop / web one
+  real capture). `cli` / `api` platforms are not probed. Device-gone errors
+  from actions are recognised by their message text (adb / X11 wording); an
+  unfamiliar wording is still a FAILED step.
 - Secrets: `HELIX_VISION_ENDPOINT` with user info, a query (also a bare
   `?`), a fragment (also a bare `#`), an encoded `?`/`#` (`%3F`/`%23`) or a
   `;` parameter in the path is refused at startup without echoing it. A
@@ -301,10 +355,16 @@ cases BLOCKED (exit 2) where it previously reported PASSED.
   from a real path and is NOT detected. Every provider (OpenAI-style,
   anthropic, google, ollama, astica) reads replies through one helper:
   the read is capped at 8 MiB (+1 byte, over-cap success bodies refused);
-  an error body has the provider's own API key redacted in the FULL body
-  FIRST — raw, any letter case, URL query/path-escaped, base64 (std/URL,
-  padded/raw) — and is only THEN truncated to 512 bytes. Keys shorter than
-  8 characters are not redacted (they would match ordinary text). Any OTHER
+  an error body (and astica's non-success `status` text) has the
+  provider's own API key redacted in the FULL body FIRST — raw, any letter
+  case, URL query/path-escaped, every byte percent-encoded, hex, JSON
+  `\uXXXX` escapes, base64 (std/URL, padded/raw) of the key alone, and the
+  key INSIDE a larger base64 blob at each of the three byte alignments
+  (e.g. an echoed `Authorization: Bearer <key>` header; up to 2 key bytes
+  remain in the partial characters at each edge) — and is only THEN
+  truncated to 512 bytes. Mixed or partial escaping and other encodings
+  (base32, compression, reversal) are NOT detected. Keys shorter than 8
+  characters are not redacted (they would match ordinary text). Any OTHER
   secret a server echoes (another credential, a cookie) is not scrubbed.
   Transport errors are scrubbed to `scheme://host/path`.
 - Unicode: NFKC and format-character folding do NOT map cross-script

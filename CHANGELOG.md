@@ -39,6 +39,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Round-6 hardening (review round 5):** a structured case PASSes only
+  when at least one ASSERTING step ran (sleep / screenshot / prose-only
+  cases are BLOCKED — catalogizer no-executor sweep 12 PASSED -> 0);
+  `VERIFIED` replies must be exactly one answer line plus at most one
+  `ACTUAL:` line; an empty / filler-only / refusing blind transcription is
+  unusable (forbid is never "absent" on it); U+2028 / U+2029 in an element
+  make the reply unusable; invisible default-ignorable / variation-selector
+  code points are dropped from tokens. **Breaking:** `recognize` matches
+  whole elements by default; new key `recognize_contains` opts into
+  contained-words matching. Missing environment is BLOCKED, not FAILED:
+  `http:` without a base URL, blank / black `frame_diff` frames, an
+  unreachable device / display (probed once per platform: `adb get-state`,
+  one capture for desktop / web; adb / X11 "device not found / offline /
+  cannot open display" action errors), an ungated screenshot whose capture
+  failed. The autonomous session gets `status: blocked` (exit 2) for a
+  failed network / VPN preflight, learn / plan errors and timeouts.
+  `helixqa run`: a FAILED verdict exits 1 even when an error (report write,
+  cancellation) follows execution. Provider error bodies also redact the
+  key as base64 inside larger blobs (e.g. an echoed `Bearer` header), every
+  byte percent-encoded, hex and JSON `\u` escapes; astica's status text is
+  redacted. Mutants X01-X45 added to the no_bluff_vision challenge.
 - **Round-5 hardening:** a `frame_diff` whose screenshot fails and
   `playback_check:` / `adb_shell:` on a non-Android executor are BLOCKED
   (environment), not FAILED app defects; with no executor, host-only steps
@@ -50,8 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Blind JSON reply limits:** invalid UTF-8, >2000 elements, an element
   >200 characters or containing a line break / control character make the
   reply unusable. New bank key `recognize_exact` (token must equal a whole
-  element). Token matching folds NFKC and drops zero-width / format
-  characters (cross-script homoglyphs are not folded — documented).
+  element; the default since round 6). Token matching folds NFKC and drops
+  zero-width / format (Cf) characters — and since round 6 also the other
+  default-ignorable and variation-selector code points (cross-script
+  homoglyphs are not folded — documented).
 - **Exit codes:** `helixqa run` exits 2 when nothing executed (missing or
   malformed bank; was 1); an unrecovered panic exits 70. CLI usage /
   configuration errors stay 1 (documented). `golang.org/x/text` becomes a
