@@ -260,6 +260,18 @@ const (
 	ActionTypePlaywright ActionType = "playwright"
 )
 
+// IsNonScreen reports actions whose verdict is their own deterministic
+// check (exit code, HTTP response) rather than anything on the screen. A
+// screenshot says nothing about them: vision keys are refused on them at
+// load, and a non-gated one never consults a vision model.
+func (a ActionType) IsNonScreen() bool {
+	switch a {
+	case ActionTypeShell, ActionTypeHTTP, ActionTypeAssert:
+		return true
+	}
+	return false
+}
+
 // TestStep is a single step within a test case.
 type TestStep struct {
 	// Name identifies this step.
@@ -302,27 +314,33 @@ type TestStep struct {
 	// needs no vision model. Setting it gates the step.
 	Golden string `yaml:"golden,omitempty" json:"golden,omitempty"`
 
-	// PHashMaxDistance is the largest Hamming distance (0..64) between the
+	// PHashMaxDistance is the largest Hamming distance (0..16, see
+	// MaxPHashMaxDistance) between the
 	// frame's and the golden's 64-bit pHash that still counts as a match.
 	// Only valid together with Golden; nil means DefaultPHashMaxDistance.
 	PHashMaxDistance *int `yaml:"phash_max_distance,omitempty" json:"phash_max_distance,omitempty"`
 
 	// Recognize lists tokens that MUST appear, as whole words after
-	// normalisation (lower-case, punctuation folded to spaces), in an
-	// expectation-BLIND description of the frame produced by the vision
-	// model. The tokens are never sent to the model. Setting it gates the
-	// step and requires a vision model.
+	// normalisation (lower-case, punctuation folded to spaces), in the TEXT:
+	// transcription section of an expectation-BLIND reading of the frame by
+	// the vision model — never in the model's own prose. The tokens are
+	// never sent to the model; the heading words "text"/"description" are
+	// refused. Setting it gates the step and requires a vision model.
 	Recognize []string `yaml:"recognize,omitempty" json:"recognize,omitempty"`
 
-	// Forbid lists tokens that MUST NOT appear in that same blind
-	// description (e.g. an error banner). Same matching rules as
-	// Recognize; setting it gates the step and requires a vision model.
+	// Forbid lists tokens that MUST NOT appear in that same TEXT:
+	// transcription (e.g. an error banner; a description saying "no error
+	// is visible" does not count). Same matching rules as Recognize; it is
+	// negative evidence only, so it must be paired with vision_verify,
+	// recognize or golden. Setting it gates the step.
 	Forbid []string `yaml:"forbid,omitempty" json:"forbid,omitempty"`
 
 	// ExpectChange declares that the action must visibly change the
 	// screen: an after-frame that does not differ from the before-frame
-	// FAILS the step, and an unusable before-frame makes it BLOCKED.
-	// Setting it gates the step (no vision model needed).
+	// FAILS the step; an unusable before-frame, or frames of different
+	// dimensions, make it BLOCKED. "Something changed" is not evidence of
+	// the expected screen, so it must be paired with vision_verify,
+	// recognize or golden. Setting it gates the step.
 	ExpectChange bool `yaml:"expect_change,omitempty" json:"expect_change,omitempty"`
 
 	// Body is the HTTP request body for ActionTypeHTTP. Strings
@@ -606,6 +624,23 @@ func (st *TestStep) validateShellAssertions(caseID string, idx int) string {
 // ~32 bits two unrelated frames differ by).
 const DefaultPHashMaxDistance = 8
 
+// MaxPHashMaxDistance caps phash_max_distance: two unrelated frames differ
+// by ~32 of 64 bits, so a tolerance above 16 would accept a different screen.
+const MaxPHashMaxDistance = 16
+
+// visionHeadingWords are the section headings of the transcription prompt
+// (TEXT: / DESCRIPTION:). The model writes them on every reply, so they can
+// never be recognize/forbid tokens.
+var visionHeadingWords = map[string]bool{"text": true, "description": true}
+
+// HasPositiveVisionCheck reports whether the step asks for positive
+// evidence of the expected screen (vision_verify, recognize or golden), as
+// opposed to only negative evidence (forbid) or "something changed"
+// (expect_change).
+func (st TestStep) HasPositiveVisionCheck() bool {
+	return st.VisionVerify || len(st.Recognize) > 0 || st.Golden != ""
+}
+
 // NeedsVisionModel reports whether the step's verdict requires a vision
 // model's answer (vision_verify, recognize or forbid).
 func (st TestStep) NeedsVisionModel() bool {
@@ -654,9 +689,23 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 			return fmt.Sprintf("test case %s step %d: phash_max_distance without golden — "+
 				"there is no reference to measure the distance to", caseID, idx)
 		}
-		if d := *st.PHashMaxDistance; d < 0 || d > 64 {
-			return fmt.Sprintf("test case %s step %d: phash_max_distance %d is outside 0..64 "+
-				"(a 64-bit pHash)", caseID, idx, d)
+		if d := *st.PHashMaxDistance; d < 0 || d > MaxPHashMaxDistance {
+			return fmt.Sprintf("test case %s step %d: phash_max_distance %d is outside 0..%d "+
+				"(two unrelated frames differ by ~32 of 64 bits; a wider tolerance would "+
+				"accept a different screen)", caseID, idx, d, MaxPHashMaxDistance)
+		}
+	}
+	if st.IsVisionGated() {
+		if kind, _ := st.ParseAction(); kind.IsNonScreen() {
+			return fmt.Sprintf("test case %s step %d: vision keys (vision_verify, recognize, forbid, "+
+				"golden, expect_change) are only meaningful on a screen action, but this step's "+
+				"action is %q — its verdict is its own exit code / response, not the screen",
+				caseID, idx, string(kind))
+		}
+		if !st.HasPositiveVisionCheck() {
+			return fmt.Sprintf("test case %s step %d: expect_change / forbid alone is not a positive "+
+				"check — any change (a crash dialog included) or any screen without the forbidden "+
+				"text would pass; add vision_verify, recognize or golden", caseID, idx)
 		}
 	}
 	if st.Golden != "" {
@@ -673,6 +722,10 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 			return fmt.Sprintf("test case %s step %d: recognize token %q is empty after "+
 				"normalisation — it would match every description", caseID, idx, tok)
 		}
+		if visionHeadingWords[k] {
+			return fmt.Sprintf("test case %s step %d: recognize token %q is a heading word of the "+
+				"transcription prompt — the model writes it whatever the screen shows", caseID, idx, tok)
+		}
 		recognized[k] = true
 	}
 	for _, tok := range st.Forbid {
@@ -680,6 +733,10 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 		if k == "" {
 			return fmt.Sprintf("test case %s step %d: forbid token %q is empty after "+
 				"normalisation — it would forbid every description", caseID, idx, tok)
+		}
+		if visionHeadingWords[k] {
+			return fmt.Sprintf("test case %s step %d: forbid token %q is a heading word of the "+
+				"transcription prompt — the model writes it whatever the screen shows", caseID, idx, tok)
 		}
 		if recognized[k] {
 			return fmt.Sprintf("test case %s step %d: token %q is both recognized and "+

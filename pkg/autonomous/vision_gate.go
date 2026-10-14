@@ -12,6 +12,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"digital.vasic.helixqa/pkg/testbank"
@@ -26,7 +27,8 @@ const EnvGoldensDir = "HELIXQA_GOLDENS_DIR"
 // recognize/forbid tokens, so the model cannot parrot them back.
 const blindDescribePrompt = "Describe what this screenshot shows.\n" +
 	"First, under the heading TEXT:, transcribe every piece of text that is " +
-	"visible on the screen, verbatim, one item per line.\n" +
+	"visible on the screen, verbatim, one item per line. If no text is visible, " +
+	"leave the TEXT: section empty.\n" +
 	"Then, under the heading DESCRIPTION:, describe the layout and state of the screen in one paragraph.\n" +
 	"Report only what is visible; do not infer or guess anything that is not shown."
 
@@ -45,15 +47,55 @@ func framePHash(b []byte) (uint64, error) {
 	return hash.PHasher{}.Hash(img)
 }
 
-// isNonScreenAction reports actions whose verdict is their own
-// deterministic check (exit code, HTTP response). A screenshot says
-// nothing about them, so a non-gated one never consults the model.
-func isNonScreenAction(t testbank.ActionType) bool {
-	switch t {
-	case testbank.ActionTypeShell, testbank.ActionTypeHTTP, testbank.ActionTypeAssert:
-		return true
+// transcriptionHeadRe / descriptionHeadRe locate the two sections the
+// blind prompt asks for.
+var (
+	transcriptionHeadRe = regexp.MustCompile(`(?i)^[ \t*#_-]*TEXT[ \t*_]*:(.*)$`)
+	descriptionHeadRe   = regexp.MustCompile(`(?i)^[ \t*#_-]*DESCRIPTION[ \t*_]*:`)
+)
+
+// extractTranscription returns the TEXT: section of a blind reply — the
+// verbatim on-screen text — and whether the section exists. Only this
+// section is evidence of what is ON the screen; the DESCRIPTION is the
+// model's own prose ("the Settings screen is not shown", "no error is
+// visible") and must never satisfy recognize or trip forbid.
+func extractTranscription(reply string) (string, bool) {
+	var b strings.Builder
+	found := false
+	for _, line := range strings.Split(reply, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if !found {
+			if m := transcriptionHeadRe.FindStringSubmatch(line); m != nil {
+				found = true
+				b.WriteString(m[1])
+				b.WriteByte('\n')
+			}
+			continue
+		}
+		if descriptionHeadRe.MatchString(line) {
+			break
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
 	}
-	return false
+	return b.String(), found
+}
+
+// compareFrames decides whether two decodable frames differ. Frames that
+// cannot be decoded or have different dimensions are NOT comparable: the
+// caller must treat that as could-not-determine, never as "changed".
+func compareFrames(a, b []byte) (changed bool, pct float64, err error) {
+	ia, _, errA := image.Decode(bytes.NewReader(a))
+	ib, _, errB := image.Decode(bytes.NewReader(b))
+	if errA != nil || errB != nil {
+		return false, 0, fmt.Errorf("frames not decodable (before: %v, after: %v)", errA, errB)
+	}
+	if ia.Bounds().Dx() != ib.Bounds().Dx() || ia.Bounds().Dy() != ib.Bounds().Dy() {
+		return false, 0, fmt.Errorf("frames not comparable: before %dx%d, after %dx%d",
+			ia.Bounds().Dx(), ia.Bounds().Dy(), ib.Bounds().Dx(), ib.Bounds().Dy())
+	}
+	changed, pct = framesDiffer(a, b)
+	return changed, pct, nil
 }
 
 // goldensDir resolves where `golden: <id>` images live.
@@ -166,7 +208,12 @@ func (ste *StructuredTestExecutor) judgeStep(
 			block("expect_change: no usable before-action frame to compare against")
 			return
 		}
-		if changed, pct := framesDiffer(before, frame); !changed {
+		changed, pct, cmpErr := compareFrames(before, frame)
+		if cmpErr != nil {
+			block("expect_change: " + cmpErr.Error())
+			return
+		}
+		if !changed {
 			refute(fmt.Sprintf("expect_change: the screen did not change (%.1f%% of sampled points differ; before sha256:%s)",
 				pct, r.BeforeFrameSHA256[:12]))
 			return
@@ -215,7 +262,12 @@ func (ste *StructuredTestExecutor) judgeStep(
 				return
 			}
 			r.VisionDescription = desc
-			missing, forbidden := matchVisionTokens(desc, step.Recognize, step.Forbid)
+			transcript, ok := extractTranscription(desc)
+			if !ok {
+				block("blind reply has no TEXT: transcription section — on-screen text cannot be told apart from the model's prose")
+				return
+			}
+			missing, forbidden := matchVisionTokens(transcript, step.Recognize, step.Forbid)
 			if len(forbidden) > 0 {
 				refute(fmt.Sprintf("forbidden token(s) present: %s", strings.Join(forbidden, ", ")))
 				return
@@ -246,8 +298,15 @@ func (ste *StructuredTestExecutor) judgeStep(
 		return
 	}
 	r.Passed = true
-	r.VisionStatus = VisionVerified
 	r.VisionReason = strings.Join(notes, "; ")
+	if !step.HasPositiveVisionCheck() {
+		// expect_change / forbid alone: something changed, nothing
+		// forbidden was read — not evidence of the EXPECTED screen.
+		r.VisionStatus = VisionUnverified
+		r.Actual = act.Message + " | UNVERIFIED-by-vision: no positive content check (" + r.VisionReason + ") " + cite()
+		return
+	}
+	r.VisionStatus = VisionVerified
 	r.Actual = "VISION-VERIFIED: " + r.VisionReason + " " + cite()
 }
 
@@ -266,7 +325,7 @@ func (ste *StructuredTestExecutor) judgeAdvisory(
 	r *TestStepResult,
 ) {
 	r.Passed = true
-	if isNonScreenAction(kind) {
+	if kind.IsNonScreen() {
 		r.VisionStatus, r.VisionReason = VisionNotRequested, "non-screen action judged by its own check"
 		r.Actual = act.Message
 		return

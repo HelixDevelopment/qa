@@ -357,7 +357,7 @@ func TestNoBluffVision_RecognizeForbidTokens(t *testing.T) {
 	yes := "VERIFIED: yes\nACTUAL: login form"
 
 	// Golden-good: tokens present after normalisation (case, punctuation, spacing).
-	fv := &fakeVision{verify: yes, blind: "A form titled SIGN-IN!  Fields: e-mail, password; button 'Continue'."}
+	fv := &fakeVision{verify: yes, blind: "TEXT:\nSIGN-IN!\nE-mail\npassword;\nContinue\nDESCRIPTION: A login form with two fields and a button."}
 	ste, _ := newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	r := run(ste, step())
 	if !r.Passed {
@@ -383,14 +383,14 @@ func TestNoBluffVision_RecognizeForbidTokens(t *testing.T) {
 	}
 
 	// Golden-bad: missing token fails.
-	fv = &fakeVision{verify: yes, blind: "A form titled Sign in with a username field."}
+	fv = &fakeVision{verify: yes, blind: "TEXT:\nSign in\nUsername\nDESCRIPTION: A form with a password-free login."}
 	ste, _ = newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	if r = run(ste, step()); r.Passed || r.Blocked || !strings.Contains(r.Actual, "password") {
 		t.Fatalf("missing recognize token not a FAIL naming it: %+v", r)
 	}
 
 	// Golden-bad: forbidden token fails even when VERIFIED: yes.
-	fv = &fakeVision{verify: yes, blind: "Sign in form. Password field. Red banner: Error 500."}
+	fv = &fakeVision{verify: yes, blind: "TEXT:\nSign in\nPassword\nError 500\nDESCRIPTION: A form with a red banner."}
 	ste, _ = newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	if r = run(ste, step()); r.Passed || !strings.Contains(r.Actual, "error") {
 		t.Fatalf("forbidden token not a FAIL: %+v", r)
@@ -399,7 +399,7 @@ func TestNoBluffVision_RecognizeForbidTokens(t *testing.T) {
 	// Carrier decoy: a token is matched as a word, not a substring
 	// ("Errors" / "terror" must not trip forbid "Error"... but whole-word
 	// "error" must).
-	fv = &fakeVision{verify: yes, blind: "Sign in. Password. Terrorist-free zone; ErrorsList widget."}
+	fv = &fakeVision{verify: yes, blind: "TEXT:\nSign in\nPassword\nTerrorist-free zone\nErrorsList\nDESCRIPTION: A list widget."}
 	ste, _ = newSTE(fv, noisePNG(t, 1), noisePNG(t, 2))
 	if r = run(ste, step()); !r.Passed {
 		t.Fatalf("substring decoy tripped the forbid check: %+v", r)

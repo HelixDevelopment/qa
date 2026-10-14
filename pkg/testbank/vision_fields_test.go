@@ -99,8 +99,8 @@ func TestVisionFields_LoadTimeRejectsVacuousAssertions(t *testing.T) {
 		want string
 	}{
 		{"phash without golden", TestStep{Action: "sleep: 1", PHashMaxDistance: &ok}, "phash_max_distance"},
-		{"phash negative", TestStep{Action: "sleep: 1", Golden: "g", PHashMaxDistance: &neg}, "0..64"},
-		{"phash too big", TestStep{Action: "sleep: 1", Golden: "g", PHashMaxDistance: &big}, "0..64"},
+		{"phash negative", TestStep{Action: "sleep: 1", Golden: "g", PHashMaxDistance: &neg}, "0..16"},
+		{"phash too big", TestStep{Action: "sleep: 1", Golden: "g", PHashMaxDistance: &big}, "0..16"},
 		{"empty recognize token", TestStep{Action: "sleep: 1", Recognize: []string{"ok", "  "}}, "recognize"},
 		{"empty forbid token", TestStep{Action: "sleep: 1", Forbid: []string{""}}, "forbid"},
 		{"punctuation-only token", TestStep{Action: "sleep: 1", Recognize: []string{"!!"}}, "recognize"},
@@ -124,6 +124,58 @@ func TestVisionFields_LoadTimeRejectsVacuousAssertions(t *testing.T) {
 	}}}
 	if msg := good.IsValid(); msg != "" {
 		t.Fatalf("valid vision step rejected: %s", msg)
+	}
+}
+
+// TestVisionFields_ReviewLoadRules pins the load-time rules added after the
+// independent review: findings 4 (heading-word tokens), 5 (pHash cap,
+// expect_change / forbid need a positive check) and 9 (vision keys only on
+// screen actions).
+func TestVisionFields_ReviewLoadRules(t *testing.T) {
+	d16, d17 := 16, 17
+	bad := []struct {
+		name string
+		st   TestStep
+		want string
+	}{
+		{"phash 17 above cap", TestStep{Action: "screenshot", Golden: "g", PHashMaxDistance: &d17}, "0..16"},
+		{"recognize heading word Text", TestStep{Action: "screenshot", VisionVerify: true, Recognize: []string{"Text"}}, "heading"},
+		{"forbid heading word Description", TestStep{Action: "screenshot", VisionVerify: true, Forbid: []string{"description:"}}, "heading"},
+		{"expect_change alone", TestStep{Action: "keypress: X", ExpectChange: true}, "positive"},
+		{"forbid alone", TestStep{Action: "screenshot", Forbid: []string{"Error"}}, "positive"},
+		{"vision_verify on shell", TestStep{Action: "shell: true", VisionVerify: true}, "screen"},
+		{"recognize on http", TestStep{Action: "http: GET /x", ExpectStatus: 200, Recognize: []string{"ok"}}, "screen"},
+		{"golden on assert", TestStep{Action: "assert: status_eq: 200", Golden: "g"}, "screen"},
+	}
+	for _, c := range bad {
+		tc := TestCase{ID: "TC-R", Name: "r", Steps: []TestStep{c.st}}
+		msg := tc.IsValid()
+		if msg == "" || !strings.Contains(msg, c.want) {
+			t.Errorf("%s: IsValid = %q, want a refusal mentioning %q", c.name, msg, c.want)
+		}
+	}
+	good := []TestStep{
+		{Action: "screenshot", Golden: "g", PHashMaxDistance: &d16},
+		{Action: "keypress: X", ExpectChange: true, VisionVerify: true},
+		{Action: "keypress: X", ExpectChange: true, Golden: "g"},
+		{Action: "screenshot", Forbid: []string{"Error"}, Recognize: []string{"Settings"}},
+		{Action: "sleep: 100", VisionVerify: true},
+	}
+	for i, st := range good {
+		tc := TestCase{ID: "TC-G", Name: "g", Steps: []TestStep{st}}
+		if msg := tc.IsValid(); msg != "" {
+			t.Errorf("good[%d] refused: %s", i, msg)
+		}
+	}
+	for _, k := range []ActionType{ActionTypeShell, ActionTypeHTTP, ActionTypeAssert} {
+		if !k.IsNonScreen() {
+			t.Errorf("%s must be a non-screen action", k)
+		}
+	}
+	for _, k := range []ActionType{ActionTypeScreenshot, ActionTypeSleep, ActionTypeKeyPress, ActionTypeTap} {
+		if k.IsNonScreen() {
+			t.Errorf("%s must be a screen action", k)
+		}
 	}
 }
 
