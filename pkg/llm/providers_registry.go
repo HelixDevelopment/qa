@@ -90,6 +90,7 @@ var ProviderEnvKeys = map[string]string{
 	"zen":              "ZEN_API_KEY",
 	"zhipu":            "ZHIPU_API_KEY",
 	ProviderOllama:     "HELIX_OLLAMA_URL",
+	ProviderLlmctl:     "LLMCTL_VISION_URL",
 	"stepfun":          "STEPFUN_API_KEY",
 	"astica":           "ASTICA_API_KEY",
 }

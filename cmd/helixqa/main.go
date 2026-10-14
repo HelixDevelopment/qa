@@ -598,6 +598,7 @@ func cmdAutonomous(args []string) {
 		llm.ProviderOpenAI:    true,
 		llm.ProviderGoogle:    true,
 		llm.ProviderOllama:    true,
+		llm.ProviderLlmctl:    true, // local llmctl `vision` profile
 		"astica":              true,
 		"qwen":                true,
 		"kimi":                true,
@@ -621,6 +622,15 @@ func cmdAutonomous(args []string) {
 				Name:    providerName,
 				BaseURL: val,
 				Model:   os.Getenv("HELIX_OLLAMA_MODEL"),
+			}
+		} else if providerName == llm.ProviderLlmctl {
+			// llmctl vision is a loopback engine: the value is
+			// its URL (e.g. http://127.0.0.1:8082) and the model
+			// id, when set, is the PINNED model that must be served.
+			cfg = llm.ProviderConfig{
+				Name:    providerName,
+				BaseURL: val,
+				Model:   os.Getenv("LLMCTL_VISION_MODEL"),
 			}
 		} else {
 			cfg = llm.ProviderConfig{

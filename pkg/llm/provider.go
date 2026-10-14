@@ -23,6 +23,8 @@ const (
 	ProviderOpenRouter = "openrouter"
 	ProviderDeepSeek   = "deepseek"
 	ProviderGroq       = "groq"
+	// ProviderLlmctl is the local llmctl `vision` profile (port 8082).
+	ProviderLlmctl = "llmctl"
 )
 
 // Role constants define the participant roles in a conversation.
@@ -123,6 +125,10 @@ func (c ProviderConfig) Validate() error {
 		return fmt.Errorf("llm: provider config name is required")
 	}
 	switch c.Name {
+	case ProviderLlmctl:
+		// Loopback engine: base_url defaults to http://127.0.0.1:8082
+		// and no API key exists.
+		return nil
 	case ProviderOllama, ProviderUITars:
 		if c.BaseURL == "" {
 			return fmt.Errorf(
