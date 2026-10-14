@@ -100,8 +100,6 @@ func TestNoBluffVision_DescriptionProseNeverMatches(t *testing.T) {
 		{"(no search bar visible) as prose", `{"texts":["Settings"],"description":"(no search bar visible)"}`, []string{"search bar"}, nil, false},
 		{"(No error messages visible) as prose", `{"texts":["Settings"],"description":"(No error messages visible)"}`, []string{"Settings"}, []string{"Error"}, true},
 		{"forbid in texts fails", `{"texts":["Settings","Error 500"],"description":"banner"}`, []string{"Settings"}, []string{"Error"}, false},
-		{"empty texts", `{"texts":[],"description":"Login screen"}`, []string{"Login"}, nil, false},
-		{"filler-only texts", `{"texts":["(none)","N/A"],"description":"blank"}`, []string{"Settings"}, []string{"none"}, false},
 	}
 	for _, c := range cases {
 		ste, _ := newSTE(&fakeVision{blind: c.reply}, noisePNG(t, 1), noisePNG(t, 2))
@@ -109,6 +107,17 @@ func TestNoBluffVision_DescriptionProseNeverMatches(t *testing.T) {
 		if r.Passed != c.pass || r.Blocked {
 			t.Errorf("%s: passed=%v blocked=%v (want pass=%v, not blocked) actual=%q", c.name, r.Passed, r.Blocked, c.pass, r.Actual)
 		}
+	}
+	// A reading with no screen text (empty, filler only) cannot carry a
+	// token verdict either way, whatever its description says: BLOCKED
+	// (review round 5, finding 3 — it used to be REFUTED for recognize and,
+	// for forbid alone, "absent").
+	for name, reply := range map[string]string{
+		"empty texts":       `{"texts":[],"description":"Login screen"}`,
+		"filler-only texts": `{"texts":["(none)","N/A"],"description":"blank"}`,
+	} {
+		ste, _ := newSTE(&fakeVision{blind: reply}, noisePNG(t, 1), noisePNG(t, 2))
+		requireBlocked(t, run(ste, recStep([]string{"Login"}, []string{"Error"})), name)
 	}
 }
 

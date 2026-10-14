@@ -330,11 +330,19 @@ type TestStep struct {
 	// refused. Setting it gates the step and requires a vision model.
 	Recognize []string `yaml:"recognize,omitempty" json:"recognize,omitempty"`
 
-	// RecognizeExact switches recognize to exact-element mode: each token
+	// RecognizeExact states the DEFAULT explicitly: each recognize token
 	// must EQUAL one whole "texts" element (after normalisation), not just
 	// appear inside one — so commentary such as "(no Login button visible)"
-	// cannot satisfy recognize [Login]. Only valid together with Recognize.
+	// cannot satisfy recognize [Login]. Only valid together with Recognize;
+	// contradicts RecognizeContains.
 	RecognizeExact bool `yaml:"recognize_exact,omitempty" json:"recognize_exact,omitempty"`
+
+	// RecognizeContains opts OUT of exact-element matching: a token then
+	// matches when it appears as whole words INSIDE one element. Negations
+	// and commentary inside an element ("Login not visible") then satisfy
+	// recognize — use it only for tokens that are part of longer on-screen
+	// strings. Only valid together with Recognize.
+	RecognizeContains bool `yaml:"recognize_contains,omitempty" json:"recognize_contains,omitempty"`
 
 	// Forbid lists tokens that MUST NOT appear in any "texts" element
 	// (e.g. an error banner; a "description" saying "no error is visible"
@@ -671,6 +679,11 @@ func (st TestStep) IsVisionGated() bool {
 	return st.NeedsVisionModel() || st.Golden != "" || st.ExpectChange
 }
 
+// ExactRecognize reports whether recognize tokens must equal a whole
+// transcription element (the default) rather than appear inside one
+// (recognize_contains).
+func (st TestStep) ExactRecognize() bool { return !st.RecognizeContains }
+
 // EffectivePHashMaxDistance returns the golden-match tolerance in bits.
 func (st TestStep) EffectivePHashMaxDistance() int {
 	if st.PHashMaxDistance != nil {
@@ -684,14 +697,15 @@ func (st TestStep) EffectivePHashMaxDistance() int {
 // non-letter/non-digit characters collapsed to one space, trimmed.
 func VisionTokenKey(s string) string {
 	// NFKC folds compatibility forms (fullwidth, ligatures, mathematical
-	// alphanumerics) to their plain letters, and format characters
-	// (zero-width space / joiner, BOM, soft hyphen — Unicode Cf) are
-	// dropped, so neither can split or disguise a token.
+	// alphanumerics) to their plain letters; format characters (zero-width
+	// space / joiner, BOM, soft hyphen, tags — Unicode Cf) and the other
+	// default-ignorable / variation-selector code points (isInvisibleNonFormat)
+	// are dropped, so none can split or disguise a token.
 	s = norm.NFKC.String(s)
 	var b strings.Builder
 	space := false
 	for _, r := range strings.ToLower(s) {
-		if unicode.Is(unicode.Cf, r) {
+		if unicode.Is(unicode.Cf, r) || isInvisibleNonFormat(r) {
 			continue
 		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
@@ -705,6 +719,16 @@ func VisionTokenKey(s string) string {
 		space = true
 	}
 	return b.String()
+}
+
+// isInvisibleNonFormat reports the invisible code points OUTSIDE Unicode
+// Cf that would otherwise split or disguise a token: the
+// Other_Default_Ignorable_Code_Point set (combining grapheme joiner U+034F,
+// Hangul fillers U+115F / U+1160 / U+3164 / U+FFA0 — letters, so not
+// separators either — Khmer U+17B4 / U+17B5) and the Variation_Selector set
+// (U+FE00..U+FE0F, U+E0100..U+E01EF, Mongolian U+180B..).
+func isInvisibleNonFormat(r rune) bool {
+	return unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r)
 }
 
 // validateVisionAssertions refuses vision keys that would assert nothing
@@ -749,6 +773,14 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 	if st.RecognizeExact && len(st.Recognize) == 0 {
 		return fmt.Sprintf("test case %s step %d: recognize_exact without recognize — "+
 			"there is no token to match exactly", caseID, idx)
+	}
+	if st.RecognizeContains && len(st.Recognize) == 0 {
+		return fmt.Sprintf("test case %s step %d: recognize_contains without recognize — "+
+			"there is no token to match", caseID, idx)
+	}
+	if st.RecognizeContains && st.RecognizeExact {
+		return fmt.Sprintf("test case %s step %d: recognize_contains and recognize_exact "+
+			"contradict each other — set at most one", caseID, idx)
 	}
 	recognized := map[string]bool{}
 	for _, tok := range st.Recognize {

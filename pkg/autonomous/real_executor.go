@@ -4,6 +4,7 @@
 package autonomous
 
 import (
+	"context"
 	"fmt"
 
 	"digital.vasic.helixqa/pkg/detector"
@@ -48,6 +49,19 @@ type RealExecutorConfig struct {
 type RealExecutorFactory struct {
 	config RealExecutorConfig
 	cache  map[string]navigator.ActionExecutor
+	// runner runs the reachability probe's host commands (nil = os/exec).
+	runner detector.CommandRunner
+}
+
+// Probe checks, once per platform (StructuredTestExecutor caches it), that
+// the configured device / display / browser answers — see
+// probePlatformReachable.
+func (f *RealExecutorFactory) Probe(ctx context.Context, platform string) error {
+	runner := f.runner
+	if runner == nil {
+		runner = detector.NewExecRunner()
+	}
+	return probePlatformReachable(ctx, platform, f.config.AndroidDevice, runner, f.Create)
 }
 
 // NewRealExecutorFactory creates a RealExecutorFactory with the

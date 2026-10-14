@@ -103,7 +103,9 @@ func TestNoBluffVision_BlindReplyLimits(t *testing.T) {
 			t.Errorf("%s: passed=%v blocked=%v — must be unusable", name, r.Passed, r.Blocked)
 		}
 	}
-	// Golden-good at the limits.
+	// Golden-good at the limits (recognize_contains: the token is part of
+	// the longer element).
+	st.RecognizeContains = true
 	if r := blindRun(t, `{"texts":["Login `+strings.Repeat("a", maxBlindTextLen-6)+`"],"description":"x"}`, st); !r.Passed {
 		t.Errorf("element at the length cap rejected: %q", r.Actual)
 	}
@@ -129,9 +131,17 @@ func TestNoBluffVision_RecognizeExactElement(t *testing.T) {
 	if r := blindRun(t, `{"texts":["Settings","LOGIN"],"description":"x"}`, exact); !r.Passed {
 		t.Fatalf("exact mode missed a whole element: %q", r.Actual)
 	}
-	// Without exact mode the same commentary matches (documented residual).
-	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, recStep([]string{"Login"}, nil)); !r.Passed {
-		t.Fatalf("non-exact residual changed: %q", r.Actual)
+	// Exact is now the default (round 5, finding 10): the same commentary
+	// does not match a plain recognize either.
+	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, recStep([]string{"Login"}, nil)); r.Passed || r.Blocked {
+		t.Fatalf("default recognize matched commentary: %q", r.Actual)
+	}
+	// With the recognize_contains opt-in the commentary matches
+	// (documented residual of that mode).
+	contains := recStep([]string{"Login"}, nil)
+	contains.RecognizeContains = true
+	if r := blindRun(t, `{"texts":["Settings","(no Login button visible)"],"description":"x"}`, contains); !r.Passed {
+		t.Fatalf("recognize_contains residual changed: %q", r.Actual)
 	}
 }
 

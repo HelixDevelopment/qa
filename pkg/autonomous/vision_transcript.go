@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -140,9 +141,52 @@ func strictStringArray(raw json.RawMessage) ([]string, error) {
 		if strings.IndexFunc(v, unicode.IsControl) >= 0 {
 			return nil, fmt.Errorf("%w: a \"texts\" element contains a line break or control character (one element per UI element)", errBlindReply)
 		}
+		if strings.IndexFunc(v, isLineOrParagraphSeparator) >= 0 {
+			return nil, fmt.Errorf("%w: a \"texts\" element contains a line / paragraph separator U+2028 / U+2029 (one element per UI element)", errBlindReply)
+		}
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// isLineOrParagraphSeparator reports U+2028 / U+2029 (Unicode Zl / Zp):
+// line breaks that unicode.IsControl does not cover.
+func isLineOrParagraphSeparator(r rune) bool {
+	return unicode.In(r, unicode.Zl, unicode.Zp)
+}
+
+// modelStatementRe matches a normalised (testbank.VisionTokenKey) element
+// that is the MODEL talking — a refusal or a statement about the image —
+// rather than text written on the screen.
+var modelStatementRe = regexp.MustCompile(`^(i m sorry|i am sorry|sorry i|as an ai|as a language model|` +
+	`i (cannot|can t|can not|could not|couldn t|am unable to|m unable to|am not able to|m not able to|do not|don t) ` +
+	`(see|read|view|determine|identify|make out|help|assist|process|analy[sz]e|interpret|transcribe|tell|access the image)|` +
+	`(unable to|cannot|can t) (read|see|view|determine|identify|make out|process|analy[sz]e|interpret|transcribe) ` +
+	`((the|this|any) )?(image|screenshot|text|screen|picture)|` +
+	`(the|this) (image|screenshot|picture) (is|shows|appears|contains|does))( |$)`)
+
+// transcriptUsable decides whether a strict-parsed transcription can carry
+// a token verdict at all. It cannot when it holds no screen text (empty, or
+// "no text" filler only — then a forbidden token's absence and a recognized
+// token's presence are equally undeterminable), or when any element is the
+// model talking (a refusal or a remark about the image): such a reading did
+// not transcribe the screen, so nothing it lacks is "absent".
+func transcriptUsable(texts []string) error {
+	screenText := 0
+	for _, t := range texts {
+		k := testbank.VisionTokenKey(t)
+		if k == "" || testbank.IsVisionFiller(k) {
+			continue
+		}
+		if modelStatementRe.MatchString(k) {
+			return fmt.Errorf("transcription element %q is a refusal / remark by the model, not screen text — the reading is unusable", t)
+		}
+		screenText++
+	}
+	if screenText == 0 {
+		return errors.New("transcription holds no screen text (empty or filler only) — whether a token is present or absent cannot be determined")
+	}
+	return nil
 }
 
 // stripSingleFence returns the content of a reply that is exactly one

@@ -272,8 +272,10 @@ type PipelineResult struct {
 // ExitCode is the process exit status for this session, on the
 // three-valued contract: 1 when the session failed or a structured case
 // FAILED; 2 when a structured case was BLOCKED (could not determine), when
-// structured cases ran but none passed, or when the structured phase could
-// not run its banks; 0 otherwise. A finding (1) outranks could-not-determine
+// structured cases ran but none passed, when the session itself was
+// BLOCKED (preflight network / VPN, provider outage in learn / plan, a
+// timeout), or when the structured phase could not run its banks; 0
+// otherwise. A finding (1) outranks could-not-determine
 // (2). A session whose structured phase ran no case makes no structured
 // claim and is judged on its other phases alone.
 func (r *PipelineResult) ExitCode() int {
@@ -285,6 +287,11 @@ func (r *PipelineResult) ExitCode() int {
 			return c
 		}
 	}
+	if r.Status == StatusBlocked {
+		// The session stopped for an environment reason (network / VPN,
+		// provider outage, timeout) — could not determine.
+		return 2
+	}
 	if r.StructuredError != "" {
 		return 2
 	}
@@ -294,8 +301,11 @@ func (r *PipelineResult) ExitCode() int {
 // SessionPipeline orchestrates the four-phase autonomous QA
 // pipeline: learn, plan, execute, analyze.
 type SessionPipeline struct {
-	config   *PipelineConfig
-	provider llm.Provider
+	// preflight replaces preflightCheck when set (tests inject the
+	// network outcome instead of depending on the host's DNS).
+	preflight func(context.Context) error
+	config    *PipelineConfig
+	provider  llm.Provider
 	// chatProvider is used for reasoning-heavy phases (Plan,
 	// Analyze report generation). When nil, falls back to the
 	// shared provider.
@@ -680,8 +690,11 @@ func (sp *SessionPipeline) Run(
 	// regardless of which return statement fires.
 	defer func() {
 		v := conduit.VerdictPass
-		if result.Status == StatusFailed {
+		switch result.Status {
+		case StatusFailed:
 			v = conduit.VerdictFail
+		case StatusBlocked:
+			v = conduit.VerdictOperatorBlocked
 		}
 		conduit.SessionEnd(sp.sink(), sessionID, v,
 			fmt.Sprintf("status=%s", result.Status))
@@ -691,8 +704,14 @@ func (sp *SessionPipeline) Run(
 	// Fail fast with a clear message if Mullvad or another
 	// VPN is actively blocking DNS. This prevents cryptic
 	// "all providers failed" errors later in the plan phase.
-	if err := sp.preflightCheck(ctx); err != nil {
-		result.Status = StatusFailed
+	preflight := sp.preflightCheck
+	if sp.preflight != nil {
+		preflight = sp.preflight
+	}
+	if err := preflight(ctx); err != nil {
+		// The network / VPN is not usable: nothing about the app was
+		// judged — BLOCKED (exit 2), never a FAILED verdict.
+		result.Status = StatusBlocked
 		result.Error = err.Error()
 		result.Duration = time.Since(start)
 		now := time.Now()
@@ -1220,7 +1239,8 @@ func (sp *SessionPipeline) Run(
 		sp.config.ProjectRoot, sp.store,
 	)
 	if err != nil {
-		result.Status = StatusFailed
+		// The project could not be read: environment, not an app verdict.
+		result.Status = StatusBlocked
 		result.Error = fmt.Sprintf("learn phase: %v", err)
 		result.Duration = time.Since(start)
 		sp.updateSession(sessionID, result)
@@ -1312,7 +1332,8 @@ func (sp *SessionPipeline) Run(
 		ctx, kb, sp.config.Platforms,
 	)
 	if err != nil {
-		result.Status = StatusFailed
+		// Provider outage / timeout while planning: no test ran.
+		result.Status = StatusBlocked
 		result.Error = fmt.Sprintf("plan phase: %v", err)
 		result.Duration = time.Since(start)
 		sp.updateSession(sessionID, result)
@@ -1591,7 +1612,9 @@ func (sp *SessionPipeline) Run(
 					time.Millisecond,
 				),
 			)
-			result.Status = StatusFailed
+			// The session ran out of time: the remaining tests were
+			// never judged — BLOCKED, not FAILED.
+			result.Status = StatusBlocked
 			result.Error = fmt.Sprintf(
 				"context canceled during execution "+
 					"after %d/%d tests",

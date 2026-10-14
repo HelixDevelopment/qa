@@ -212,7 +212,7 @@ func (ste *StructuredTestExecutor) judgeStep(
 			r.VisionTexts = texts
 			r.VisionDescription = desc
 			r.VisionProvider = who
-			missing, forbidden := matchTokensInTexts(texts, step.Recognize, step.Forbid, step.RecognizeExact)
+			missing, forbidden := matchTokensInTexts(texts, step.Recognize, step.Forbid, step.ExactRecognize())
 			if len(forbidden) > 0 {
 				refute(fmt.Sprintf("forbidden token(s) present: %s", strings.Join(forbidden, ", ")))
 				return
@@ -326,6 +326,11 @@ func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame
 			content = resp.Content
 		}
 		t, d, perr := parseBlindReply(content)
+		if perr == nil {
+			// An empty / filler-only / refusing reading carries no
+			// verdict; ask the next provider.
+			perr = transcriptUsable(t)
+		}
 		if perr != nil {
 			tried = append(tried, p.Name()+": "+perr.Error())
 			continue

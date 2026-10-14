@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"digital.vasic.helixqa/pkg/analysis"
@@ -56,6 +57,39 @@ type StructuredTestExecutor struct {
 
 	// settleDelay is the UI settle time before each screenshot.
 	settleDelay time.Duration
+
+	// reach caches, per platform, the result of the one reachability probe
+	// (ExecutorProber) — nil entry = reachable.
+	reachMu sync.Mutex
+	reach   map[string]error
+}
+
+// ExecutorProber is implemented by factories that can check that a
+// platform's configured device / display / browser actually answers
+// (DefaultExecutorFactory does). The structured executor probes each
+// platform ONCE; when the probe fails, every step that needs the device is
+// BLOCKED (environment), never run against nothing.
+type ExecutorProber interface {
+	Probe(ctx context.Context, platform string) error
+}
+
+// probeReachable runs the factory's probe once per platform and caches it.
+func (ste *StructuredTestExecutor) probeReachable(ctx context.Context, platform string) error {
+	prober, ok := ste.execFactory.(ExecutorProber)
+	if !ok {
+		return nil
+	}
+	ste.reachMu.Lock()
+	defer ste.reachMu.Unlock()
+	if err, done := ste.reach[platform]; done {
+		return err
+	}
+	err := prober.Probe(ctx, platform)
+	if ste.reach == nil {
+		ste.reach = map[string]error{}
+	}
+	ste.reach[platform] = err
+	return err
 }
 
 // NewStructuredTestExecutor creates a new structured test executor.
@@ -204,6 +238,9 @@ func (ste *StructuredTestExecutor) executeTestCase(
 	blockedPlatform := ""
 	executedSteps := 0
 	skippedSteps := 0
+	// assertingSteps counts executed steps whose verdict rests on a real
+	// check (see stepAsserted). A case may PASS only when at least one ran.
+	assertingSteps := 0
 	var stepResults []TestStepResult
 
 	for i, step := range tc.Steps {
@@ -216,6 +253,9 @@ func (ste *StructuredTestExecutor) executeTestCase(
 			continue
 		}
 		executedSteps++
+		if stepAsserted(step, stepResult) {
+			assertingSteps++
+		}
 
 		if stepResult.Blocked {
 			// The step's outcome could not be determined. The case is
@@ -256,6 +296,18 @@ func (ste *StructuredTestExecutor) executeTestCase(
 		}
 	}
 
+	// Nothing failed, nothing was blocked — but if no ASSERTING step ran
+	// (only sleep / screenshot / prose steps, or a screenshot the model did
+	// not confirm), nothing about the app was checked: that is not a pass.
+	if !testBlocked && testPassed && assertingSteps == 0 && !(executedSteps == 0 && skippedSteps > 0) {
+		testBlocked = true
+		blockedReason = fmt.Sprintf("no asserting step ran (%d executed: sleep / screenshot / prose steps "+
+			"or screens no model confirmed; %d skipped) — nothing about the app was checked", executedSteps, skippedSteps)
+		if len(tc.Steps) > 0 {
+			blockedPlatform = ste.getPlatformForStep(tc.Steps[0])
+		}
+	}
+
 	caseRec := StructuredCaseResult{ID: tc.ID, Name: tc.Name, Steps: stepResults}
 	defer func() { result.Cases = append(result.Cases, caseRec) }()
 
@@ -284,9 +336,9 @@ func (ste *StructuredTestExecutor) executeTestCase(
 				tc.ID, blockedReason,
 			),
 			Platform: blockedPlatform,
-			AcceptanceCriteria: "Every vision-gated step obtains a usable, " +
-				"frame-bound verdict (vision provider reachable and answering " +
-				"in the required format, non-blank frames, goldens present).",
+			AcceptanceCriteria: "Every step obtains a determined verdict (device / display / " +
+				"backend reachable, vision provider answering in the required format, " +
+				"non-blank frames, goldens present) and at least one asserting step runs.",
 		}
 		result.Findings = append(result.Findings, finding)
 		if ste.onFinding != nil {
@@ -348,6 +400,12 @@ func (ste *StructuredTestExecutor) executeStep(
 
 	// Get executor for platform
 	executor, err := ste.execFactory.Create(platform)
+	unreachable := false
+	if err == nil {
+		if perr := ste.probeReachable(ctx, platform); perr != nil {
+			executor, err, unreachable = nil, perr, true
+		}
+	}
 	if err != nil && isHostOnlyStep(step) {
 		// shell: / http: / assert: / sleep: run on the host and decide on
 		// their own; a missing device must not hide their real verdict.
@@ -358,8 +416,12 @@ func (ste *StructuredTestExecutor) executeStep(
 		// defect — BLOCKED (filed as an environment finding).
 		result.Blocked = true
 		result.VisionGated = step.IsVisionGated()
+		what := "executor could not be created"
+		if unreachable {
+			what = "device / display is unreachable (probed once)"
+		}
 		result.Actual = fmt.Sprintf(
-			"BLOCKED (could not determine): executor could not be created for %q: %v", platform, err,
+			"BLOCKED (could not determine): %s for %q: %v", what, platform, err,
 		)
 		return result
 	}
@@ -447,6 +509,13 @@ func (ste *StructuredTestExecutor) executeStep(
 	if len(afterSS) > 0 && !IsBlankScreenshot(afterSS) && ste.onScreenshot != nil {
 		ste.onScreenshot(platform, afterSS)
 	}
+	if kind, _ := step.ParseAction(); kind == testbank.ActionTypeScreenshot && !step.IsVisionGated() && executor != nil && len(afterSS) == 0 {
+		// A screenshot step whose capture failed observed nothing (an
+		// offline device / display): BLOCKED, never "Screenshot requested".
+		result.Blocked = true
+		result.Actual = fmt.Sprintf("BLOCKED (could not determine): screenshot capture failed: %v", afterErr)
+		return result
+	}
 
 	// Judge the step. A vision-gated step passes only on positive,
 	// frame-bound evidence; a step whose outcome cannot be determined is
@@ -487,6 +556,9 @@ func (ste *StructuredTestExecutor) performAction(
 		}
 		out, err := adbExec.Shell(ctx, actionValue)
 		if err != nil {
+			if r, gone := deviceUnreachable("adb_shell", err, out); gone {
+				return r
+			}
 			return ActionResult{Success: false, Message: fmt.Sprintf("adb shell error: %v (out: %s)", err, truncateOutput(out, 200))}
 		}
 		return ActionResult{Success: true, Message: fmt.Sprintf("Executed: %s", actionValue)}
@@ -559,6 +631,9 @@ func (ste *StructuredTestExecutor) performAction(
 		}); ok {
 			err := keyExecutor.KeyPress(ctx, actionValue)
 			if err != nil {
+				if r, gone := deviceUnreachable("keypress", err, nil); gone {
+					return r
+				}
 				return ActionResult{Success: false, Message: fmt.Sprintf("Keypress failed: %v", err)}
 			}
 		}
@@ -572,6 +647,9 @@ func (ste *StructuredTestExecutor) performAction(
 		}); ok {
 			err := typeExecutor.Type(ctx, actionValue)
 			if err != nil {
+				if r, gone := deviceUnreachable("text", err, nil); gone {
+					return r
+				}
 				return ActionResult{Success: false, Message: fmt.Sprintf("Type failed: %v", err)}
 			}
 		}
@@ -587,6 +665,9 @@ func (ste *StructuredTestExecutor) performAction(
 		}); ok {
 			err := tapExecutor.Click(ctx, x, y)
 			if err != nil {
+				if r, gone := deviceUnreachable("tap", err, nil); gone {
+					return r
+				}
 				return ActionResult{Success: false, Message: fmt.Sprintf("Tap failed: %v", err)}
 			}
 		}
@@ -606,6 +687,9 @@ func (ste *StructuredTestExecutor) performAction(
 		pkg, minState := parsePlaybackCheckArgs(actionValue)
 		out, err := adbExec.Shell(ctx, "dumpsys media_session 2>/dev/null")
 		if err != nil {
+			if r, gone := deviceUnreachable("playback_check", err, out); gone {
+				return r
+			}
 			return ActionResult{Success: false, Message: fmt.Sprintf("dumpsys failed: %v", err)}
 		}
 		ok2, reason := verifyPlaybackState(string(out), pkg, minState)
@@ -641,6 +725,13 @@ func (ste *StructuredTestExecutor) performAction(
 			// motion — never report them as "motion detected".
 			return ActionResult{Blocked: true, Message: fmt.Sprintf("frame_diff: %v — not comparable, cannot confirm motion (capture problem, not an app defect)", cmpErr)}
 		}
+		if IsBlankScreenshot(first) || IsBlankScreenshot(second) {
+			// A blank / black capture (FLAG_SECURE or DRM surface, screen
+			// off, compositor not rendering) shows nothing of the player:
+			// identical black frames are not "frozen playback", and black
+			// against a picture is not motion.
+			return ActionResult{Blocked: true, Message: "frame_diff: a captured frame is blank / black (secure or DRM surface, screen off, or capture not rendering) — motion cannot be judged (capture problem, not an app defect)"}
+		}
 		if !changed {
 			return ActionResult{Success: false, Message: fmt.Sprintf("frames identical (diff %.1f%%) — playback appears frozen", diffPct)}
 		}
@@ -660,7 +751,9 @@ func (ste *StructuredTestExecutor) performAction(
 				baseURL = os.Getenv("HELIXQA_HTTP_BASE_URL")
 			}
 			if baseURL == "" {
-				return ActionResult{Success: false, Message: "http: HELIXQA_HTTP_BASE_URL not set and PipelineConfig.HTTPBaseURL empty"}
+				// No backend configured: the request was never sent —
+				// an environment gap, not an app defect.
+				return ActionResult{Blocked: true, Message: "http: no base URL configured (HELIXQA_HTTP_BASE_URL / PipelineConfig.HTTPBaseURL) — the request was never sent (environment, not an app defect)"}
 			}
 			ste.http = NewHTTPExecutor(baseURL)
 		}
@@ -733,6 +826,9 @@ func (ste *StructuredTestExecutor) performAction(
 			Swipe(context.Context, int, int, int, int) error
 		}); ok {
 			if err := swipeExecutor.Swipe(ctx, sx1, sy1, sx2, sy2); err != nil {
+				if r, gone := deviceUnreachable("swipe", err, nil); gone {
+					return r
+				}
 				return ActionResult{Success: false, Message: fmt.Sprintf("Swipe failed: %v", err)}
 			}
 		}
@@ -1073,6 +1169,31 @@ func (ste *StructuredTestExecutor) ensureAppForeground(
 // "VERIFIED:", yes|no, an optional full stop, nothing else.
 var verifiedAnswerRe = regexp.MustCompile(`(?im)^[ \t]*VERIFIED:[ \t]*(yes|no)[ \t]*\.?[ \t]*\r?$`)
 
+// actualLineRe matches the one optional "ACTUAL: <description>" line.
+var actualLineRe = regexp.MustCompile(`^[ \t]*ACTUAL:`)
+
+// strayReplyLine returns the first non-blank line of a VERIFIED reply that
+// is neither a VERIFIED answer line nor the (single) ACTUAL: line — a
+// refusal, a conditional, a retraction, a self-contradiction, a fence, an
+// example — or "" when the reply has exactly the requested shape. A reply
+// with a stray line is ambiguous: the answer line may be quoted, hedged or
+// retracted by the text around it.
+func strayReplyLine(response string) string {
+	actuals := 0
+	for _, ln := range strings.Split(response, "\n") {
+		if strings.TrimSpace(ln) == "" || verifiedAnswerRe.MatchString(ln) {
+			continue
+		}
+		if actualLineRe.MatchString(ln) {
+			if actuals++; actuals == 1 {
+				continue
+			}
+		}
+		return strings.TrimSpace(ln)
+	}
+	return ""
+}
+
 // verifyOutcome uses LLM vision to verify if the screenshot matches expected state.
 // Returns (verified, actualDescription, providerError). A non-nil error
 // means the outcome could NOT be determined (no provider, provider
@@ -1145,9 +1266,11 @@ func askVerified(
 	// even when the action succeeded. Fix is tri-state:
 	//
 	//   1. Exactly one standalone answer LINE "VERIFIED: yes" or
-	//      "VERIFIED: no" (nothing else on the line) → honour it. An echoed
-	//      template ("VERIFIED: yes/no"), "UNVERIFIED: yes" or the phrase
-	//      inside prose is not an answer line.
+	//      "VERIFIED: no" (nothing else on the line), and every other
+	//      non-blank line is the ONE optional "ACTUAL: ..." line → honour it.
+	//      An echoed template ("VERIFIED: yes/no"), "UNVERIFIED: yes", the
+	//      phrase inside prose, or an answer line surrounded by any other
+	//      text (refusal, conditional, retraction, fence, example) is not.
 	//   2. Zero or several answer lines, or non-empty natural language →
 	//      AMBIGUOUS; return an error. The caller (judgeStep) makes a
 	//      vision-gated step BLOCKED and a non-gated step
@@ -1163,6 +1286,13 @@ func askVerified(
 	switch {
 	case len(answers) > 1:
 		return false, fmt.Sprintf("Vision response carries %d VERIFIED answer lines — exactly one is required", len(answers)),
+			errors.New("vision response ambiguous")
+	case len(answers) == 1 && strayReplyLine(response) != "":
+		stray := strayReplyLine(response)
+		if len(stray) > 120 {
+			stray = stray[:120] + "…"
+		}
+		return false, fmt.Sprintf("Vision response carries text besides the VERIFIED line and one ACTUAL: line (%q) — the answer may be quoted, hedged or retracted", stray),
 			errors.New("vision response ambiguous")
 	case saidYes:
 		return true, actual, nil
@@ -1488,6 +1618,43 @@ func absU32(a, b uint32) uint32 {
 		return a - b
 	}
 	return b - a
+}
+
+// deviceUnreachableRe matches what adb / X11 / the input tools print when
+// the DEVICE or DISPLAY itself is gone — not when the app misbehaves.
+var deviceUnreachableRe = regexp.MustCompile(`(?i)(device '[^']*' not found|device not found|no devices/emulators found|device offline|device unauthorized|device still authorizing|cannot connect to daemon|can'?t open display|cannot open display|unable to open display|unable to open x server)`)
+
+// deviceUnreachable maps an action error whose text says the device /
+// display is unreachable to BLOCKED (environment). Any other error is the
+// caller's determined failure.
+func deviceUnreachable(action string, err error, out []byte) (ActionResult, bool) {
+	text := err.Error() + " " + string(out)
+	if !deviceUnreachableRe.MatchString(text) {
+		return ActionResult{}, false
+	}
+	return ActionResult{Blocked: true, Message: fmt.Sprintf(
+		"%s: device / display unreachable: %v (out: %s) — environment, not an app defect",
+		action, err, truncateOutput(out, 200))}, true
+}
+
+// stepAsserted reports whether an executed step's verdict rests on a real
+// check of the app: a vision-confirmed screen (VisionVerified), or any
+// non-observational action (shell / http / assert / adb_shell / UI input /
+// playback_check / frame_diff / playwright). sleep, screenshot and prose
+// steps observe or wait; unless a model confirmed the screen they assert
+// nothing — the same split the bank runner uses (unrunAssertingSteps).
+func stepAsserted(step testbank.TestStep, r TestStepResult) bool {
+	if r.VisionStatus == VisionVerified {
+		return true
+	}
+	if step.IsVisionGated() {
+		return false
+	}
+	switch kind, _ := step.ParseAction(); kind {
+	case testbank.ActionTypeSleep, testbank.ActionTypeScreenshot, testbank.ActionTypeDescription:
+		return false
+	}
+	return true
 }
 
 // isHostOnlyStep reports a non-gated step whose action runs on the host
