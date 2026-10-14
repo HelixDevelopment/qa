@@ -512,9 +512,20 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 		RecordedActions: recorded,
 		Assertions:      assertions,
 	}
-	if allPassed {
+	switch {
+	case allPassed && caseHasUnrunAssertingStep(d.testCase):
+		// The shell steps passed, but the case also asserts something this
+		// runner never executed (a vision-gated step, an http:/tap:/…
+		// action). The case was only partly run, so it is not PASSED: it
+		// is an honest SKIPPED that names what did not run, and
+		// promoteSkippedToPassed refuses to promote it for the same reason.
+		result.Status = challenge.StatusSkipped
+		result.RecordedActions = append(result.RecordedActions,
+			definitionWrapperSkipSentinel+" shell step(s) passed, but asserting step(s) were not executed by the "+
+				"bank runner (vision-gated or UI/http action) — the case is not PASSED")
+	case allPassed:
 		result.Status = challenge.StatusPassed
-	} else {
+	default:
 		result.Status = challenge.StatusFailed
 		result.Error = "desktop shell action failed: " + firstFailure
 	}

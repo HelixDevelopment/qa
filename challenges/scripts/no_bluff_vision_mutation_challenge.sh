@@ -42,7 +42,7 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint'
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_'
 PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/)
 
 echo "== control (unmutated tree)"
@@ -95,6 +95,7 @@ M = [
  ("M42-session-exit-ignores-structured", A+"pipeline.go", A, [("if c := r.Structured.ExitCode(); c != 0 {", "if c := r.Structured.ExitCode(); c != 0 && false {")]),
  ("M43-unloadable-banks-exit-0", A+"pipeline.go", A, [('if r.StructuredError != "" {\n\t\treturn 2', 'if false {\n\t\treturn 2')]),
  ("M44-blocked-case-files-no-finding", A+"structured_executor.go", A, [("\t\tresult.Findings = append(result.Findings, finding)\n\t\tif ste.onFinding != nil {\n\t\t\tste.onFinding(finding)", "\t\t_ = finding\n\t\tif false {\n\t\t\tste.onFinding(finding)")]),
+ ("M45-desktop-shell-pass-ignores-unrun-steps", O+"definition_challenge.go", O, [("case allPassed && caseHasUnrunAssertingStep(d.testCase):", "case allPassed && caseHasUnrunAssertingStep(d.testCase) && false:")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),
