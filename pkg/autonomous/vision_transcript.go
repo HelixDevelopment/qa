@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"digital.vasic.helixqa/pkg/testbank"
 )
@@ -41,6 +43,9 @@ var blindTranscriptSchema = map[string]any{
 // maxBlindTexts bounds the number of transcription elements accepted.
 const maxBlindTexts = 2000
 
+// maxBlindTextLen bounds one transcription element (runes).
+const maxBlindTextLen = 200
+
 var errBlindReply = errors.New("blind reply is not exactly one {\"texts\": [string...], \"description\": string} JSON object")
 
 // parseBlindReply strict-parses a blind reply. The reply must be exactly one
@@ -52,6 +57,9 @@ var errBlindReply = errors.New("blind reply is not exactly one {\"texts\": [stri
 // reply, and the content inside must still be the strict object, so the
 // fence cannot carry prose into "texts".
 func parseBlindReply(reply string) (texts []string, description string, err error) {
+	if !utf8.ValidString(reply) {
+		return nil, "", fmt.Errorf("%w: reply is not valid UTF-8", errBlindReply)
+	}
 	s := strings.TrimSpace(reply)
 	if strings.HasPrefix(s, "```") {
 		inner, ok := stripSingleFence(s)
@@ -126,6 +134,12 @@ func strictStringArray(raw json.RawMessage) ([]string, error) {
 		if len(e) == 0 || e[0] != '"' || json.Unmarshal(e, &v) != nil {
 			return nil, fmt.Errorf("%w: a \"texts\" element is not a string", errBlindReply)
 		}
+		if utf8.RuneCountInString(v) > maxBlindTextLen {
+			return nil, fmt.Errorf("%w: a \"texts\" element is longer than %d characters", errBlindReply, maxBlindTextLen)
+		}
+		if strings.IndexFunc(v, unicode.IsControl) >= 0 {
+			return nil, fmt.Errorf("%w: a \"texts\" element contains a line break or control character (one element per UI element)", errBlindReply)
+		}
 		out = append(out, v)
 	}
 	return out, nil
@@ -159,7 +173,7 @@ func stripSingleFence(s string) (string, bool) {
 // joined (a phrase cannot be assembled across elements), filler elements
 // ("(none)", "N/A", "No text visible") are dropped, and nothing outside
 // `texts` — the description, any prose — is ever consulted.
-func matchTokensInTexts(texts []string, recognize, forbid []string) (missing, forbidden []string) {
+func matchTokensInTexts(texts []string, recognize, forbid []string, exact bool) (missing, forbidden []string) {
 	keys := make([]string, 0, len(texts))
 	for _, t := range texts {
 		k := testbank.VisionTokenKey(t)
@@ -176,9 +190,22 @@ func matchTokensInTexts(texts []string, recognize, forbid []string) (missing, fo
 		}
 		return false
 	}
+	equals := func(tok string) bool {
+		for _, k := range keys {
+			if k == " "+tok+" " {
+				return true
+			}
+		}
+		return false
+	}
 	for _, tok := range recognize {
 		k := testbank.VisionTokenKey(tok)
-		if k == "" || !has(k) {
+		found := has(k)
+		if exact {
+			// exact-element mode: the token must BE one whole element.
+			found = equals(k)
+		}
+		if k == "" || !found {
 			missing = append(missing, k)
 		}
 	}

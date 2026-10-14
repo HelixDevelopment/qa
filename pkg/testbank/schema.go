@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode"
 
+	"golang.org/x/text/unicode/norm"
+
 	"digital.vasic.challenges/pkg/challenge"
 	"digital.vasic.helixqa/pkg/config"
 )
@@ -327,6 +329,12 @@ type TestStep struct {
 	// tokens are never sent to the model; "no text" filler tokens are
 	// refused. Setting it gates the step and requires a vision model.
 	Recognize []string `yaml:"recognize,omitempty" json:"recognize,omitempty"`
+
+	// RecognizeExact switches recognize to exact-element mode: each token
+	// must EQUAL one whole "texts" element (after normalisation), not just
+	// appear inside one — so commentary such as "(no Login button visible)"
+	// cannot satisfy recognize [Login]. Only valid together with Recognize.
+	RecognizeExact bool `yaml:"recognize_exact,omitempty" json:"recognize_exact,omitempty"`
 
 	// Forbid lists tokens that MUST NOT appear in any "texts" element
 	// (e.g. an error banner; a "description" saying "no error is visible"
@@ -675,9 +683,17 @@ func (st TestStep) EffectivePHashMaxDistance() int {
 // form the deterministic token check compares: lower-case, every run of
 // non-letter/non-digit characters collapsed to one space, trimmed.
 func VisionTokenKey(s string) string {
+	// NFKC folds compatibility forms (fullwidth, ligatures, mathematical
+	// alphanumerics) to their plain letters, and format characters
+	// (zero-width space / joiner, BOM, soft hyphen — Unicode Cf) are
+	// dropped, so neither can split or disguise a token.
+	s = norm.NFKC.String(s)
 	var b strings.Builder
 	space := false
 	for _, r := range strings.ToLower(s) {
+		if unicode.Is(unicode.Cf, r) {
+			continue
+		}
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			if space && b.Len() > 0 {
 				b.WriteByte(' ')
@@ -729,6 +745,10 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 			return fmt.Sprintf("test case %s step %d: golden %q must be a bare id "+
 				"(no path separators, no '..', no surrounding space)", caseID, idx, g)
 		}
+	}
+	if st.RecognizeExact && len(st.Recognize) == 0 {
+		return fmt.Sprintf("test case %s step %d: recognize_exact without recognize — "+
+			"there is no token to match exactly", caseID, idx)
 	}
 	recognized := map[string]bool{}
 	for _, tok := range st.Recognize {

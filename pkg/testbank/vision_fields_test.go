@@ -214,3 +214,23 @@ test_cases:
 		t.Fatalf("expect_change lost on load: %+v", bf.TestCases)
 	}
 }
+
+// Review round 4, findings 4 + 7: recognize_exact needs recognize; the
+// token fold applies NFKC and drops format (zero-width) characters.
+func TestVisionFields_Round5(t *testing.T) {
+	tc := TestCase{ID: "TC-X", Name: "x", Steps: []TestStep{{Action: "screenshot", VisionVerify: true, RecognizeExact: true}}}
+	if msg := tc.IsValid(); !strings.Contains(msg, "recognize_exact") {
+		t.Fatalf("recognize_exact without recognize accepted: %q", msg)
+	}
+	ok := TestCase{ID: "TC-Y", Name: "y", Steps: []TestStep{{Action: "screenshot", Recognize: []string{"Login"}, RecognizeExact: true}}}
+	if msg := ok.IsValid(); msg != "" {
+		t.Fatalf("valid recognize_exact refused: %s", msg)
+	}
+	for in, want := range map[string]string{
+		"Er\u200bror": "error", "Ｓｅｔｔｉｎｇｓ": "settings", "ﬁle": "file", "\ufeffLogin": "login", "co\u00adop": "coop",
+	} {
+		if got := VisionTokenKey(in); got != want {
+			t.Errorf("VisionTokenKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

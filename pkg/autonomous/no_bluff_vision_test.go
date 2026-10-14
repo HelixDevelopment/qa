@@ -425,11 +425,11 @@ func TestNoBluffVision_NormalizeAndMatch(t *testing.T) {
 	if got := normalizeVisionText("  Sign-In!\n\tPASSWORD: ok  "); got != "sign in password ok" {
 		t.Fatalf("normalizeVisionText = %q", got)
 	}
-	missing, hit := matchTokensInTexts([]string{"Sign in", "Password field"}, []string{"Sign In", "password", "user name"}, []string{"error"})
+	missing, hit := matchTokensInTexts([]string{"Sign in", "Password field"}, []string{"Sign In", "password", "user name"}, []string{"error"}, false)
 	if len(missing) != 1 || missing[0] != "user name" || len(hit) != 0 {
 		t.Fatalf("missing=%v hit=%v", missing, hit)
 	}
-	_, hit = matchTokensInTexts([]string{"signal strength", "errors none"}, nil, []string{"sign", "error"})
+	_, hit = matchTokensInTexts([]string{"signal strength", "errors none"}, nil, []string{"sign", "error"}, false)
 	if len(hit) != 0 {
 		t.Fatalf("substring matched as a word: %v", hit)
 	}

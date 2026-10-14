@@ -137,7 +137,7 @@ func TestNoBluffVision_TextsElementWholeWordPolicy(t *testing.T) {
 		{[]string{"(No error messages visible)"}, nil, []string{"error"}, 0, 1},
 	}
 	for i, c := range cases {
-		missing, forbidden := matchTokensInTexts(c.texts, c.rec, c.forb)
+		missing, forbidden := matchTokensInTexts(c.texts, c.rec, c.forb, false)
 		if len(missing) != c.wantMissing || len(forbidden) != c.wantForbidden {
 			t.Errorf("case %d %v rec=%v forb=%v: missing=%v forbidden=%v (want %d/%d)",
 				i, c.texts, c.rec, c.forb, missing, forbidden, c.wantMissing, c.wantForbidden)

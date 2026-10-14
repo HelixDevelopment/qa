@@ -212,7 +212,7 @@ func (ste *StructuredTestExecutor) judgeStep(
 			r.VisionTexts = texts
 			r.VisionDescription = desc
 			r.VisionProvider = who
-			missing, forbidden := matchTokensInTexts(texts, step.Recognize, step.Forbid)
+			missing, forbidden := matchTokensInTexts(texts, step.Recognize, step.Forbid, step.RecognizeExact)
 			if len(forbidden) > 0 {
 				refute(fmt.Sprintf("forbidden token(s) present: %s", strings.Join(forbidden, ", ")))
 				return
