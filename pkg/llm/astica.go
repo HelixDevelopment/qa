@@ -182,9 +182,11 @@ func (p *asticaProvider) doRequest(
 	}
 
 	if apiResp.Status != "success" {
+		// The status is server text: redact (and cap) it like any
+		// error body before it reaches an error.
 		return nil, fmt.Errorf(
 			"astica: API returned status %q",
-			apiResp.Status,
+			errorBodyText([]byte(apiResp.Status), p.apiKey),
 		)
 	}
 
