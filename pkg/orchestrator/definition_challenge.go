@@ -207,6 +207,13 @@ func caseHasUnrunAssertingStep(tc *testbank.TestCase) bool {
 	}
 	for i := range tc.Steps {
 		step := tc.Steps[i]
+		// A vision-gated step (vision_verify / recognize / forbid /
+		// golden / expect_change) ASSERTS what the screen shows, whatever
+		// its action kind. The bank runner never runs that vision check,
+		// so crash-absence is not evidence for it (no-bluff vision).
+		if step.IsVisionGated() {
+			return true
+		}
 		at, _ := step.ParseAction()
 		switch at {
 		case testbank.ActionTypeDescription,

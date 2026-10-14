@@ -203,3 +203,37 @@ func TestPromote_ObservationalStepCasePromoted(t *testing.T) {
 		t.Fatalf("purely-observational UI case = %q, want PASSED", cr.Status)
 	}
 }
+
+// TestCaseHasUnrunAssertingStep_VisionGated is review finding 3 (no-bluff
+// vision): a `screenshot`/`sleep` step carrying vision_verify / recognize /
+// forbid / golden / expect_change ASSERTS what the screen shows. The bank
+// runner never runs that vision check, so crash-absence must not promote
+// such a case from SKIPPED to PASSED. Golden-good: the same steps without
+// vision keys are still observational and still promoted.
+func TestCaseHasUnrunAssertingStep_VisionGated(t *testing.T) {
+	d := 4
+	gated := []testbank.TestStep{
+		{Action: "screenshot", VisionVerify: true},
+		{Action: "screenshot", Recognize: []string{"Settings"}},
+		{Action: "sleep: 500", Golden: "home", PHashMaxDistance: &d},
+		{Action: "screenshot", Forbid: []string{"Error"}, VisionVerify: true},
+		{Action: "description of the screen", ExpectChange: true, VisionVerify: true},
+	}
+	for i, st := range gated {
+		cr := skippedWrapperResult("UI-VIS-1")
+		tc := &testbank.TestCase{ID: "UI-VIS-1", Platforms: []config.Platform{config.PlatformWeb},
+			Steps: []testbank.TestStep{{Action: "sleep: 100"}, st}}
+		if !caseHasUnrunAssertingStep(tc) {
+			t.Errorf("gated[%d]: vision-gated step not treated as asserting", i)
+		}
+		promoteSkippedToPassed(cr, passedStep("UI-VIS-1"), tc, config.PlatformWeb)
+		if cr.Status != challenge.StatusSkipped {
+			t.Errorf("gated[%d]: case = %q, want SKIPPED (the vision check never ran)", i, cr.Status)
+		}
+	}
+	plain := &testbank.TestCase{ID: "UI-OBS-2", Platforms: []config.Platform{config.PlatformWeb},
+		Steps: []testbank.TestStep{{Action: "screenshot"}, {Action: "sleep: 100"}}}
+	if caseHasUnrunAssertingStep(plain) {
+		t.Fatal("plain screenshot/sleep steps must stay observational")
+	}
+}

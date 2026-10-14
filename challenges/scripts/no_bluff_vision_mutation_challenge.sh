@@ -79,6 +79,7 @@ M = [
  ("M26-change-only-labelled-verified", A+"vision_gate.go", A, [("if !step.HasPositiveVisionCheck() {", "if false {")]),
  ("M27-loader-accepts-negative-only-check", T+"schema.go", T, [("if !st.HasPositiveVisionCheck() {", "if false {")]),
  ("M28-loader-accepts-vision-on-non-screen", T+"schema.go", T, [("kind.IsNonScreen() {\n\t\t\treturn fmt.Sprintf(", "kind.IsNonScreen() && false {\n\t\t\treturn fmt.Sprintf(")]),
+ ("M29-gated-screenshot-promoted", O+"definition_challenge.go", O, [("if step.IsVisionGated() {\n\t\t\treturn true", "if step.IsVisionGated() && false {\n\t\t\treturn true")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),
