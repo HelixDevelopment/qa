@@ -148,7 +148,7 @@
 #     throwaway server.
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345. Already
+# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. Already
 # public per that spec's own text (committed in its git history); never
 # relied on as a real secret. Consistent with auth-session.yaml and every
 # other sibling bank in this directory, the real password is NEVER written

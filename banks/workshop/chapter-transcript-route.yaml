@@ -125,7 +125,7 @@
 #       "counts": {
 #         "registry_passages": 202,
 #         "sidecar_segments": 202,
-#         "sidecar_uncertain": 90,
+#         "sidecar_uncertain": 27,
 #         "sidecar_words": 2614
 #       },
 #       "coverage": { ... },
@@ -271,8 +271,8 @@ test_cases:
         action: "http: GET /api/chapters/02.02/transcript"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"sidecar_uncertain\": 90"
-        expected: "90 is the real, currently-live low-confidence segment count the transcriber itself flagged for chapter 02.02 — the field the transcript page's own template binds as totalUncertain"
+        expect_body_contains: "\"sidecar_uncertain\": 27"
+        expected: "27 is the real, currently-live low-confidence segment count for chapter 02.02 — the field the transcript page's own template binds as totalUncertain. RE-MEASURED 2026-10-07 (was 90): it is the number of segments with \"uncertain\": true in curriculum/chapter-02.02/transcript.segments.json (27 of its 202 segments, counted directly from the file). The count fell from 90 because commit 5e25ef7 (2026-10-01, spec 016 US5 / FR-005 / SC-003, pipeline/recompute_segment_uncertain.py) fixed the over-triggering segment-level threshold aggregation WITHOUT re-running ASR; the per-word signal was unchanged, only the boolean combining it. This pin is intentionally exact: it moves only when the sidecar's uncertain flags move, and a change must be a deliberate, committed re-derivation — if it fails, recount uncertain==true in the sidecar and, if that really changed, update this number in the same change."
       - name: "Transcript reports the real, live-measured sidecar segment count"
         action: "http: GET /api/chapters/02.02/transcript"
         auth: "admin"

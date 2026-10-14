@@ -117,7 +117,7 @@
 #     sat right next to it in the SAME request. See WK-AUTH-007 below.
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/WhiteSnake8587, rami/Test12345. FR-009's OWN
+# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. FR-009's OWN
 # text states these are ALREADY PUBLIC (committed in that spec's git history)
 # and MUST NEVER be relied on as real secrets, so the USERNAMES (not
 # secrets) appear literally below where a case genuinely needs to name a
