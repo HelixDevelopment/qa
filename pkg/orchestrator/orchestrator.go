@@ -48,6 +48,28 @@ type Result struct {
 	Duration time.Duration `json:"duration"`
 }
 
+// ExitCode is the process exit status for a bank run (`helixqa run`), on
+// the same three-valued contract as `helixqa autonomous`:
+//   - 1: any challenge failed (failed / error / timed out / stuck), or a
+//     crash or ANR was detected — a finding outranks could-not-determine;
+//   - 2: nothing failed, but not every challenge passed: nothing executed,
+//     or some/all challenges were SKIPPED (e.g. a case whose vision-gated
+//     step the bank runner cannot execute) — not a pass, not a failure;
+//   - 0: every challenge executed and passed, no crash, no ANR.
+func (r *Result) ExitCode() int {
+	q := r.Report
+	if q == nil {
+		return 2
+	}
+	if q.FailedChallenges > 0 || q.TotalCrashes > 0 || q.TotalANRs > 0 {
+		return 1
+	}
+	if q.TotalChallenges == 0 || q.PassedChallenges < q.TotalChallenges {
+		return 2
+	}
+	return 0
+}
+
 // Orchestrator is the main QA execution engine.
 type Orchestrator struct {
 	config   *config.Config

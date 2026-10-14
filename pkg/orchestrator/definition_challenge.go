@@ -184,7 +184,7 @@ func promoteSkippedToPassed(
 	// observational (description / screenshot / sleep — where post-action
 	// crash-absence IS the intended signal) may be promoted; a case with a
 	// real asserting step stays honestly SKIPPED.
-	if caseHasUnrunAssertingStep(tc) {
+	if caseHasUnrunAssertingStep(tc, platform) {
 		return
 	}
 	if sr == nil || sr.Status != validator.StepPassed {
@@ -193,43 +193,55 @@ func promoteSkippedToPassed(
 	cr.Status = challenge.StatusPassed
 }
 
-// caseHasUnrunAssertingStep reports whether the test case carries any step
-// whose action genuinely asserts something the bank-runner path does NOT
-// execute (everything except the observational set description/screenshot/
-// sleep, and `shell:` which the bank runner DOES run — so a sentinel-SKIPPED
-// case never has shell steps anyway). If true, crash-absence is not evidence
-// the case passed and it must not be promoted. A nil/empty case is treated as
-// having no asserting step (nothing to run → safe to promote on the prior
-// guards).
-func caseHasUnrunAssertingStep(tc *testbank.TestCase) bool {
+// caseHasUnrunAssertingStep reports whether the test case carries, for the
+// given platform, any step whose assertion the bank-runner path does NOT
+// execute (see unrunAssertingSteps). If true, crash-absence is not evidence
+// the case passed and it must not be promoted.
+func caseHasUnrunAssertingStep(tc *testbank.TestCase, platform config.Platform) bool {
+	return len(unrunAssertingSteps(tc, platform)) > 0
+}
+
+// unrunAssertingSteps names every step of the case that asserts something
+// the bank runner never executes on this platform: a vision-gated step of
+// any action kind (vision_verify / recognize / forbid / golden /
+// expect_change), or a non-observational action other than `shell:` (http,
+// assert, tap, swipe, keypress, text, adb_shell, playback_check,
+// frame_diff, playwright). Observational steps (description / screenshot /
+// sleep without vision keys) and `shell:` steps (run by the bank runner)
+// are not listed. A step pinned to ANOTHER platform, or explicitly skipped
+// with `_skip`, is not this run's assertion and is not listed.
+// Each entry reads `step <index> "<name>" (<action kind>[, vision-gated])`.
+func unrunAssertingSteps(tc *testbank.TestCase, platform config.Platform) []string {
 	if tc == nil {
-		return false
+		return nil
 	}
+	var out []string
 	for i := range tc.Steps {
 		step := tc.Steps[i]
-		// A vision-gated step (vision_verify / recognize / forbid /
-		// golden / expect_change) ASSERTS what the screen shows, whatever
-		// its action kind. The bank runner never runs that vision check,
-		// so crash-absence is not evidence for it (no-bluff vision).
-		if step.IsVisionGated() {
-			return true
+		if step.Skip {
+			continue
+		}
+		if step.Platform != "" && step.Platform != platform {
+			continue
 		}
 		at, _ := step.ParseAction()
-		switch at {
-		case testbank.ActionTypeDescription,
-			testbank.ActionTypeScreenshot,
-			testbank.ActionTypeSleep,
-			testbank.ActionTypeShell:
-			// observational, or shell (run by the bank runner) — not a bluff
-			continue
-		default:
-			// http / assert / tap / swipe / keypress / text / adb_shell /
-			// playback_check / frame_diff / playwright — a real asserting
-			// action the bank runner never executed.
-			return true
+		gated := step.IsVisionGated()
+		if !gated {
+			switch at {
+			case testbank.ActionTypeDescription,
+				testbank.ActionTypeScreenshot,
+				testbank.ActionTypeSleep,
+				testbank.ActionTypeShell:
+				continue
+			}
 		}
+		desc := fmt.Sprintf("step %d %q (%s", i, step.Name, at)
+		if gated {
+			desc += ", vision-gated"
+		}
+		out = append(out, desc+")")
 	}
-	return false
+	return out
 }
 
 // hasSkipSentinel reports whether the result carries the
@@ -513,7 +525,7 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 		Assertions:      assertions,
 	}
 	switch {
-	case allPassed && caseHasUnrunAssertingStep(d.testCase):
+	case allPassed && caseHasUnrunAssertingStep(d.testCase, d.platform):
 		// The shell steps passed, but the case also asserts something this
 		// runner never executed (a vision-gated step, an http:/tap:/…
 		// action). The case was only partly run, so it is not PASSED: it
@@ -521,8 +533,9 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 		// promoteSkippedToPassed refuses to promote it for the same reason.
 		result.Status = challenge.StatusSkipped
 		result.RecordedActions = append(result.RecordedActions,
-			definitionWrapperSkipSentinel+" shell step(s) passed, but asserting step(s) were not executed by the "+
-				"bank runner (vision-gated or UI/http action) — the case is not PASSED")
+			definitionWrapperSkipSentinel+" shell step(s) passed, but these asserting step(s) were not executed by "+
+				"the bank runner: "+strings.Join(unrunAssertingSteps(d.testCase, d.platform), "; ")+
+				" — the case is not PASSED")
 	case allPassed:
 		result.Status = challenge.StatusPassed
 	default:

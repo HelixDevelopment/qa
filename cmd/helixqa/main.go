@@ -242,6 +242,11 @@ func cmdRun(args []string) {
 	case result.Success:
 		fmt.Printf(helixqaT(ctx, "helixqa_run_summary_passed_fmt",
 			"PASSED - All %d challenges passed, no crashes\n"), total)
+	case result.ExitCode() == 2:
+		fmt.Printf(helixqaT(ctx, "helixqa_run_summary_incomplete_fmt",
+			"INCOMPLETE - %d/%d challenges passed, %d not executed (skipped / blocked), none failed — exit 2\n"),
+			result.Report.PassedChallenges, total,
+			total-result.Report.PassedChallenges-result.Report.FailedChallenges)
 	default:
 		fmt.Printf(helixqaT(ctx, "helixqa_run_summary_failed_fmt",
 			"FAILED - %d/%d challenges failed or crashes detected\n"),
@@ -256,8 +261,10 @@ func cmdRun(args []string) {
 		fmt.Printf("Tickets: %s/tickets/\n", cfg.OutputDir)
 	}
 
-	if !result.Success {
-		os.Exit(1)
+	// Three-valued contract: 0 all passed, 1 a failure / crash / ANR,
+	// 2 nothing failed but not everything was executed (skipped/blocked).
+	if code := result.ExitCode(); code != 0 {
+		os.Exit(code)
 	}
 }
 

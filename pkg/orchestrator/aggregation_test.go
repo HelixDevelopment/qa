@@ -223,7 +223,7 @@ func TestCaseHasUnrunAssertingStep_VisionGated(t *testing.T) {
 		cr := skippedWrapperResult("UI-VIS-1")
 		tc := &testbank.TestCase{ID: "UI-VIS-1", Platforms: []config.Platform{config.PlatformWeb},
 			Steps: []testbank.TestStep{{Action: "sleep: 100"}, st}}
-		if !caseHasUnrunAssertingStep(tc) {
+		if !caseHasUnrunAssertingStep(tc, config.PlatformWeb) {
 			t.Errorf("gated[%d]: vision-gated step not treated as asserting", i)
 		}
 		promoteSkippedToPassed(cr, passedStep("UI-VIS-1"), tc, config.PlatformWeb)
@@ -233,7 +233,7 @@ func TestCaseHasUnrunAssertingStep_VisionGated(t *testing.T) {
 	}
 	plain := &testbank.TestCase{ID: "UI-OBS-2", Platforms: []config.Platform{config.PlatformWeb},
 		Steps: []testbank.TestStep{{Action: "screenshot"}, {Action: "sleep: 100"}}}
-	if caseHasUnrunAssertingStep(plain) {
+	if caseHasUnrunAssertingStep(plain, config.PlatformWeb) {
 		t.Fatal("plain screenshot/sleep steps must stay observational")
 	}
 }
