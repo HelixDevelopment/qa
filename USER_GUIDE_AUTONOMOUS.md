@@ -469,6 +469,31 @@ HELIX_DOCS_AUTO_DISCOVER=true
 HELIX_DOCS_FORMATS=md,yaml,html,adoc,rst
 ```
 
+### Vision-Gated Structured Steps and a Local Vision Model
+
+In the structured phase, a bank step that declares `vision_verify: true`,
+`recognize: [...]`, `forbid: [...]`, `golden: <id>` (with optional
+`phash_max_distance`) or `expect_change: true` is vision-gated. It passes
+only when every requested check succeeds on the exact after-action frame;
+otherwise it is FAILED (the frame contradicts the expectation) or BLOCKED
+(could not determine: no provider, provider error, ambiguous reply, blank
+or missing frame, missing golden). The summary line now reads
+`N passed, N failed, N blocked (could not determine), ...`. A blocked case
+is never counted as passed.
+
+To use a local model served by llama-server (for example llmctl's
+`vision` instance), set:
+
+```bash
+HELIX_VISION_ENDPOINT=http://127.0.0.1:8082/v1
+HELIX_VISION_MODEL=            # optional
+HELIX_VISION_API_KEY=          # optional, never logged
+HELIXQA_GOLDENS_DIR=/path/to/goldens   # only for `golden:` steps
+```
+
+At startup the session prints `Vision endpoint: <url> (model: ..., api key: set|unset)`.
+Full semantics: [docs/vision/NO_BLUFF_VISION.md](docs/vision/NO_BLUFF_VISION.md).
+
 ---
 
 ## Troubleshooting

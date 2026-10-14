@@ -110,6 +110,32 @@ test_cases:
         path: "docs/USER_MANUAL.md"
 ```
 
+### Vision-gated steps (no-bluff vision)
+
+A step that carries `vision_verify: true`, `recognize`, `forbid`,
+`golden` (+ `phash_max_distance`) or `expect_change: true` is
+**vision-gated**: it PASSES only on positive evidence bound to the exact
+after-action frame (sha256 + pHash recorded), and is **BLOCKED**
+(could not determine, exit semantic 2) — never passed — when there is no
+vision provider, the provider errors or answers ambiguously, or the frame
+is blank or missing. A non-gated step the model could not confirm is
+reported **UNVERIFIED-by-vision**.
+
+```yaml
+      - name: "Open settings"
+        action: "keypress: KEYCODE_ENTER"
+        expected: "Settings screen is shown"
+        vision_verify: true
+        expect_change: true
+        recognize: ["Settings"]
+        forbid: ["Error"]
+```
+
+A local OpenAI-compatible vision model (e.g. llama-server) is wired with
+`HELIX_VISION_ENDPOINT` (+ optional `HELIX_VISION_MODEL`,
+`HELIX_VISION_API_KEY`). Full reference and state diagram:
+[`docs/vision/NO_BLUFF_VISION.md`](docs/vision/NO_BLUFF_VISION.md).
+
 ## Architecture
 
 ```
