@@ -1002,8 +1002,9 @@ func (ste *StructuredTestExecutor) ensureAppForeground(
 	time.Sleep(3 * time.Second)
 }
 
-// verifiedAnswerRe matches each "VERIFIED: yes|no" answer in a reply.
-var verifiedAnswerRe = regexp.MustCompile(`(?i)verified:\s*(yes|no)\b`)
+// verifiedAnswerRe matches a standalone answer LINE: optional spaces,
+// "VERIFIED:", yes|no, an optional full stop, nothing else.
+var verifiedAnswerRe = regexp.MustCompile(`(?im)^[ \t]*VERIFIED:[ \t]*(yes|no)[ \t]*\.?[ \t]*\r?$`)
 
 // verifyOutcome uses LLM vision to verify if the screenshot matches expected state.
 // Returns (verified, actualDescription, providerError). A non-nil error
@@ -1047,24 +1048,25 @@ func (ste *StructuredTestExecutor) verifyOutcome(
 	// treated every structured test as failing on vision verification
 	// even when the action succeeded. Fix is tri-state:
 	//
-	//   1. Exactly one "VERIFIED: yes" / "VERIFIED: no" answer → honour it.
-	//   2. Both answers present, or non-empty natural language →
+	//   1. Exactly one standalone answer LINE "VERIFIED: yes" or
+	//      "VERIFIED: no" (nothing else on the line) → honour it. An echoed
+	//      template ("VERIFIED: yes/no"), "UNVERIFIED: yes" or the phrase
+	//      inside prose is not an answer line.
+	//   2. Zero or several answer lines, or non-empty natural language →
 	//      AMBIGUOUS; return an error. The caller (judgeStep) makes a
 	//      vision-gated step BLOCKED and a non-gated step
 	//      UNVERIFIED-by-vision — it never turns this into a pass.
 	//   3. Response empty → error (same handling).
 	actual := extractLine(response, "ACTUAL:")
+	answers := verifiedAnswerRe.FindAllStringSubmatch(response, -1)
 	saidYes, saidNo := false, false
-	for _, m := range verifiedAnswerRe.FindAllStringSubmatch(response, -1) {
-		if strings.EqualFold(m[1], "yes") {
-			saidYes = true
-		} else {
-			saidNo = true
-		}
+	if len(answers) == 1 {
+		saidYes = strings.EqualFold(answers[0][1], "yes")
+		saidNo = !saidYes
 	}
 	switch {
-	case saidYes && saidNo:
-		return false, "Vision response is self-contradictory (both VERIFIED: yes and VERIFIED: no)",
+	case len(answers) > 1:
+		return false, fmt.Sprintf("Vision response carries %d VERIFIED answer lines — exactly one is required", len(answers)),
 			errors.New("vision response ambiguous")
 	case saidYes:
 		return true, actual, nil
