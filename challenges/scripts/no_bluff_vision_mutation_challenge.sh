@@ -42,8 +42,8 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic|TestCLIExit|TestAutonomousExitCode|TestShellStep_'
-PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/ ./cmd/helixqa/)
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic|TestCLIExit|TestAutonomousExitCode|TestShellStep_|TestShellExec_|TestDependencyOrder_'
+PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/ ./cmd/helixqa/ ./pkg/shellexec/)
 
 echo "== control (unmutated tree)"
 if ! go test -count=1 -run "${GATE}" "${PKGS[@]}" >"${WORK}/control.log" 2>&1; then
@@ -60,7 +60,7 @@ echo "   control GREEN"
 python3 -I - "${ROOT_DIR}" "${WORK}" "${ONLY}" >"${WORK}/manifest.tsv" <<'PY'
 import json, os, sys
 root, work, only = sys.argv[1], sys.argv[2], sys.argv[3]
-A, L, T, O, C = "pkg/autonomous/", "pkg/llm/", "pkg/testbank/", "pkg/orchestrator/", "cmd/helixqa/"
+A, L, T, O, C, S = "pkg/autonomous/", "pkg/llm/", "pkg/testbank/", "pkg/orchestrator/", "cmd/helixqa/", "pkg/shellexec/"
 M = [
  ("M01-gating-ignored", A+"vision_gate.go", A, [("r.VisionGated = step.IsVisionGated()", "r.VisionGated = false")]),
  ("M02-no-provider-passes", A+"vision_gate.go", A, [('block("no vision-capable provider is configured for a vision-gated step")', "r.Passed = true")]),
@@ -240,7 +240,6 @@ M = [
  ("Y04-reprobe-answered-from-cache", A+"structured_executor.go", A, [("if perr := ste.reprobe(ctx, platform); perr != nil {", "if perr := ste.probeReachable(ctx, platform); perr != nil {")]),
  ("Y05-failed-probe-cached-forever", A+"structured_executor.go", A, [("if done && (pr.err == nil || time.Since(pr.at) < failedProbeTTL) {", "if done && (true || time.Since(pr.at) < failedProbeTTL) {")]),
  ("Y06-probe-cache-shared-across-platforms", A+"structured_executor.go", A, [("pr, done := ste.reach[platform]", 'pr, done := ste.reach[""]'), ("ste.reach[platform] = probeResult{", 'ste.reach[""] = probeResult{')]),
- ("Y07-probe-reads-whole-output", A+"executor_factory.go", A, [("state := lastNonEmptyLine(string(out))", "state := strings.TrimSpace(string(out))")]),
  ("Y08-any-step-observes", A+"structured_executor.go", A, [('return verb == "assertvisible" || verb == "waitfor"\n\t}\n\treturn false', 'return verb == "assertvisible" || verb == "waitfor"\n\t}\n\treturn true')]),
  ("Y09-skipped-step-case-passes", A+"structured_executor.go", A, [("case skippedSteps > 0:", "case false:")]),
  ("Y10-no-observing-step-passes", A+"structured_executor.go", A, [("case observingSteps == 0:", "case false:")]),
@@ -250,25 +249,52 @@ M = [
  ("Y14-assert-without-http-fails", A+"structured_executor.go", A, [('return ActionResult{Blocked: true, Message: "assert: no http: step ran earlier', 'return ActionResult{Success: false, Message: "assert: no http: step ran earlier')]),
  ("Y15-case-http-counter-not-reset", A+"structured_executor.go", A, [("\tste.caseHTTPSteps = 0\n", "")]),
  ("Y16-black-threshold-raised", A+"structured_executor.go", A, [("if r>>8 > 16 || g>>8 > 16 || bl>>8 > 16 {", "if r>>8 > 200 || g>>8 > 200 || bl>>8 > 200 {")]),
- ("Y17-presence-not-checked-first", A+"vision_gate.go", A, [("if _, present := matchTokensInTexts(t, nil, forbid, true); len(present) > 0 {", "if false {")]),
+ ("Y17-presence-not-checked-first", A+"vision_gate.go", A, [("if present := forbiddenPresent(t, forbid); len(present) > 0 {", "if false {")]),
  ("Y18-forbid-absence-without-anchor", A+"vision_gate.go", A, [("if len(step.Forbid) > 0 && len(step.Recognize) == 0 {", "if false {")]),
  ("Y19-contained-not-equal-refuted", A+"vision_gate.go", A, [("if in := containedOnly(texts, missing); len(in) > 0 && step.ExactRecognize() {", "if in := containedOnly(texts, missing); len(in) > 0 && false {")]),
  ("Y20-all-statement-rule-dropped", A+"vision_transcript.go", A, [("if statements == screenText {", "if false {")]),
  ("Y21-any-statement-blocks", A+"vision_transcript.go", A, [("if statements == screenText {", "if statements > 0 {")]),
  ("Y22-image-remark-branch-dropped", A+"vision_transcript.go", A, [("`(the|this) (image|screenshot|picture) (is|shows|appears|contains|does))( |$)`", "`(zzzz))( |$)`")]),
- ("Y23-actual-line-not-scanned", A+"structured_executor.go", A, [('case len(answers) == 1 && suspectActual(actual) != "":', "case false:")]),
+ ("Y23-actual-line-not-scanned", A+"structured_executor.go", A, [('case saidYes && suspectActual(actual) != "":', "case false:")]),
  ("Y24-actual-verdict-not-scanned", A+"structured_executor.go", A, [("case verdictInTextRe.MatchString(text):", "case false:")]),
  ("Y25-combining-marks-split-words", T+"schema.go", T, [("if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {", "if unicode.IsLetter(r) || unicode.IsDigit(r) {")]),
- ("Y26-optional-vowel-marks-kept", T+"schema.go", T, [("if isOptionalVowelMark(r) {\n\t\t\tcontinue", "if false {\n\t\t\tcontinue")]),
+ ("Y26-optional-vowel-marks-kept", T+"schema.go", T, [("if isOptionalVowelMark(r) || r == '\\u0640' {", "if r == '\\u0640' {")]),
  ("Y27-loader-forbid-without-recognize", T+"schema.go", T, [("if len(st.Forbid) > 0 && len(st.Recognize) == 0 {", "if false {")]),
  ("Y28-orch-cancel-drops-partial-platform", O+"orchestrator.go", O, [("if pr == nil {\n\t\t\t\tpr = &reporter.PlatformResult{", "if true {\n\t\t\t\tpr = &reporter.PlatformResult{")]),
  ("Y29-orch-cancel-not-surfaced", O+"orchestrator.go", O, [("\t\t\t\trunErr = err\n\t\t\t\tplatformResults = append(platformResults, pr)", "\t\t\t\tplatformResults = append(platformResults, pr)")]),
- ("Y30-interrupted-challenge-counted-failed", O+"orchestrator.go", O, [("if ctx.Err() != nil && interruptedOutcome(cr, err) {", "if false && interruptedOutcome(cr, err) {")]),
+ ("Y30-interrupted-challenge-counted-failed", O+"orchestrator.go", O, [("if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {", "if false && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {")]),
  ("Y31-interrupted-shell-is-failure", O+"definition_challenge.go", O, [("if ctx.Err() != nil && allPassed {", "if false && allPassed {")]),
  ("Y32-autonomous-report-error-ignored", C+"exit_codes.go", C, [("if reportErr != nil && code == 0 {", "if false {")]),
  ("Y33-crash-not-outranking-error", C+"exit_codes.go", C, [("if result != nil && result.Report != nil && result.ExitCode() == 1 {", "if result != nil && result.Report != nil && result.Report.FailedChallenges > 0 {")]),
  ("Y34-learn-error-is-failed", A+"pipeline.go", A, [("// The project could not be read: environment, not an app verdict.\n\t\tresult.Status = StatusBlocked", "// The project could not be read: environment, not an app verdict.\n\t\tresult.Status = StatusFailed")]),
- ("Y35-challenge-order-random", O+"orchestrator.go", O, [("\tsort.SliceStable(definitions, func(i, j int) bool { return definitions[i].ID < definitions[j].ID })\n", "\t_ = sort.SliceStable\n")]),
+ # ── review round 7 (fix round 8) ──
+ ("Z01-shell-not-own-group", S+"shellexec.go", S, [("\townProcessGroup(c)\n", "\t_ = ownProcessGroup\n")]),
+ ("Z02-cancel-kills-only-child", S+"group_unix.go", S, [("return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)", "return c.Process.Kill()")]),
+ ("Z03-waitdelay-removed", S+"shellexec.go", S, [("\tc.WaitDelay = WaitDelay\n", "\t_ = WaitDelay\n")]),
+ ("Z04-interrupted-result-fails-antibluff", O+"definition_challenge.go", O, [('Expected: string(d.def.ID), Actual: string(d.def.ID), Passed: true,\n\t\t\t\t\tMessage: "bank-loaded definition bridged to Challenge interface; interrupted', 'Expected: string(d.def.ID), Actual: string(d.def.ID), Passed: false,\n\t\t\t\t\tMessage: "bank-loaded definition bridged to Challenge interface; interrupted')]),
+ ("Z05-interrupted-marker-ignored", O+"orchestrator.go", O, [("if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {", "if ctx.Err() != nil && interruptedOutcome(cr, err) {")]),
+ ("Z06-failure-before-deadline-lost", O+"orchestrator.go", O, [("if lr := w.lastResult(); lr != nil && lr.Status == challenge.StatusFailed {", "if lr := w.lastResult(); lr != nil && false {")]),
+ ("Z07-not-started-unlisted", O+"orchestrator.go", O, [("\t\tif cancelled {\n\t\t\tseen :=", "\t\tif false {\n\t\t\tseen :=")]),
+ ("Z08-cycle-unreported", O+"orchestrator.go", O, [("if len(cyclic) == 0 && !cancelled {\n\t\treturn prs", "if !cancelled {\n\t\treturn prs")]),
+ ("Z09-last-challenge-cancel-unsurfaced", O+"orchestrator.go", O, [("if runErr == nil && ctx.Err() != nil {", "if false {")]),
+ ("Z10-dependencies-ignored", T+"schema.go", T, [("\t\t\tindeg[id]++\n", "")]),
+ ("Z11-orch-order-ignores-dependencies", O+"orchestrator.go", O, [("definitions, cyclic := orderDefinitions(o.bank.All())", "definitions, cyclic := o.bank.All(), []*challenge.Definition(nil)")]),
+ ("Z12-structured-order-ignores-dependencies", A+"structured_executor.go", A, [("order, cyclic := testbank.DependencyOrder(keys, deps)", "order, cyclic := keys, []string(nil)")]),
+ ("Z13-structured-cycle-not-blocked", A+"structured_executor.go", A, [("for _, k := range cyclic {\n\t\tste.blockCaseUnrun(", "for _, k := range cyclic[:0] {\n\t\tste.blockCaseUnrun(")]),
+ ("Z14-actual-scanned-on-no", A+"structured_executor.go", A, [('case saidYes && suspectActual(actual) != "":', 'case len(answers) == 1 && suspectActual(actual) != "":')]),
+ ("Z15-actual-scan-uses-refusal-pattern", A+"structured_executor.go", A, [("case inabilityRe.MatchString(testbank.VisionTokenKey(text)):", "case modelStatementRe.MatchString(testbank.VisionTokenKey(text)) || inabilityRe.MatchString(testbank.VisionTokenKey(text)):")]),
+ ("Z16-verdict-scan-any-case", A+"structured_executor.go", A, [("regexp.MustCompile(`\\bVERIFIED\\s*:\\s*(?i:yes|no)\\b`)", "regexp.MustCompile(`(?i)\\bverified\\s*:\\s*(yes|no)\\b`)")]),
+ ("Z17-empty-expected-asked", A+"vision_gate.go", A, [("case strings.TrimSpace(step.Expected) == \"\":\n\t\t// No expected state", "case false:\n\t\t// No expected state")]),
+ ("Z18-gated-blank-expected-asked", A+"vision_gate.go", A, [("if strings.TrimSpace(step.Expected) == \"\" {\n\t\t\t\t// A \"yes\" to an empty question", "if false {\n\t\t\t\t// A \"yes\" to an empty question")]),
+ ("Z19-http-any-status-passes", A+"http_executor.go", A, [("if step.ExpectStatus == 0 && (resp.StatusCode < 200 || resp.StatusCode > 299) {", "if false {")]),
+ ("Z20-refusal-forbidden-substring", A+"vision_transcript.go", A, [("if !allModelStatements(texts) {\n\t\t_, f :=", "if true {\n\t\t_, f :=")]),
+ ("Z21-no-space-scripts-word-only", A+"vision_transcript.go", A, [("if sub && strings.Contains(k, tok) {", "if sub && false && strings.Contains(k, tok) {")]),
+ ("Z22-tatweel-kept", T+"schema.go", T, [("if isOptionalVowelMark(r) || r == '\\u0640' {", "if isOptionalVowelMark(r) {")]),
+ ("Z23-sleep-ignores-cancel", A+"structured_executor.go", A, [('case <-ctx.Done():\n\t\t\treturn ActionResult{Success: false, Message: fmt.Sprintf("sleep', 'case <-make(chan struct{}):\n\t\t\treturn ActionResult{Success: false, Message: fmt.Sprintf("sleep')]),
+ ("Z24-skip-steps-run", A+"structured_executor.go", A, [("\t\tif step.Skip {\n\t\t\t// `_skip: true`", "\t\tif false {\n\t\t\t// `_skip: true`")]),
+ ("Z25-adb-state-any-line", A+"executor_factory.go", A, [("if l := strings.TrimSpace(lines[i]); adbStates[l] {", 'if l := strings.TrimSpace(lines[i]); l != "" {')]),
+ ("Z26-playwright-any-verb-observes", A+"structured_executor.go", A, [('return verb == "assertvisible" || verb == "waitfor"', 'return verb != ""')]),
+ ("Z27-host-step-failure-reprobed", A+"structured_executor.go", A, [("} else if executor != nil && !isHostOnlyStep(step) {", "} else if executor != nil {")]),
  ("X45-main-without-guard-panic", C+"main.go", C, [("if code := guardPanic(realMainFn); code != 0 {", "if code := func() int { realMainFn(); return 0 }(); code != 0 {")]),
 ]
 os.makedirs(work, exist_ok=True)
