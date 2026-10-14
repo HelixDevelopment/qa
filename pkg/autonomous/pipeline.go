@@ -259,6 +259,36 @@ type PipelineResult struct {
 	CoveragePct    float64          `json:"coverage_pct"`
 	Cost           *llm.CostSummary `json:"cost,omitempty"`
 	Error          string           `json:"error,omitempty"`
+
+	// Structured is the Phase 3.5 structured test-bank outcome, per case
+	// and per step (frame sha256 / pHash included). Nil when the phase
+	// did not run.
+	Structured *StructuredExecutionResult `json:"structured,omitempty"`
+	// StructuredError records why the structured phase could not run
+	// (e.g. banks failed to load).
+	StructuredError string `json:"structured_error,omitempty"`
+}
+
+// ExitCode is the process exit status for this session, on the
+// three-valued contract: 1 when the session failed or a structured case
+// FAILED; 2 when a structured case was BLOCKED (could not determine), when
+// structured cases ran but none passed, or when the structured phase could
+// not run its banks; 0 otherwise. A finding (1) outranks could-not-determine
+// (2). A session whose structured phase ran no case makes no structured
+// claim and is judged on its other phases alone.
+func (r *PipelineResult) ExitCode() int {
+	if r.Status == StatusFailed {
+		return 1
+	}
+	if r.Structured != nil && r.Structured.TestCasesRun > 0 {
+		if c := r.Structured.ExitCode(); c != 0 {
+			return c
+		}
+	}
+	if r.StructuredError != "" {
+		return 2
+	}
+	return 0
 }
 
 // SessionPipeline orchestrates the four-phase autonomous QA
@@ -1840,12 +1870,11 @@ func (sp *SessionPipeline) Run(
 	// ── Phase 3.5: Structured Test Bank Execution ──────
 	sp.setPhase("structured")
 	fmt.Println("[pipeline] Phase 3.5: Structured test bank execution")
-	structuredStart := time.Now()
-
-	structuredExec := NewStructuredTestExecutor(
-		*sp.config,
+	sp.runStructuredPhase(
+		ctx,
 		execFactory,
 		sp.selectProviderForPhase("structured"),
+		result,
 		func(f analysis.AnalysisFinding) {
 			allFindings = append(allFindings, f)
 		},
@@ -1854,27 +1883,6 @@ func (sp *SessionPipeline) Run(
 			_ = data
 		},
 	)
-
-	structuredResult, err := structuredExec.Execute(ctx)
-	if err != nil {
-		fmt.Printf(
-			"  [structured] Execution error: %v\n", err,
-		)
-	} else {
-		fmt.Printf(
-			"  [structured] Completed: %d passed, %d failed, "+
-				"%d blocked (could not determine), "+
-				"%d skipped (bank placeholders), %d total, "+
-				"%d steps executed in %v\n",
-			structuredResult.TestCasesPassed,
-			structuredResult.TestCasesFailed,
-			structuredResult.TestCasesBlocked,
-			structuredResult.TestCasesSkipped,
-			structuredResult.TestCasesRun,
-			structuredResult.StepsExecuted,
-			time.Since(structuredStart).Round(time.Millisecond),
-		)
-	}
 
 	// ── Phase 3.6: Curiosity-Driven Exploration ────────
 	if sp.config.CuriosityEnabled {
@@ -3980,6 +3988,47 @@ func selectEvenly(items []string, max int) []string {
 		selected = append(selected, items[idx])
 	}
 	return selected
+}
+
+// runStructuredPhase runs Phase 3.5 (structured test-bank execution) and
+// records its outcome on the session result.
+func (sp *SessionPipeline) runStructuredPhase(
+	ctx context.Context,
+	execFactory ExecutorFactory,
+	vision llm.Provider,
+	result *PipelineResult,
+	onFinding func(analysis.AnalysisFinding),
+	onScreenshot func(platform string, data []byte),
+) {
+	structuredStart := time.Now()
+	structuredExec := NewStructuredTestExecutor(
+		*sp.config, execFactory, vision, onFinding, onScreenshot,
+	)
+	structuredResult, err := structuredExec.Execute(ctx)
+	// Record the outcome on the session result: it is persisted by
+	// WriteReport (per-case verdicts, per-step frame sha256 / pHash) and
+	// drives the process exit code (PipelineResult.ExitCode).
+	result.Structured = structuredResult
+	if err != nil {
+		result.StructuredError = err.Error()
+		fmt.Printf(
+			"  [structured] Execution error: %v\n", err,
+		)
+	} else {
+		fmt.Printf(
+			"  [structured] Completed: %d passed, %d failed, "+
+				"%d blocked (could not determine), "+
+				"%d skipped (bank placeholders), %d total, "+
+				"%d steps executed in %v\n",
+			structuredResult.TestCasesPassed,
+			structuredResult.TestCasesFailed,
+			structuredResult.TestCasesBlocked,
+			structuredResult.TestCasesSkipped,
+			structuredResult.TestCasesRun,
+			structuredResult.StepsExecuted,
+			time.Since(structuredStart).Round(time.Millisecond),
+		)
+	}
 }
 
 // WriteReport writes the PipelineResult as JSON to

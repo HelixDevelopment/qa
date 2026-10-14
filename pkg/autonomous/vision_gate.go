@@ -450,10 +450,10 @@ const (
 // StructuredCaseResult is the per-case evidence record: the verdict and
 // every executed step's result, frame hashes included.
 type StructuredCaseResult struct {
-	ID      string
-	Name    string
-	Verdict CaseVerdict
-	Steps   []TestStepResult
+	ID      string           `json:"id"`
+	Name    string           `json:"name"`
+	Verdict CaseVerdict      `json:"verdict"`
+	Steps   []TestStepResult `json:"steps"`
 }
 
 // ExitCode maps the run onto the three-valued contract: 1 when any case

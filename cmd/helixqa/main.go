@@ -960,6 +960,19 @@ func cmdAutonomous(args []string) {
 			"Session failed: %s\n", result.Error)
 		os.Exit(1)
 	}
+	// Structured bank outcome -> exit code (1 a case FAILED, 2 a case
+	// BLOCKED / could not determine / banks not runnable; 1 outranks 2).
+	if code := result.ExitCode(); code != 0 {
+		if s := result.Structured; s != nil {
+			fmt.Fprintf(os.Stderr,
+				"Structured cases: %d passed, %d failed, %d blocked (could not determine), %d skipped — exit %d\n",
+				s.TestCasesPassed, s.TestCasesFailed, s.TestCasesBlocked, s.TestCasesSkipped, code)
+		}
+		if result.StructuredError != "" {
+			fmt.Fprintf(os.Stderr, "Structured phase could not run: %s\n", result.StructuredError)
+		}
+		os.Exit(code)
+	}
 }
 
 // detectADBDevices runs `adb devices` and returns all

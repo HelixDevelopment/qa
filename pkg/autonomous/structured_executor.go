@@ -201,6 +201,7 @@ func (ste *StructuredTestExecutor) executeTestCase(
 	testPassed := true
 	testBlocked := false
 	blockedReason := ""
+	blockedPlatform := ""
 	executedSteps := 0
 	skippedSteps := 0
 	var stepResults []TestStepResult
@@ -223,6 +224,7 @@ func (ste *StructuredTestExecutor) executeTestCase(
 			// steps would build on an unknown state, so stop here.
 			testBlocked = true
 			blockedReason = fmt.Sprintf("step %d: %s", i+1, stepResult.Actual)
+			blockedPlatform = ste.getPlatformForStep(step)
 			break
 		}
 
@@ -265,6 +267,29 @@ func (ste *StructuredTestExecutor) executeTestCase(
 			"  [structured] [%s] ⊘ BLOCKED — could not determine (%s)\n",
 			tc.ID, blockedReason,
 		)
+		// File it: a case the run could not judge must be as visible as
+		// one that failed — it is not a pass and must not vanish into a
+		// count. The finding names the cause; it does not claim an app
+		// defect.
+		finding := analysis.AnalysisFinding{
+			Category: analysis.CategoryFunctional,
+			Severity: ste.priorityToSeverity(tc.Priority),
+			Title: fmt.Sprintf(
+				"Test Case BLOCKED (could not determine): %s", tc.Name,
+			),
+			Description: fmt.Sprintf(
+				"Case %s could not be judged — its outcome is UNKNOWN, not passed.\n%s",
+				tc.ID, blockedReason,
+			),
+			Platform: blockedPlatform,
+			AcceptanceCriteria: "Every vision-gated step obtains a usable, " +
+				"frame-bound verdict (vision provider reachable and answering " +
+				"in the required format, non-blank frames, goldens present).",
+		}
+		result.Findings = append(result.Findings, finding)
+		if ste.onFinding != nil {
+			ste.onFinding(finding)
+		}
 	case executedSteps == 0 && skippedSteps > 0:
 		caseRec.Verdict = CaseVerdictSkipped
 		// Every step was a bank placeholder — nothing actually ran
@@ -741,7 +766,6 @@ func runAssertion(h *HTTPExecutor, value string) ActionResult {
 	}
 }
 
-
 // preflightStopCompetingApps force-stops known channel-publishing
 // apps on Android TV so that a rogue DPAD_ENTER on a foreign
 // channel tile does not silently hand control over and void the
@@ -1166,51 +1190,51 @@ func (ste *StructuredTestExecutor) priorityToSeverity(
 
 // StructuredExecutionResult holds the results of structured test execution.
 type StructuredExecutionResult struct {
-	TestCasesRun     int
-	TestCasesPassed  int
-	TestCasesFailed  int
-	TestCasesSkipped int
+	TestCasesRun     int `json:"test_cases_run"`
+	TestCasesPassed  int `json:"test_cases_passed"`
+	TestCasesFailed  int `json:"test_cases_failed"`
+	TestCasesSkipped int `json:"test_cases_skipped"`
 	// TestCasesBlocked counts cases that stopped on a step whose
 	// outcome could not be determined (rc semantic 2) — never a pass.
-	TestCasesBlocked int
-	StepsExecuted    int
-	Findings         []analysis.AnalysisFinding
+	TestCasesBlocked int                        `json:"test_cases_blocked"`
+	StepsExecuted    int                        `json:"steps_executed"`
+	Findings         []analysis.AnalysisFinding `json:"findings"`
 	// Cases is the per-case evidence record (verdict + step results,
 	// frame hashes included).
-	Cases []StructuredCaseResult
+	Cases []StructuredCaseResult `json:"cases"`
 }
 
 // TestStepResult represents the outcome of a single test step.
 type TestStepResult struct {
-	StepName string
-	Passed   bool
-	Skipped  bool
+	StepName string `json:"step_name"`
+	Passed   bool   `json:"passed"`
+	Skipped  bool   `json:"skipped"`
 	// Blocked: the step's outcome could not be determined (a
 	// vision-gated step without a usable verdict). Never Passed.
-	Blocked bool
-	Actual  string
+	Blocked bool   `json:"blocked"`
+	Actual  string `json:"actual"`
 
 	// VisionGated mirrors TestStep.IsVisionGated for the evidence record.
-	VisionGated bool
+	VisionGated bool `json:"vision_gated"`
 	// VisionStatus is what the vision layer established (see VisionStatus).
-	VisionStatus VisionStatus
+	VisionStatus VisionStatus `json:"vision_status"`
 	// VisionReason explains VisionStatus in one line.
-	VisionReason string
+	VisionReason string `json:"vision_reason"`
 	// VisionDescription is the expectation-blind description the model
 	// gave (recognize/forbid evidence), when one was requested.
-	VisionDescription string
+	VisionDescription string `json:"vision_description"`
 	// VisionProvider names the provider whose definite answer (or
 	// transcription) the verdict rests on.
-	VisionProvider string
+	VisionProvider string `json:"vision_provider"`
 	// FrameSHA256 / FramePHash identify the exact after-action frame
 	// bytes every verdict on this step refers to (pHash: 16 hex digits).
-	FrameSHA256 string
-	FramePHash  string
+	FrameSHA256 string `json:"frame_sha256"`
+	FramePHash  string `json:"frame_phash"`
 	// BeforeFrameSHA256 identifies the before-action frame.
-	BeforeFrameSHA256 string
+	BeforeFrameSHA256 string `json:"before_frame_sha256"`
 	// GoldenDistance is the pHash Hamming distance to the step's golden,
 	// or -1 when no golden was compared.
-	GoldenDistance int
+	GoldenDistance int `json:"golden_distance"`
 }
 
 // ActionResult represents the outcome of performing an action.
