@@ -348,7 +348,11 @@ func (ste *StructuredTestExecutor) executeStep(
 
 	// Get executor for platform
 	executor, err := ste.execFactory.Create(platform)
-	if err != nil {
+	if err != nil && isHostOnlyStep(step) {
+		// shell: / http: / assert: / sleep: run on the host and decide on
+		// their own; a missing device must not hide their real verdict.
+		executor = nil
+	} else if err != nil {
 		// No device / display / browser to act on: the step could not be
 		// run at all. That is an environment problem, never an app
 		// defect — BLOCKED (filed as an environment finding).
@@ -376,7 +380,11 @@ func (ste *StructuredTestExecutor) executeStep(
 	ste.ensureAppForeground(ctx, platform, tc, stepNum)
 
 	// Take screenshot before action
-	beforeSS, beforeErr := executor.Screenshot(ctx)
+	var beforeSS []byte
+	var beforeErr error
+	if executor != nil {
+		beforeSS, beforeErr = executor.Screenshot(ctx)
+	}
 	if beforeErr != nil {
 		beforeSS = nil
 	}
@@ -428,7 +436,11 @@ func (ste *StructuredTestExecutor) executeStep(
 	// Take screenshot after action.
 	// 500ms is enough for UI to settle after a keypress/tap.
 	ste.settle()
-	afterSS, afterErr := executor.Screenshot(ctx)
+	var afterSS []byte
+	var afterErr error
+	if executor != nil {
+		afterSS, afterErr = executor.Screenshot(ctx)
+	}
 	if afterErr != nil {
 		afterSS = nil
 	}
@@ -471,7 +483,7 @@ func (ste *StructuredTestExecutor) performAction(
 		fmt.Printf("      [action] adb shell: %s\n", actionValue)
 		adbExec, ok := executor.(*navigator.ADBExecutor)
 		if !ok {
-			return ActionResult{Success: false, Message: "adb_shell requires an Android executor"}
+			return ActionResult{Blocked: true, Message: "adb_shell requires an Android executor (environment / platform mismatch, not an app defect)"}
 		}
 		out, err := adbExec.Shell(ctx, actionValue)
 		if err != nil {
@@ -589,7 +601,7 @@ func (ste *StructuredTestExecutor) performAction(
 		fmt.Printf("      [action] playback_check: %s\n", actionValue)
 		adbExec, ok := executor.(*navigator.ADBExecutor)
 		if !ok {
-			return ActionResult{Success: false, Message: "playback_check requires an Android executor"}
+			return ActionResult{Blocked: true, Message: "playback_check requires an Android executor (environment / platform mismatch, not an app defect)"}
 		}
 		pkg, minState := parsePlaybackCheckArgs(actionValue)
 		out, err := adbExec.Shell(ctx, "dumpsys media_session 2>/dev/null")
@@ -616,12 +628,12 @@ func (ste *StructuredTestExecutor) performAction(
 		}
 		first, err := executor.Screenshot(ctx)
 		if err != nil || len(first) == 0 {
-			return ActionResult{Success: false, Message: fmt.Sprintf("first screenshot failed: %v", err)}
+			return ActionResult{Blocked: true, Message: fmt.Sprintf("frame_diff: first screenshot failed: %v (capture problem, not an app defect)", err)}
 		}
 		time.Sleep(time.Duration(waitMs) * time.Millisecond)
 		second, err := executor.Screenshot(ctx)
 		if err != nil || len(second) == 0 {
-			return ActionResult{Success: false, Message: fmt.Sprintf("second screenshot failed: %v", err)}
+			return ActionResult{Blocked: true, Message: fmt.Sprintf("frame_diff: second screenshot failed: %v (capture problem, not an app defect)", err)}
 		}
 		changed, diffPct, cmpErr := compareFrames(first, second)
 		if cmpErr != nil {
@@ -1476,4 +1488,15 @@ func absU32(a, b uint32) uint32 {
 		return a - b
 	}
 	return b - a
+}
+
+// isHostOnlyStep reports a non-gated step whose action runs on the host
+// (shell:, http:, assert:, sleep:) and needs no device executor. A
+// vision-gated step always needs one (it is judged on a frame).
+func isHostOnlyStep(step testbank.TestStep) bool {
+	if step.IsVisionGated() {
+		return false
+	}
+	kind, _ := step.ParseAction()
+	return kind.IsNonScreen() || kind == testbank.ActionTypeSleep
 }
