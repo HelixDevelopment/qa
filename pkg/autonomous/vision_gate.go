@@ -27,10 +27,11 @@ const EnvGoldensDir = "HELIXQA_GOLDENS_DIR"
 // frame. It deliberately carries neither the step's expectation nor its
 // recognize/forbid tokens, so the model cannot parrot them back.
 const blindDescribePrompt = "Describe what this screenshot shows.\n" +
-	"First, under the heading TEXT:, transcribe every piece of text that is " +
-	"visible on the screen, verbatim, one item per line. If no text is visible, " +
-	"leave the TEXT: section empty.\n" +
-	"Then, under the heading DESCRIPTION:, describe the layout and state of the screen in one paragraph.\n" +
+	"On the first line write the heading TEXT: alone. Below it, transcribe every piece of " +
+	"text that is visible on the screen, verbatim, one item per line. If no text is " +
+	"visible, write nothing under it.\n" +
+	"Then write the heading DESCRIPTION: and describe the layout and state of the " +
+	"screen in one paragraph. Use no other headings.\n" +
 	"Report only what is visible; do not infer or guess anything that is not shown."
 
 // frameSHA256 is the hex sha256 of the exact frame bytes.
@@ -48,38 +49,68 @@ func framePHash(b []byte) (uint64, error) {
 	return hash.PHasher{}.Hash(img)
 }
 
-// transcriptionHeadRe / descriptionHeadRe locate the two sections the
-// blind prompt asks for.
+// Structure of a blind reply, enforced strictly (see extractTranscription).
 var (
-	transcriptionHeadRe = regexp.MustCompile(`(?i)^[ \t*#_-]*TEXT[ \t*_]*:(.*)$`)
-	descriptionHeadRe   = regexp.MustCompile(`(?i)^[ \t*#_-]*DESCRIPTION[ \t*_]*:`)
+	// a standalone TEXT: heading (optionally markdown/bold-decorated)
+	transcriptionHeadRe = regexp.MustCompile(`(?i)^[ \t]*(?:#+[ \t]*)?[*_]*[ \t]*TEXT[ \t]*[*_]*[ \t]*:[ \t]*[*_]*[ \t]*$`)
+	// a DESCRIPTION: heading (content may follow on the same line)
+	descriptionHeadRe = regexp.MustCompile(`(?i)^[ \t]*(?:#+[ \t]*)?[*_]*[ \t]*DESCRIPTION[ \t]*[*_]*[ \t]*:`)
+	// any other heading-like line: markdown heading, whole-line bold, or a
+	// few words ending in ':' or a dash with nothing after them
+	headingLikeRes = []*regexp.Regexp{
+		regexp.MustCompile(`^[ \t]*#`),
+		regexp.MustCompile(`^[ \t]*\*\*[^*]+\*\*[ \t]*:?[ \t]*$`),
+		regexp.MustCompile(`^[ \t]*__[^_]+__[ \t]*:?[ \t]*$`),
+		regexp.MustCompile(`^[ \t]*[A-Za-z][A-Za-z ]{0,40}[ \t]*(?::|-|–|—)[ \t]*$`),
+	}
 )
 
-// extractTranscription returns the TEXT: section of a blind reply — the
-// verbatim on-screen text — and whether the section exists. Only this
-// section is evidence of what is ON the screen; the DESCRIPTION is the
-// model's own prose ("the Settings screen is not shown", "no error is
-// visible") and must never satisfy recognize or trip forbid.
-func extractTranscription(reply string) (string, bool) {
-	var b strings.Builder
-	found := false
-	for _, line := range strings.Split(reply, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if !found {
-			if m := transcriptionHeadRe.FindStringSubmatch(line); m != nil {
-				found = true
-				b.WriteString(m[1])
-				b.WriteByte('\n')
-			}
-			continue
+func isHeadingLike(line string) bool {
+	for _, re := range headingLikeRes {
+		if re.MatchString(line) {
+			return true
 		}
+	}
+	return false
+}
+
+// extractTranscription returns the TEXT: section of a blind reply — the
+// verbatim on-screen text — and whether the reply has the required shape:
+// its first non-blank line is a standalone TEXT: heading and the section is
+// closed by a DESCRIPTION: heading. Any other heading-like line before the
+// DESCRIPTION: heading (markdown "#", a whole-line **bold**, "Word -",
+// "Word:") makes the shape invalid, because the model's own prose could
+// follow it. Only this section is evidence of what is ON the screen; the
+// DESCRIPTION is the model's prose ("the Settings screen is not shown")
+// and must never satisfy recognize or trip forbid. Filler lines such as
+// "(none)" or "No text visible" are dropped: they mean "no text", not text.
+// Recall cost: a screen whose transcription has a bare label line such as
+// "Username:" is reported unusable (the step is BLOCKED), never passed.
+func extractTranscription(reply string) (string, bool) {
+	lines := strings.Split(strings.ReplaceAll(reply, "\r", ""), "\n")
+	i := 0
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i == len(lines) || !transcriptionHeadRe.MatchString(lines[i]) {
+		return "", false
+	}
+	var b strings.Builder
+	for _, line := range lines[i+1:] {
 		if descriptionHeadRe.MatchString(line) {
-			break
+			return b.String(), true
+		}
+		if isHeadingLike(line) {
+			return "", false
+		}
+		key := testbank.VisionTokenKey(line)
+		if key == "" || testbank.IsVisionFiller(key) {
+			continue
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	return b.String(), found
+	return "", false // no DESCRIPTION: heading closed the TEXT: section
 }
 
 // compareFrames decides whether two decodable frames differ. Frames that

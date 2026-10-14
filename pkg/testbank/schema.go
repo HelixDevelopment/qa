@@ -633,6 +633,21 @@ const MaxPHashMaxDistance = 16
 // never be recognize/forbid tokens.
 var visionHeadingWords = map[string]bool{"text": true, "description": true}
 
+// visionFillerKeys are normalised phrases a model writes to say "there is
+// no text". They are never screen text: dropped from a transcription and
+// refused as recognize/forbid tokens.
+var visionFillerKeys = map[string]bool{
+	"no": true, "not": true, "none": true, "nothing": true, "empty": true,
+	"blank": true, "null": true, "nil": true, "na": true, "n a": true,
+	"no text": true, "no text visible": true, "no visible text": true,
+	"no text is visible": true, "nothing visible": true, "nothing is visible": true,
+	"there is no text": true, "no text present": true, "none visible": true,
+}
+
+// IsVisionFiller reports whether a normalised (VisionTokenKey) phrase is
+// "no text" filler rather than on-screen text.
+func IsVisionFiller(key string) bool { return visionFillerKeys[key] }
+
 // HasPositiveVisionCheck reports whether the step asks for positive
 // evidence of the expected screen (vision_verify, recognize or golden), as
 // opposed to only negative evidence (forbid) or "something changed"
@@ -727,6 +742,10 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 			return fmt.Sprintf("test case %s step %d: recognize token %q is empty after "+
 				"normalisation — it would match every description", caseID, idx, tok)
 		}
+		if IsVisionFiller(k) {
+			return fmt.Sprintf("test case %s step %d: recognize token %q is filler a model writes "+
+				"when there is NO text (it is dropped from the transcription)", caseID, idx, tok)
+		}
 		if visionHeadingWords[k] {
 			return fmt.Sprintf("test case %s step %d: recognize token %q is a heading word of the "+
 				"transcription prompt — the model writes it whatever the screen shows", caseID, idx, tok)
@@ -738,6 +757,10 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 		if k == "" {
 			return fmt.Sprintf("test case %s step %d: forbid token %q is empty after "+
 				"normalisation — it would forbid every description", caseID, idx, tok)
+		}
+		if IsVisionFiller(k) {
+			return fmt.Sprintf("test case %s step %d: forbid token %q is filler a model writes "+
+				"when there is NO text (it is dropped from the transcription)", caseID, idx, tok)
 		}
 		if visionHeadingWords[k] {
 			return fmt.Sprintf("test case %s step %d: forbid token %q is a heading word of the "+

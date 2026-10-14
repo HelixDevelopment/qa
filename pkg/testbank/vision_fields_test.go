@@ -146,6 +146,9 @@ func TestVisionFields_ReviewLoadRules(t *testing.T) {
 		{"vision_verify on shell", TestStep{Action: "shell: true", VisionVerify: true}, "screen"},
 		{"recognize on http", TestStep{Action: "http: GET /x", ExpectStatus: 200, Recognize: []string{"ok"}}, "screen"},
 		{"golden on assert", TestStep{Action: "assert: status_eq: 200", Golden: "g"}, "screen"},
+		{"filler token No", TestStep{Action: "screenshot", Recognize: []string{"No"}}, "filler"},
+		{"filler token None", TestStep{Action: "screenshot", VisionVerify: true, Forbid: []string{"(none)"}}, "filler"},
+		{"filler token N/A", TestStep{Action: "screenshot", Recognize: []string{"N/A"}}, "filler"},
 		{"vision_verify on prose description", TestStep{Action: "Check the settings screen", VisionVerify: true}, "not executable"},
 		{"recognize on CONVERT placeholder", TestStep{Action: "# CONVERT: Convert to executable", VisionVerify: true, Recognize: []string{"x"}}, "not executable"},
 	}
