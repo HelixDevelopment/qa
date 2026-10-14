@@ -385,6 +385,19 @@ func (ste *StructuredTestExecutor) executeStep(
 	// no failure, just propagate the Skipped flag so the test case
 	// loop can account for them separately.
 	if actionResult.Skipped {
+		if step.IsVisionGated() {
+			// A vision-gated step asserts what the screen shows; if its
+			// action could not even run, that assertion was never made.
+			// It is not a placeholder to be ignored — the case cannot be
+			// judged, so the step is BLOCKED (never a silent skip that lets
+			// the rest of the case PASS).
+			result.Blocked = true
+			result.VisionGated = true
+			result.VisionStatus = VisionBlocked
+			result.VisionReason = "vision-gated step was skipped: " + actionResult.Message
+			result.Actual = "BLOCKED (could not determine): " + result.VisionReason
+			return result
+		}
 		result.Skipped = true
 		result.Actual = actionResult.Message
 		return result

@@ -696,6 +696,11 @@ func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
 		}
 	}
 	if st.IsVisionGated() {
+		if kind, _ := st.ParseAction(); kind == ActionTypeDescription {
+			return fmt.Sprintf("test case %s step %d: vision keys on a prose/description action — the "+
+				"action is not executable, so the step would be skipped and its vision check never "+
+				"made; use screenshot, sleep: or a real UI action", caseID, idx)
+		}
 		if kind, _ := st.ParseAction(); kind.IsNonScreen() {
 			return fmt.Sprintf("test case %s step %d: vision keys (vision_verify, recognize, forbid, "+
 				"golden, expect_change) are only meaningful on a screen action, but this step's "+

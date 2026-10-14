@@ -96,6 +96,8 @@ M = [
  ("M43-unloadable-banks-exit-0", A+"pipeline.go", A, [('if r.StructuredError != "" {\n\t\treturn 2', 'if false {\n\t\treturn 2')]),
  ("M44-blocked-case-files-no-finding", A+"structured_executor.go", A, [("\t\tresult.Findings = append(result.Findings, finding)\n\t\tif ste.onFinding != nil {\n\t\t\tste.onFinding(finding)", "\t\t_ = finding\n\t\tif false {\n\t\t\tste.onFinding(finding)")]),
  ("M45-desktop-shell-pass-ignores-unrun-steps", O+"definition_challenge.go", O, [("case allPassed && caseHasUnrunAssertingStep(d.testCase):", "case allPassed && caseHasUnrunAssertingStep(d.testCase) && false:")]),
+ ("M46-skipped-gated-step-ignored", A+"structured_executor.go", A, [("\tif actionResult.Skipped {\n\t\tif step.IsVisionGated() {", "\tif actionResult.Skipped {\n\t\tif step.IsVisionGated() && false {")]),
+ ("M47-loader-accepts-vision-on-prose", T+"schema.go", T, [("kind == ActionTypeDescription {\n\t\t\treturn fmt.Sprintf(\"test case %s step %d: vision keys on a prose", "kind == ActionTypeDescription && false {\n\t\t\treturn fmt.Sprintf(\"test case %s step %d: vision keys on a prose")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),

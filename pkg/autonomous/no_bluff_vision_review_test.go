@@ -10,6 +10,7 @@ package autonomous
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -174,3 +175,34 @@ func TestNoBluffVision_ProviderFallThroughAndOrdering(t *testing.T) {
 type errTest string
 
 func (e errTest) Error() string { return string(e) }
+
+// Review round 2, finding 2 (HIGH): a vision-gated step that the executor
+// SKIPS (prose description action, playwright without a CDP URL) asserted
+// nothing — its case must be BLOCKED, never PASSED.
+func TestNoBluffVision_SkippedGatedStepBlocksCase(t *testing.T) {
+	t.Setenv("HELIXQA_PLAYWRIGHT_CDP_URL", "")
+	gatedSkips := map[string]testbank.TestStep{
+		"description + vision_verify": {Name: "look", Action: "Check that the settings screen is shown", Expected: "settings", VisionVerify: true},
+		"playwright (no CDP) + recognize": {Name: "nav", Action: "playwright: navigate http://127.0.0.1:1/", Expected: "home", Recognize: []string{"Home"}},
+	}
+	for name, st := range gatedSkips {
+		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes", blind: "TEXT:\nHome\nDESCRIPTION: x"}, noisePNG(t, 1), noisePNG(t, 2))
+		res := &StructuredExecutionResult{}
+		tc := testbank.TestCase{ID: "TC-SKG", Name: "skipped gated", Steps: []testbank.TestStep{{Name: "ok", Action: "keypress: X", Expected: "x"}, st}}
+		if err := ste.executeTestCase(context.Background(), tc, res); err != nil {
+			t.Fatal(err)
+		}
+		if res.TestCasesPassed != 0 || res.TestCasesBlocked != 1 || res.ExitCode() != 2 {
+			t.Errorf("%s: passed=%d blocked=%d skipped=%d exit=%d — a skipped gated step must BLOCK the case",
+				name, res.TestCasesPassed, res.TestCasesBlocked, res.TestCasesSkipped, res.ExitCode())
+		}
+	}
+	// Golden-good: an UNgated prose step is still an honest SKIP.
+	ste, _ := newSTE(nilProvider, noisePNG(t, 1), noisePNG(t, 2))
+	res := &StructuredExecutionResult{}
+	tc := testbank.TestCase{ID: "TC-SKP", Name: "plain skip", Steps: []testbank.TestStep{{Name: "p", Action: "Just prose"}}}
+	_ = ste.executeTestCase(context.Background(), tc, res)
+	if res.TestCasesSkipped != 1 || res.TestCasesBlocked != 0 {
+		t.Fatalf("ungated prose step: %+v", res)
+	}
+}
