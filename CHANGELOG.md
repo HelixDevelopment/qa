@@ -39,6 +39,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Round-8 hardening (review round 7):** Ctrl-C during a real `shell:`
+  step is SKIPPED "interrupted" (round 7 still exited 1 for a cancel: the
+  interrupted result had no assertion and the runner's anti-bluff gate
+  turned it into FAILED); a step that failed before a deadline stays
+  FAILED; challenges that never started are listed. `shell:` steps run in
+  their own process group, killed whole on cancellation (pkg/shellexec).
+  **Changed (round 7's ID order is corrected):** challenges — in `run` and
+  in the autonomous structured phase — run in DEPENDENCY order, ID as the
+  tie-break; a dependency cycle is reported, not run. The ACTUAL scan now
+  matches only "could not see / view / read the image" wording and only for
+  a yes (round 7 blocked "The screenshot shows …" and definite NOs); its
+  limits are documented (waived). An empty `expected` is never sent to the
+  model. **Breaking:** an `http:` step without `expect_status` must return
+  a 2xx (46 bank steps affected). A refusal sentence mentioning a forbidden
+  word is not a FAIL; Han / kana / Thai / Lao / Khmer / Myanmar tokens
+  match as substrings; tatweel folded. `sleep:` honours cancellation;
+  `_skip: true` steps are not run by the structured phase; adb get-state
+  reads its state line. Waived (documented, no code): ACTUAL-hedge wording
+  heuristics, frame_diff over a black DRM area under visible chrome.
+  Mutants Z01-Z27 added.
 - **Round-7 hardening (review round 6):** a structured case PASSes only
   when a step OBSERVED app state (vision-confirmed screen, `http:`,
   `assert:`, `shell:`, `playback_check:`, `frame_diff:`, playwright

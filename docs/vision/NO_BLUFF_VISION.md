@@ -20,7 +20,7 @@ Code: `pkg/autonomous/vision_gate.go` (`judgeStep`),
 
 | Case verdict | Meaning |
 |---|---|
-| PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; **no step was skipped** as not executable; **and at least one step OBSERVED app state** — a vision-confirmed screen, an `http:` response, an `assert:`, a `shell:` exit code / output, `playback_check:`, `frame_diff:`, or a `playwright:` `assertvisible` / `waitfor`. Input steps (`tap:`, `keypress:`, `text:`, `swipe:`, `adb_shell:`, other `playwright:` verbs) only report that the input was ACCEPTED, and `sleep:` / `screenshot` / prose observe nothing |
+| PASSED | every executed step's action succeeded; every vision-gated step was executed (a gated step is never skipped) and every requested check positively succeeded on its bound frame; **no step was skipped** as not executable; **and at least one step OBSERVED app state** — a vision-confirmed screen (never for an empty `expected`, which is not sent to the model), an `http:` response checked against its expectations (with no `expect_status` a 2xx is required), an `assert:` on a response of the same case, a `shell:` exit code / output, `playback_check:`, `frame_diff:`, or a `playwright:` `assertvisible` / `waitfor`. Input steps (`tap:`, `keypress:`, `text:`, `swipe:`, `adb_shell:`, other `playwright:` verbs) only report that the input was ACCEPTED, and `sleep:` / `screenshot` / prose observe nothing |
 | FAILED | an action failed, or a frame was read and contradicts the expectation |
 | BLOCKED | the outcome could not be determined — never a pass, never an app defect: a vision-gated step without a usable verdict; a gated step whose action had to be skipped (`playwright:` without a CDP URL); **no step observed app state**, or a step was **skipped as not executable** (the case was only partly run); the **session context ended** (timeout / cancel) before or during a step; a capture problem (`frame_diff` whose screenshot fails, whose frames are undecodable / differently sized, or **black** — every sampled channel ≤ 16: FLAG_SECURE / DRM surfaces, screen off; a uniform grey slate or a dark low-contrast scene is judged — `expect_change` on non-comparable frames, an ungated `screenshot` step whose capture failed); an Android-only action (`playback_check:`, `adb_shell:`) on a non-Android executor; no executor for the platform (no device / display / browser); a **configured device / display that is unreachable** (probed per platform: the last non-empty line of `adb get-state` must be `device`, desktop / web one real capture must succeed; a successful probe is cached, a failed one for 15 s; and after ANY device-action failure the probe is re-run uncached — when it fails the step is BLOCKED, when it succeeds the failure stands; the action's error text is never parsed); an `http:` step with **no base URL** configured (`HELIXQA_HTTP_BASE_URL` / `PipelineConfig.HTTPBaseURL`); an `assert:` with no `http:` step earlier in the SAME case (a bank defect). Host-only steps (`shell:`, `http:`, `assert:`, `sleep:`, not vision-gated) still run without an executor; `shell:` / `http:` / `assert:` decide on their own result, `sleep:` asserts nothing. |
 | SKIPPED | bank placeholder / `requires_env` unset |
@@ -69,7 +69,7 @@ returns the result — including the partial result of a platform that was
 cancelled mid-way — with the error, and a failed challenge / crash / ANR in
 it still exits **1** (`error: … (exit 1)` plus the counts on stderr). A
 challenge whose outcome the cancellation produced (an interrupted command,
-a runner timeout) is recorded as SKIPPED "interrupted", never FAILED. Challenges run in ID order (the bank is a map: the order used to differ from run to run, so a timeout cut a different challenge each time).
+a runner timeout) is recorded as SKIPPED "interrupted", never FAILED. Challenges run in DEPENDENCY order — declared `dependencies:` first, ID as the tie-break (the bank is a map: the order used to differ from run to run) — and the autonomous structured phase uses the same order across all its banks. Cases in, or depending on, a dependency cycle are not run: `helixqa run` records them SKIPPED "dependency cycle among …", the structured phase BLOCKED. After a cancellation every challenge that never started is listed SKIPPED "not started". A `shell:` step runs in its own process group; cancellation kills that group (never HelixQA's own), so no child outlives the run.
 
 Both commands also use:
 
@@ -134,7 +134,8 @@ digits or combining marks becomes one space. `"Sign-In!"` matches token
 `sign in`; token `error` does NOT match `errors` or `terror`. Combining
 marks (Mn / Mc) are part of the word — a Devanagari or Thai vowel sign
 changes it (`काल` is not `कल`) — except the optional Arabic harakat and
-Hebrew niqqud, which are dropped (`كَتَبَ` matches `كتب`).
+Hebrew niqqud, which are dropped (`كَتَبَ` matches `كتب`), as is the Arabic
+tatweel U+0640 (`خطـــأ` matches `خطأ`).
 
 ### What the model is asked
 
@@ -148,13 +149,20 @@ Hebrew niqqud, which are dropped (`كَتَبَ` matches `كتب`).
   retraction ("Wait, no."), a second verdict inside prose, a filled
   template followed by "the screen does not match", a code fence — makes
   the reply ambiguous: next provider, else BLOCKED. Multi-line `ACTUAL`
-  descriptions are ambiguous (recall cost). The ACTUAL text itself is
-  scanned: a second
-  verdict (`verified: …`) or the model saying it could not see / read the
-  image ("I cannot see the image", "unable to view images; assuming yes")
-  makes the reply ambiguous too. Residual: a plain contradiction in the
-  ACTUAL text ("the settings screen is NOT shown") is not understood, so
-  `VERIFIED: yes` next to it is honoured.
+  descriptions are ambiguous (recall cost). The ACTUAL text of a
+  `VERIFIED: yes` reply is scanned (a definite NO never is): the
+  template's upper-case second verdict (`VERIFIED: no`) or the model saying
+  it could not see / view / read the IMAGE ("I cannot see the image",
+  "unable to view images; assuming yes", "could not read the screenshot")
+  makes the reply ambiguous. An ordinary description ("The screenshot
+  shows …", "I don't see any error dialogs", an "Email verified: yes"
+  badge) is not. **This scan is a heuristic (waived, review round 7,
+  finding 3):** other hedges are NOT detected and a `yes` next to them is
+  honoured — e.g. "Unable to determine; assuming yes", "No image was
+  attached, so I assumed …", "I do not have the ability to view images",
+  a refusal in another language ("Je ne peux pas voir l'image"), a plain
+  contradiction ("the settings screen is NOT shown"); and "VERIFIED - no"
+  (no colon) is not an answer line at all.
 - `recognize` / `forbid`: a separate expectation-BLIND prompt — it carries
   neither the expectation nor the tokens — asks for exactly one JSON object:
 
@@ -198,7 +206,13 @@ Hebrew niqqud, which are dropped (`كَتَبَ` matches `كتب`).
   anchor), so a refusal in words no phrase list knows cannot pass as a
   screen without the forbidden text. A recognize token found only INSIDE
   a longer element (`Sign In` in `Sign In to Catalogizer`) is BLOCKED with
-  a pointer to `recognize_contains`, never filed as an app defect. Normalisation applies NFKC (fullwidth
+  a pointer to `recognize_contains`, never filed as an app defect. In a reading where EVERY element is the
+  model talking, a forbidden word inside a refusal sentence ("I cannot
+  read the Error text") is not on the screen: there only an element EQUAL
+  to the token counts. Tokens in scripts written without spaces between
+  words (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) match as
+  SUBSTRINGS of an element (`错误` in `发生错误了`); Latin and other spaced
+  scripts keep whole-word matching. Normalisation applies NFKC (fullwidth
   letters, ligatures, mathematical alphanumerics fold to plain letters)
   and drops Unicode format characters (Cf: zero-width space / joiner, BOM,
   soft hyphen, tag characters) and the other invisible code points —
@@ -377,10 +391,20 @@ breaks none of them.
   `challenges/helixqa-banks/catalogizer-androidtv-negative-paths-executable.yaml`
   uses `frame_diff: 2000` at lines 451 and 504 (measured at `d211f574`); a
   capture problem there now reports BLOCKED (exit 2) instead of FAILED.
+  **Waived limit (review round 7, finding 10):** only a frame that is
+  black everywhere is BLOCKED; a secure / DRM video area that is black
+  UNDER visible player chrome (controls, subtitles, a progress bar) is
+  judged on the chrome — a frozen video there is reported only if the
+  chrome itself does not change.
 - A case PASSes only when a step OBSERVED app state (see the verdict
   table). "Observed" is decided by the action kind and the vision status:
   a `shell:` exit code counts even when the command checks nothing about
-  the app, and an `http:` step counts on its expected status / body checks.
+  the app, and an `http:` step counts on its expected status / body checks
+  (a 2xx when it declares none). 46 `http:` steps in this repository's,
+  catalogizer's and boba's banks declare no `expect_status` (e.g.
+  WK-AUTH-007, WK-PROG-009, SEC-009, COD-RED-UNREACHABLE-001): they now
+  FAIL on any non-2xx status; a step that expects an error must say
+  `expect_status: 4xx-code`.
 - Reachability: both production executor factories probe each platform
   (last `adb -s <serial> get-state` line must be `device`; desktop / web
   one real capture); `cli` / `api` platforms are not probed and the web
@@ -390,8 +414,10 @@ breaks none of them.
 - The run's cancellation / timeout: `helixqa run` keeps the challenges a
   platform already ran (a FAILED one exits 1) and records a challenge cut
   by the cancellation as SKIPPED "interrupted" (exit 2 when nothing
-  failed); the structured executor BLOCKS every step once the session
-  context ended.
+  failed) — for Ctrl-C (a cancel) and `--timeout` (a deadline) alike; a
+  step that FAILED before the cancellation keeps the challenge FAILED.
+  The structured executor BLOCKS every step once the session context
+  ended, and `sleep:` stops on cancellation.
 - Secrets: `HELIX_VISION_ENDPOINT` with user info, a query (also a bare
   `?`), a fragment (also a bare `#`), an encoded `?`/`#` (`%3F`/`%23`) or a
   `;` parameter in the path is refused at startup without echoing it. A

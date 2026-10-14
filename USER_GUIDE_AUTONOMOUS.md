@@ -508,7 +508,10 @@ Commentary in other wording inside `texts` is not detected; pair
 crash / ANR, 2 nothing failed but not everything executed (`INCOMPLETE`,
 including a bank that could not be loaded, a report that could not be
 written, or a run cut by Ctrl-C / `--timeout`). A failed challenge still
-exits 1 when an error or a cancellation follows it. Exit
+exits 1 when an error or a cancellation follows it. Challenges run in dependency
+order (`dependencies:` first, then ID); a dependency cycle is reported and
+not run. An `http:` step without `expect_status` must return a 2xx; a
+step that expects an error status must declare it. Exit
 70 means an internal HelixQA panic. Scripts must treat 2 as "not a pass",
 never as a warning. `helixqa autonomous` also exits 2 when the session is
 BLOCKED (network / VPN preflight, provider outage in learn / plan,
