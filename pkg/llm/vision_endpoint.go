@@ -43,13 +43,18 @@ func VisionEndpointConfigFromEnv(getenv func(string) string) (ProviderConfig, bo
 }
 
 // DescribeVisionEndpoint renders a log-safe one-line description of the
-// endpoint config: URL with any userinfo redacted, the model, and whether
-// an API key is set — never the key itself.
+// endpoint config: scheme://host/path only (userinfo, query and fragment
+// redacted; an unparsable URL is not printed at all), the model, and
+// whether an API key is set — never the key itself.
 func DescribeVisionEndpoint(cfg ProviderConfig) string {
-	shown := cfg.BaseURL
-	if u, err := url.Parse(cfg.BaseURL); err == nil && u.User != nil {
-		u.User = nil
-		shown = u.String() + " (userinfo redacted)"
+	shown := "(unparsable endpoint URL — not printed)"
+	if u, err := url.Parse(cfg.BaseURL); err == nil && u.Host != "" {
+		redacted := u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery
+		clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}
+		shown = clean.String()
+		if redacted {
+			shown += " (userinfo/query/fragment redacted)"
+		}
 	}
 	model := cfg.Model
 	if model == "" {

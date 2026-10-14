@@ -19,6 +19,17 @@ const (
 	openaiDefaultBaseURL = "https://api.openai.com"
 	openaiDefaultModel   = "gpt-4o"
 	openaiHTTPTimeout    = 180 * time.Second
+
+	// openaiMaxResponseBytes caps how much of a reply is read; a larger
+	// body is refused rather than buffered without limit.
+	openaiMaxResponseBytes = 8 << 20
+	// openaiErrorBodySnippet caps how much of an error reply is quoted in
+	// the returned error (error text reaches logs and reports).
+	openaiErrorBodySnippet = 512
+	// visionEndpointSeed is the fixed sampling seed sent to the
+	// operator-supplied vision endpoint so the same frame gets the same
+	// answer (together with temperature 0).
+	visionEndpointSeed = 1
 )
 
 // openaiProvider implements Provider for the OpenAI API.
@@ -55,9 +66,15 @@ var visionCapableProviders = map[string]bool{
 
 // openaiRequest is the JSON body sent to /v1/chat/completions.
 type openaiRequest struct {
-	Model     string         `json:"model"`
+	// Model is omitted when empty: an OpenAI-compatible local server
+	// (llama-server) then answers with the model it serves.
+	Model     string         `json:"model,omitempty"`
 	MaxTokens int            `json:"max_tokens"`
 	Messages  []openaiReqMsg `json:"messages"`
+	// Temperature / Seed are sent only to the vision endpoint (fixed,
+	// deterministic sampling); other providers keep their defaults.
+	Temperature *float64 `json:"temperature,omitempty"`
+	Seed        *int     `json:"seed,omitempty"`
 }
 
 // openaiReqMsg is a single outbound message whose content is an
@@ -115,7 +132,9 @@ func NewOpenAIProvider(cfg ProviderConfig) Provider {
 		baseURL = openaiDefaultBaseURL
 	}
 	model := cfg.Model
-	if model == "" {
+	if model == "" && cfg.Name != ProviderVisionEndpoint {
+		// The vision endpoint keeps an empty model: the request then
+		// omits "model" and the local server uses the one it serves.
 		model = openaiDefaultModel
 	}
 	name := cfg.Name
@@ -241,6 +260,10 @@ func (p *openaiProvider) doRequest(
 	ctx context.Context,
 	req openaiRequest,
 ) (*Response, error) {
+	if p.providerName == ProviderVisionEndpoint {
+		temp, seed := 0.0, visionEndpointSeed
+		req.Temperature, req.Seed = &temp, &seed
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
@@ -279,17 +302,23 @@ func (p *openaiProvider) doRequest(
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, openaiMaxResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("openai: read response body: %w", err)
 	}
-
 	if httpResp.StatusCode != http.StatusOK {
+		snippet := respBody
+		if len(snippet) > openaiErrorBodySnippet {
+			snippet = append(append([]byte(nil), snippet[:openaiErrorBodySnippet]...), "…(truncated)"...)
+		}
 		return nil, fmt.Errorf(
 			"openai: API error %d: %s",
 			httpResp.StatusCode,
-			string(respBody),
+			string(snippet),
 		)
+	}
+	if len(respBody) > openaiMaxResponseBytes {
+		return nil, fmt.Errorf("openai: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 
 	var apiResp openaiResponse

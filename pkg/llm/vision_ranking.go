@@ -65,6 +65,12 @@ type scoredProvider struct {
 //
 // Score = (0.6*quality + 0.4*reliability) * availabilityBoost * costBonus
 func scoreVisionProvider(p Provider) float64 {
+	// The operator-configured endpoint (HELIX_VISION_ENDPOINT) was set up
+	// explicitly as HelixQA's eyes: it outranks every registry provider
+	// (the formula below tops out at 1.0 * boosts < 2).
+	if p.Name() == ProviderVisionEndpoint {
+		return 10.0
+	}
 	info, found := visionRegistryByProvider[p.Name()]
 	if !found {
 		// Unknown provider: assign a low baseline so it is
