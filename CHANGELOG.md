@@ -13,29 +13,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `vision_verify`, `recognize`, `forbid`, `golden` +
   `phash_max_distance`, or `expect_change` are vision-gated and PASS only on
   positive evidence bound to the exact after-action frame (sha256 + pHash
-  recorded on every step result). New step/case verdict BLOCKED
-  (could not determine, `ExitCode()` 2) and `TestCasesBlocked`;
-  `StructuredExecutionResult.Cases` keeps per-case evidence.
-- **Bank keys** `golden`, `phash_max_distance`, `recognize`, `forbid`,
-  `expect_change`, with load-time refusal of vacuous or contradictory use.
+  recorded on every step result). New case verdict BLOCKED (could not
+  determine) with `TestCasesBlocked` and a filed
+  `Test Case BLOCKED (could not determine)` finding.
+- **Process exit code** for `helixqa autonomous` via
+  `PipelineResult.ExitCode()`: 1 session failed or a structured case FAILED;
+  2 a case BLOCKED, cases ran but none passed, or banks could not run;
+  0 otherwise. The structured outcome (per-case verdicts, per-step frame
+  evidence) is persisted in `pipeline-report.json` under `structured`.
+- **Bank keys** `golden`, `phash_max_distance` (0..16), `recognize`,
+  `forbid`, `expect_change`, with load-time refusal of vacuous,
+  contradictory or misplaced use (vision keys on shell/http/assert steps;
+  `expect_change`/`forbid` without `vision_verify`/`recognize`/`golden`;
+  prompt heading words as tokens).
 - **Local OpenAI-compatible vision endpoint**: `HELIX_VISION_ENDPOINT`
-  (+ optional `HELIX_VISION_MODEL`, `HELIX_VISION_API_KEY`) registers provider
-  `vision-endpoint` in the vision pool (e.g. llama-server / llmctl `vision`).
-- `challenges/scripts/no_bluff_vision_mutation_challenge.sh`: 21 paired
-  mutations run through `go test -overlay`; every one must turn the gate RED.
+  (+ optional `HELIX_VISION_MODEL`, `HELIX_VISION_API_KEY`) registers
+  provider `vision-endpoint` (e.g. llama-server / llmctl `vision`), asked
+  first, with temperature 0 and a fixed seed; empty model is omitted from
+  the request; the key and URL userinfo/query are never printed.
+- `challenges/scripts/no_bluff_vision_mutation_challenge.sh`: paired
+  mutations run through `go test -overlay` (honours `TMPDIR`, `--only`);
+  every mutant must be killed by an assertion, a build failure is
+  UNDETERMINED.
 - `docs/vision/NO_BLUFF_VISION.md` reference with judging state diagram.
 
 ### Changed
 
-- A vision provider error, ambiguous, self-contradictory or empty reply no
-  longer "falls back to action success" for a gated step (it is BLOCKED); a
-  non-gated step the model could not confirm is labelled
-  `UNVERIFIED-by-vision`.
+- **Behaviour change for existing banks:** steps that already carried
+  `vision_verify: true` were ignored and are now gated. In the catalogizer
+  checkout that is 27 steps across 4 banks (measured 2026-10-14); without a
+  vision provider answering in the `VERIFIED:` format those cases now
+  report BLOCKED (exit 2) instead of PASSED.
+- A vision answer is exactly one standalone `VERIFIED: yes|no` line; an
+  echoed template, `UNVERIFIED: yes`, the phrase in prose, or several answer
+  lines are ambiguous. An error / ambiguous reply moves on to the next
+  vision provider; a definite answer is final; if none answers the gated
+  step is BLOCKED (no more "falling back to action success"). A non-gated
+  step the model could not confirm is labelled `UNVERIFIED-by-vision`.
+- `recognize` / `forbid` match only the `TEXT:` transcription of an
+  expectation-blind reading, never the model's own prose.
 - Non-gated `shell:` / `http:` / `assert:` steps are no longer judged by a
   screenshot (previously a model's `VERIFIED: no` about an unrelated screen
   failed a passing shell step).
-- The OpenAI-style provider sends no `Authorization` header when no API key
-  is configured.
+- Bank-runner promotion (SKIPPED -> PASSED on crash-absence) never applies
+  to a case with a vision-gated step.
+- The OpenAI-style provider sends no `Authorization` header without a key,
+  reads at most 8 MiB of a reply and quotes at most 512 bytes of an error
+  reply.
 
 ## [0.1.0] - 2026-03-18
 

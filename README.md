@@ -115,11 +115,16 @@ test_cases:
 A step that carries `vision_verify: true`, `recognize`, `forbid`,
 `golden` (+ `phash_max_distance`) or `expect_change: true` is
 **vision-gated**: it PASSES only on positive evidence bound to the exact
-after-action frame (sha256 + pHash recorded), and is **BLOCKED**
-(could not determine, exit semantic 2) — never passed — when there is no
-vision provider, the provider errors or answers ambiguously, or the frame
-is blank or missing. A non-gated step the model could not confirm is
-reported **UNVERIFIED-by-vision**.
+after-action frame (sha256 + pHash recorded, persisted in
+`pipeline-report.json`), and is **BLOCKED** (could not determine) — never
+passed — when no vision provider gives a definite answer (exactly one
+`VERIFIED: yes|no` line; `recognize`/`forbid` read only the reply's `TEXT:`
+transcription), or the frame is blank or missing. A blocked case files a
+finding and makes `helixqa autonomous` exit **2** (a failed case exits
+**1**). A non-gated step the model could not confirm is reported
+**UNVERIFIED-by-vision**. Vision keys are refused on `shell:`/`http:`/
+`assert:` steps, and `expect_change`/`forbid` need `vision_verify`,
+`recognize` or `golden` beside them.
 
 ```yaml
       - name: "Open settings"
