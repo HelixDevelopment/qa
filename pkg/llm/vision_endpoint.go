@@ -30,6 +30,47 @@ const (
 // or blank — there is no default URL, so an unconfigured endpoint can
 // never look configured.
 func VisionEndpointConfigFromEnv(getenv func(string) string) (ProviderConfig, bool) {
+	cfg, ok, err := VisionEndpointConfigFromEnvChecked(getenv)
+	return cfg, ok && err == nil
+}
+
+// VisionEndpointConfigFromEnvChecked is VisionEndpointConfigFromEnv with
+// the validation error surfaced.
+//
+// The endpoint must be http(s)://host[:port][/path] with NO user info, query
+// or fragment: those are where secrets get pasted, and anything in the URL
+// ends up in transport errors, logs and reports. The error never echoes
+// the URL. Put a key in HELIX_VISION_API_KEY instead.
+func VisionEndpointConfigFromEnvChecked(getenv func(string) string) (ProviderConfig, bool, error) {
+	cfg, ok := visionEndpointConfigRaw(getenv)
+	if !ok {
+		return cfg, false, nil
+	}
+	refuse := func(why string) (ProviderConfig, bool, error) {
+		return ProviderConfig{}, false, fmt.Errorf("%s refused: %s — it must be "+
+			"http(s)://host[:port][/path] with no user info, query or fragment "+
+			"(the value is not printed; put a key in %s)", EnvVisionEndpoint, why, EnvVisionAPIKey)
+	}
+	u, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		return refuse("it does not parse as a URL")
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		return refuse("scheme is not http or https")
+	case u.Host == "":
+		return refuse("it has no host")
+	case u.User != nil:
+		return refuse("it carries user info")
+	case u.RawQuery != "" || u.ForceQuery:
+		return refuse("it carries a query string")
+	case u.Fragment != "" || strings.Contains(cfg.BaseURL, "#"):
+		return refuse("it carries a fragment")
+	}
+	return cfg, true, nil
+}
+
+func visionEndpointConfigRaw(getenv func(string) string) (ProviderConfig, bool) {
 	base := strings.TrimSpace(getenv(EnvVisionEndpoint))
 	if base == "" {
 		return ProviderConfig{}, false

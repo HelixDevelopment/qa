@@ -643,7 +643,14 @@ func cmdAutonomous(args []string) {
 	// HELIX_VISION_API_KEY) points at e.g. a local llama-server
 	// (llmctl `vision` on http://127.0.0.1:8082/v1). It joins the
 	// vision pool; the key is never printed.
-	if vcfg, ok := llm.VisionEndpointConfigFromEnv(os.Getenv); ok {
+	vcfg, vok, verr := llm.VisionEndpointConfigFromEnvChecked(os.Getenv)
+	if verr != nil {
+		// Misconfigured eyes: refuse to start rather than run every
+		// vision-gated step BLOCKED. The error never echoes the URL.
+		fmt.Fprintf(os.Stderr, "error: %v\n", verr)
+		os.Exit(1)
+	}
+	if vok {
 		providerConfigs = append(providerConfigs, vcfg)
 		visionConfigs = append(visionConfigs, vcfg)
 		fmt.Printf("Vision endpoint:  %s\n", llm.DescribeVisionEndpoint(vcfg))

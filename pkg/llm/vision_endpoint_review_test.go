@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // captureServer records the decoded JSON body of every request and replies
@@ -142,5 +143,108 @@ func TestScoreVisionProvider_EndpointPreferred(t *testing.T) {
 			names = append(names, p.Name())
 		}
 		t.Fatalf("endpoint not ranked first: %v", names)
+	}
+}
+
+// Review round 2, finding 4 (MEDIUM): a secret in HELIX_VISION_ENDPOINT
+// (userinfo, query, fragment) is refused at config load with an error that
+// never echoes it; the two-value helper reports "not configured".
+func TestVisionEndpointConfig_RefusesSecretBearingURL(t *testing.T) {
+	bad := []string{
+		"http://alice:pw@127.0.0.1:8082/v1",
+		"http://alice@127.0.0.1:8082/v1",
+		"http://127.0.0.1:8082/v1?api_key=SEKRET123",
+		"http://127.0.0.1:8082/v1#SEKRET123",
+		"http://u:SEKRET123%zz@127.0.0.1:8082/v1",
+		"ftp://127.0.0.1:8082/v1",
+		"127.0.0.1:8082/v1",
+	}
+	for _, u := range bad {
+		env := envMap(map[string]string{EnvVisionEndpoint: u})
+		_, ok, err := VisionEndpointConfigFromEnvChecked(env)
+		if err == nil || ok {
+			t.Errorf("%q accepted (ok=%v err=%v)", u, ok, err)
+			continue
+		}
+		for _, secret := range []string{"SEKRET123", "alice", "pw@"} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error for %q echoes %q: %v", u, secret, err)
+			}
+		}
+		if _, ok2 := VisionEndpointConfigFromEnv(env); ok2 {
+			t.Errorf("%q: two-value helper reports configured", u)
+		}
+	}
+	cfg, ok, err := VisionEndpointConfigFromEnvChecked(envMap(map[string]string{EnvVisionEndpoint: "http://127.0.0.1:8082/v1/"}))
+	if err != nil || !ok || cfg.BaseURL != "http://127.0.0.1:8082/v1" {
+		t.Fatalf("plain endpoint: %+v %v %v", cfg, ok, err)
+	}
+	if _, ok, err := VisionEndpointConfigFromEnvChecked(envMap(nil)); ok || err != nil {
+		t.Fatalf("unset endpoint: ok=%v err=%v", ok, err)
+	}
+}
+
+// Finding 4: a transport error never carries URL userinfo or query into the
+// error text (it becomes a BLOCKED reason, a finding and the report), and the
+// request path is built on the URL path, not appended after a query.
+func TestVisionEndpoint_TransportErrorScrubbedAndPathBuilt(t *testing.T) {
+	p := NewOpenAIProvider(ProviderConfig{Name: ProviderVisionEndpoint, BaseURL: "http://alice:pw@127.0.0.1:1/v1?api_key=SEKRET123"})
+	_, err := p.Vision(context.Background(), []byte("x"), "q")
+	if err == nil {
+		t.Fatal("dead endpoint: no error")
+	}
+	for _, secret := range []string{"SEKRET123", "alice", ":pw"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("transport error leaks %q: %v", secret, err)
+		}
+	}
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"VERIFIED: yes"}}]}`)
+	}))
+	defer srv.Close()
+	if _, err := NewOpenAIProvider(ProviderConfig{Name: ProviderOpenAI, APIKey: "k", BaseURL: srv.URL + "/v1?x=1"}).Vision(context.Background(), []byte("x"), "q"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1/chat/completions" || gotQuery != "x=1" {
+		t.Fatalf("request URL built wrongly: path=%q query=%q", gotPath, gotQuery)
+	}
+}
+
+// Review round 2, finding 6: the read itself stops at the cap. The server
+// sends a little more than the cap and then STALLS without closing: a capped
+// read returns "exceeds" at once; an uncapped read would block until the
+// short deadline. Memory stays bounded (~9 MiB) either way — the fixture never
+// streams without end.
+func TestVisionEndpoint_ResponseReadStopsAtCap(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"`)
+		chunk := []byte(strings.Repeat("C", 64<<10))
+		for sent := 0; sent <= openaiMaxResponseBytes+(1<<20); sent += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select { // stall: never finish the body
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := NewOpenAIProvider(ProviderConfig{Name: ProviderVisionEndpoint, BaseURL: srv.URL + "/v1"}).Vision(ctx, []byte("x"), "q")
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("over-cap stalled body not refused at the cap: %v", err)
+	}
+	if time.Since(start) > 4*time.Second {
+		t.Fatalf("refusal took %v — the read did not stop at the cap", time.Since(start))
 	}
 }

@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -272,13 +274,7 @@ func (p *openaiProvider) doRequest(
 	// Build the endpoint URL. Most providers use /v1/, but
 	// some (e.g. Z.AI/zhipu) use /v4/. If the baseURL already
 	// ends with a version path, append only /chat/completions.
-	endpoint := p.baseURL + "/v1/chat/completions"
-	for _, vp := range []string{"/v1", "/v2", "/v3", "/v4", "/v5"} {
-		if strings.HasSuffix(p.baseURL, vp) {
-			endpoint = p.baseURL + "/chat/completions"
-			break
-		}
-	}
+	endpoint := chatCompletionsURL(p.baseURL)
 
 	httpReq, err := http.NewRequestWithContext(
 		ctx,
@@ -298,7 +294,7 @@ func (p *openaiProvider) doRequest(
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openai: send request: %w", err)
+		return nil, fmt.Errorf("openai: send request: %w", scrubURLError(err))
 	}
 	defer httpResp.Body.Close()
 
@@ -337,4 +333,41 @@ func (p *openaiProvider) doRequest(
 		InputTokens:  apiResp.Usage.PromptTokens,
 		OutputTokens: apiResp.Usage.CompletionTokens,
 	}, nil
+}
+
+// chatCompletionsURL appends the chat-completions path to the base URL's
+// PATH (keeping any query after it). Most providers use /v1/, but some
+// (e.g. Z.AI/zhipu) use /v4/: if the path already ends with a version
+// segment only /chat/completions is appended.
+func chatCompletionsURL(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base + "/v1/chat/completions"
+	}
+	path := strings.TrimRight(u.Path, "/")
+	suffix := "/v1/chat/completions"
+	for _, vp := range []string{"/v1", "/v2", "/v3", "/v4", "/v5"} {
+		if strings.HasSuffix(path, vp) {
+			suffix = "/chat/completions"
+			break
+		}
+	}
+	u.Path = path + suffix
+	u.RawPath = ""
+	return u.String()
+}
+
+// scrubURLError removes user info, query and fragment from the URL a
+// transport error quotes (*url.Error), so a secret pasted into an endpoint
+// URL cannot reach a log, a BLOCKED reason, a finding or a report.
+func scrubURLError(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	shown := "(endpoint)"
+	if u, perr := url.Parse(ue.URL); perr == nil && u.Host != "" {
+		shown = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	}
+	return fmt.Errorf("%s %q: %w", ue.Op, shown, ue.Err)
 }
