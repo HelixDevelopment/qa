@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `helixqa run` keeps a platform's partial result on cancellation /
   `--timeout` (a FAILED challenge exits 1; an interrupted one is SKIPPED);
   `helixqa autonomous` exits 2 when its report cannot be written.
-  Mutants Y01-Y34 added.
+  Challenges run in ID order. Mutants Y01-Y35 added (206 mutants, all killed by assertion).
 - **Round-6 hardening (review round 5):** a structured case PASSes only
   when at least one ASSERTING step ran (sleep / screenshot / prose-only
   cases are BLOCKED — catalogizer no-executor sweep 12 PASSED -> 0);
