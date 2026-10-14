@@ -10,6 +10,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -208,11 +209,20 @@ platforms:
 		if err != nil {
 			o.logError("Platform %s failed: %v",
 				platform, err)
-			// Continue with other platforms.
-			pr = &reporter.PlatformResult{
-				Platform:  platform,
-				StartTime: time.Now(),
-				EndTime:   time.Now(),
+			if pr == nil {
+				pr = &reporter.PlatformResult{
+					Platform:  platform,
+					StartTime: time.Now(),
+					EndTime:   time.Now(),
+				}
+			}
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				// Cancelled / timed out WHILE the platform ran: keep the
+				// challenges it already ran (a FAILED one still decides
+				// the exit code) and stop — the run is incomplete.
+				runErr = err
+				platformResults = append(platformResults, pr)
+				break platforms
 			}
 		}
 		platformResults = append(platformResults, pr)
@@ -351,6 +361,30 @@ func (o *Orchestrator) runPlatform(
 			cr, err := platformRunner.Run(
 				ctx, def.ID, cfg,
 			)
+			if ctx.Err() != nil && interruptedOutcome(cr, err) {
+				// The run was cancelled / timed out while this challenge
+				// ran and it reports an error / timeout: its outcome is
+				// unknown — not a failure. Record it as not executed and
+				// stop the platform. (A challenge that FAILED on its own
+				// before the cancellation keeps its verdict.)
+				why := "run cancelled / timed out"
+				if err != nil {
+					why = err.Error()
+				} else if cr != nil && cr.Error != "" {
+					why = cr.Error
+				}
+				pr.ChallengeResults = append(pr.ChallengeResults, &challenge.Result{
+					ChallengeID:   def.ID,
+					ChallengeName: def.Name,
+					Status:        challenge.StatusSkipped,
+					Error:         "interrupted: " + why,
+					StartTime:     time.Now(),
+					EndTime:       time.Now(),
+				})
+				pr.EndTime = time.Now()
+				pr.Duration = pr.EndTime.Sub(pr.StartTime)
+				return pr, ctx.Err()
+			}
 			if err != nil {
 				o.logError("Challenge %s failed: %v",
 					def.ID, err)
@@ -599,4 +633,18 @@ func (o *Orchestrator) logError(format string, args ...any) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	o.logger.Error(msg)
+}
+
+// interruptedOutcome reports a challenge outcome that a cancellation /
+// timeout of the RUN produces rather than the app: a runner error, no
+// result, or an error / timed-out / stuck status.
+func interruptedOutcome(cr *challenge.Result, err error) bool {
+	if err != nil || cr == nil {
+		return true
+	}
+	switch cr.Status {
+	case challenge.StatusError, challenge.StatusTimedOut, challenge.StatusStuck:
+		return true
+	}
+	return false
 }

@@ -123,8 +123,11 @@ func TestShellStep_ACommandThatNeverStartedFailsEvenWhenExit0IsExpected(t *testi
 		{Action: "shell: echo would-have-run", ExpectExit: ip(0), ExpectOutputContains: sp("")},
 	} {
 		res := d.executeDesktopShellSteps(ctx, time.Now(), []testbank.TestStep{step})
-		assert.Equal(t, challenge.StatusFailed, res.Status,
+		// Round 7: the RUN's context ended, so the case was not executed —
+		// never PASSED, and not a failure of the app either (SKIPPED with
+		// the wrapper's skip sentinel naming the interruption).
+		assert.Equal(t, challenge.StatusSkipped, res.Status,
 			"a step whose command never started must not pass: %+v", step.Action)
-		assert.Contains(t, res.Error, "did not run")
+		assert.True(t, hasSkipSentinel(res), "the interruption must carry the skip sentinel")
 	}
 }

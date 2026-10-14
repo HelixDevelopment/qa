@@ -448,12 +448,35 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
 		cmd := exec.CommandContext(stepCtx, "sh", "-c", command)
+		// When the context kills sh, a child it started may keep the
+		// output pipe open; do not wait for it beyond WaitDelay.
+		cmd.WaitDelay = 500 * time.Millisecond
 		output, runErr := cmd.CombinedOutput()
 		exitCode := 0
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
 		cancel()
+		if ctx.Err() != nil && allPassed {
+			// The RUN was cancelled / timed out while this command ran (not
+			// the step's own timeout): its outcome is unknown — the case is
+			// not executed, never a failure of its own.
+			now := time.Now()
+			recorded = append(recorded,
+				fmt.Sprintf("shell-step[%d]: %s — interrupted by the run's cancellation / timeout (%v)", i, command, ctx.Err()),
+				definitionWrapperSkipSentinel+" the run was cancelled / timed out while step "+fmt.Sprintf("%d", i)+
+					" ran — the case was not executed to the end and is not PASSED")
+			return &challenge.Result{
+				ChallengeID:     d.def.ID,
+				ChallengeName:   d.def.Name,
+				StartTime:       start,
+				EndTime:         now,
+				Duration:        now.Sub(start),
+				RecordedActions: recorded,
+				Assertions:      assertions,
+				Status:          challenge.StatusSkipped,
+			}
+		}
 
 		recorded = append(recorded,
 			fmt.Sprintf("shell-step[%d]: %s", i, command))

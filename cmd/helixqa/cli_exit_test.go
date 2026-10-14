@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"digital.vasic.helixqa/pkg/autonomous"
 	"digital.vasic.helixqa/pkg/orchestrator"
 	"digital.vasic.helixqa/pkg/reporter"
 )
@@ -140,5 +141,63 @@ func TestRunExitCode_FailedOutranksPostExecutionError(t *testing.T) {
 	}
 	if got := runExitCode(&orchestrator.Result{}, errors.New("context canceled")); got != 2 {
 		t.Fatalf("no report + error = %d, want 2", got)
+	}
+}
+
+// Review round 6, finding 10 (N08): a crash or ANR in the report outranks a
+// post-execution error just like a failed challenge.
+func TestRunExitCode_CrashOrANROutranksPostExecutionError(t *testing.T) {
+	for name, q := range map[string]*reporter.QAReport{
+		"crash": {TotalChallenges: 1, PassedChallenges: 1, TotalCrashes: 1},
+		"anr":   {TotalChallenges: 1, PassedChallenges: 1, TotalANRs: 1},
+	} {
+		if got := runExitCode(&orchestrator.Result{Report: q}, errors.New("write report: is a directory")); got != 1 {
+			t.Errorf("%s + post-execution error = %d, want 1", name, got)
+		}
+	}
+}
+
+// Review round 6, finding 17: `helixqa autonomous` with a report that could
+// not be written is incomplete (2) unless the session already has a
+// finding (1); a written report leaves the session's own code.
+func TestAutonomousExitCode_ReportWriteError(t *testing.T) {
+	pass := &autonomous.PipelineResult{Status: autonomous.StatusComplete}
+	failed := &autonomous.PipelineResult{Status: autonomous.StatusComplete,
+		Structured: &autonomous.StructuredExecutionResult{TestCasesRun: 1, TestCasesFailed: 1}}
+	werr := errors.New("write pipeline-report.json: read-only file system")
+	cases := []struct {
+		name string
+		r    *autonomous.PipelineResult
+		err  error
+		want int
+	}{
+		{"pass, report written", pass, nil, 0},
+		{"pass, report write failed", pass, werr, 2},
+		{"failed case, report write failed", failed, werr, 1},
+		{"blocked session, report written", &autonomous.PipelineResult{Status: autonomous.StatusBlocked}, nil, 2},
+	}
+	for _, c := range cases {
+		if got := autonomousExitCode(c.r, c.err); got != c.want {
+			t.Errorf("%s: exit %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Review round 6, finding 1, through the real binary: `shell: exit 3`
+// FAILS, then --timeout cuts `shell: sleep 4` — exit 1, the failure kept.
+func TestCLIExit_TimeoutKeepsFailure(t *testing.T) {
+	dir := t.TempDir()
+	bank := filepath.Join(dir, "bank.yaml")
+	body := "version: \"1.0\"\nname: cli\ntest_cases:\n" +
+		"  - id: CT-1\n    name: fails\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: exit 3\"\n" +
+		"  - id: CT-2\n    name: slow\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: sleep 4\"\n" +
+		"  - id: CT-3\n    name: never\n    platforms: [desktop]\n    steps:\n      - name: a\n        action: \"shell: true\"\n"
+	if err := os.WriteFile(bank, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := runCLIChild(t, false, "run", "--banks", bank, "--output", filepath.Join(dir, "out"),
+		"--platform", "desktop", "--validate=false", "--record=false", "--tickets=false", "--speed", "fast", "--timeout", "2s")
+	if got != 1 {
+		t.Fatalf("failure then timeout: exit %d, want 1", got)
 	}
 }

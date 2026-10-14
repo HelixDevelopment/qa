@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"digital.vasic.helixqa/pkg/autonomous"
 	"digital.vasic.helixqa/pkg/orchestrator"
 )
 
@@ -56,4 +57,16 @@ func guardPanic(fn func()) (code int) {
 	}()
 	fn()
 	return 0
+}
+
+// autonomousExitCode maps a finished `helixqa autonomous` session onto the
+// contract with the SAME precedence as `run`: the session's own code (1 a
+// finding, 2 blocked / incomplete), and a report that could not be written
+// makes an otherwise passing session incomplete (2) — never 0.
+func autonomousExitCode(r *autonomous.PipelineResult, reportErr error) int {
+	code := r.ExitCode()
+	if reportErr != nil && code == 0 {
+		return exitCodeNotExecuted
+	}
+	return code
 }

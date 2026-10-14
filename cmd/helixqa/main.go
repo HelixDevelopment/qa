@@ -985,9 +985,10 @@ func cmdAutonomous(args []string) {
 			"error: pipeline could not run: %v (exit %d)\n", err, exitCodeNotExecuted)
 		os.Exit(exitCodeNotExecuted)
 	}
-	if err := pipeline.WriteReport(result); err != nil {
+	reportErr := pipeline.WriteReport(result)
+	if reportErr != nil {
 		fmt.Fprintf(os.Stderr,
-			"warning: could not write report: %v\n", err)
+			"error: could not write report: %v (an otherwise passing session exits %d)\n", reportErr, exitCodeNotExecuted)
 	}
 	if result.Status == autonomous.StatusFailed {
 		fmt.Fprintf(os.Stderr,
@@ -1002,7 +1003,7 @@ func cmdAutonomous(args []string) {
 	}
 	// Structured bank outcome -> exit code (1 a case FAILED, 2 a case
 	// BLOCKED / could not determine / banks not runnable; 1 outranks 2).
-	if code := result.ExitCode(); code != 0 {
+	if code := autonomousExitCode(result, reportErr); code != 0 {
 		if s := result.Structured; s != nil {
 			fmt.Fprintf(os.Stderr,
 				"Structured cases: %d passed, %d failed, %d blocked (could not determine), %d skipped — exit %d\n",
