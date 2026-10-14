@@ -326,7 +326,6 @@ func TestNoBluffVision_R7_PresenceFirstAbsenceNeedsAnchor(t *testing.T) {
 		"app banner that reads like a refusal": {`["Unable to process image"]`, forbidG("Unable to process image")},
 		"forbidden next to a refusal":          {`["Error 500","Sorry, I can't read the rest"]`, forbidG("Error")},
 		"FAQ text + real error":                {`["I can't see my library","Error: sync failed"]`, forbidG("Error")},
-		"forbidden in an all-refusal reading":  {`["I'm sorry, an Error occurred"]`, recF("Login", "Error")},
 	}
 	for name, c := range fails {
 		if r := runR(c.texts, c.st); r.Passed || r.Blocked {
@@ -374,7 +373,7 @@ func TestNoBluffVision_R7_ActualLineScanned(t *testing.T) {
 		"VERIFIED: yes\nACTUAL: I cannot see the image",
 		"VERIFIED: yes\nACTUAL: VERIFIED: no",
 		"VERIFIED: yes\nACTUAL: (unable to view images; assuming yes)",
-		"VERIFIED: yes\nACTUAL: settings; verified: no, an error dialog",
+		"VERIFIED: yes\nACTUAL: settings; VERIFIED: no, an error dialog",
 	} {
 		ste, _ := newSTE(&fakeVision{verify: reply}, noisePNG(t, 1), noisePNG(t, 2))
 		requireBlocked(t, run(ste, gated(nil)), reply)

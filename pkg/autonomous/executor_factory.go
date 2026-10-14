@@ -146,9 +146,9 @@ func probePlatformReachable(
 			return fmt.Errorf("no android device serial configured")
 		}
 		out, err := runner.Run(pctx, "adb", "-s", androidDevice, "get-state")
-		// adb may print daemon start-up / warning lines first; the state is
-		// the LAST non-empty line.
-		state := lastNonEmptyLine(string(out))
+		// adb may print daemon start-up / warning lines before or after
+		// the state; the state is the last line that IS an adb state word.
+		state := adbStateLine(string(out))
 		if err != nil || state != "device" {
 			return fmt.Errorf("adb -s %s get-state: state %q (%v) — device not reachable",
 				androidDevice, truncateOutput([]byte(state), 120), err)
@@ -187,4 +187,22 @@ func lastNonEmptyLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// adbStates are the words `adb get-state` prints as a device state.
+var adbStates = map[string]bool{"device": true, "offline": true, "unauthorized": true, "bootloader": true,
+	"recovery": true, "sideload": true, "rescue": true, "unknown": true, "authorizing": true,
+	"connecting": true, "no permissions": true, "host": true}
+
+// adbStateLine returns the last line of `adb get-state` output that is a
+// device state word (warning / daemon lines around it are ignored), or the
+// last non-empty line when none is.
+func adbStateLine(out string) string {
+	lines := strings.Split(out, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); adbStates[l] {
+			return l
+		}
+	}
+	return lastNonEmptyLine(out)
 }

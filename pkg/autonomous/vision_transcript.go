@@ -169,10 +169,6 @@ const modelStatementPattern = `(i m sorry|i am sorry|sorry i|sorry but|i apologi
 // modelStatementRe matches a whole element that STARTS as a model statement.
 var modelStatementRe = regexp.MustCompile(`^` + modelStatementPattern)
 
-// modelStatementAnywhereRe finds a model statement anywhere in a text (used
-// on the free-text ACTUAL line of a VERIFIED reply).
-var modelStatementAnywhereRe = regexp.MustCompile(`(^| )` + modelStatementPattern)
-
 // transcriptUsable decides — by STRUCTURE — whether a strict-parsed
 // transcription can carry a claim of ABSENCE. It cannot when it holds no
 // screen text (empty, or "no text" filler only), or when EVERY remaining
@@ -259,7 +255,13 @@ func matchTokensInTexts(texts []string, recognize, forbid []string, exact bool) 
 		keys = append(keys, " "+k+" ")
 	}
 	has := func(tok string) bool {
+		sub := needsSubstringMatch(tok)
 		for _, k := range keys {
+			if sub && strings.Contains(k, tok) {
+				// Scripts written without spaces between words: a token
+				// inside a longer run of text IS in it.
+				return true
+			}
 			if strings.Contains(k, " "+tok+" ") {
 				return true
 			}
@@ -292,4 +294,55 @@ func matchTokensInTexts(texts []string, recognize, forbid []string, exact bool) 
 		}
 	}
 	return missing, forbidden
+}
+
+// noSpaceScripts are scripts written without spaces between words, where
+// whole-word matching would never find a token inside a longer string.
+var noSpaceScripts = []*unicode.RangeTable{unicode.Han, unicode.Hiragana, unicode.Katakana,
+	unicode.Thai, unicode.Lao, unicode.Khmer, unicode.Myanmar}
+
+// needsSubstringMatch reports a (normalised) token that contains a letter of
+// a no-space script: it is matched as a substring, not as whole words.
+func needsSubstringMatch(tok string) bool {
+	for _, r := range tok {
+		if unicode.In(r, noSpaceScripts...) {
+			return true
+		}
+	}
+	return false
+}
+
+// allModelStatements reports a reading whose every non-filler element is the
+// model talking (see transcriptUsable); false when it holds none.
+func allModelStatements(texts []string) bool {
+	n := 0
+	for _, t := range texts {
+		k := testbank.VisionTokenKey(t)
+		if k == "" || testbank.IsVisionFiller(k) {
+			continue
+		}
+		if !modelStatementRe.MatchString(k) {
+			return false
+		}
+		n++
+	}
+	return n > 0
+}
+
+// forbiddenPresent returns the forbid tokens present in the reading. In a
+// reading where every element is the model talking, a forbidden word inside
+// a refusal sentence ("I cannot read the Error text") is not on the screen:
+// there only an element EQUAL to the token counts.
+func forbiddenPresent(texts, forbid []string) []string {
+	if !allModelStatements(texts) {
+		_, f := matchTokensInTexts(texts, nil, forbid, true)
+		return f
+	}
+	var out []string
+	for _, tok := range forbid {
+		if missing, _ := matchTokensInTexts(texts, []string{tok}, nil, true); len(missing) == 0 {
+			out = append(out, testbank.VisionTokenKey(tok))
+		}
+	}
+	return out
 }

@@ -25,6 +25,7 @@ import (
 	"digital.vasic.helixqa/pkg/config"
 	"digital.vasic.helixqa/pkg/llm"
 	"digital.vasic.helixqa/pkg/navigator"
+	"digital.vasic.helixqa/pkg/shellexec"
 	"digital.vasic.helixqa/pkg/testbank"
 )
 
@@ -190,46 +191,93 @@ func (ste *StructuredTestExecutor) Execute(
 	// The target app itself is never in this list.
 	ste.preflightStopCompetingApps(ctx)
 
-	// Execute each bank's test cases
-	for _, bank := range banks {
-		if err := ste.executeBank(ctx, bank, result); err != nil {
-			fmt.Printf(
-				"  [structured] Bank '%s' error: %v\n",
-				bank.Name, err,
-			)
-		}
-	}
-
+	ste.executeBanks(ctx, banks, result)
 	return result, nil
 }
 
-// executeBank runs all test cases from a single test bank.
-func (ste *StructuredTestExecutor) executeBank(
+// executeBanks runs the applicable test cases of all banks in dependency
+// order (declared `dependencies:` first, ID as the tie-break — the same
+// order `helixqa run` uses, testbank.DependencyOrder). Cases in, or behind,
+// a dependency cycle are not run: each is BLOCKED with the reason.
+func (ste *StructuredTestExecutor) executeBanks(
 	ctx context.Context,
-	bank *testbank.BankFile,
+	banks []*testbank.BankFile,
 	result *StructuredExecutionResult,
-) error {
-	fmt.Printf(
-		"  [structured] Executing bank: %s (%d test cases)\n",
-		bank.Name, len(bank.TestCases),
-	)
-
-	for _, tc := range bank.TestCases {
-		// Check if test applies to any of our platforms
-		applies := ste.testAppliesToPlatforms(tc)
-		if !applies {
-			continue
-		}
-
-		if err := ste.executeTestCase(ctx, tc, result); err != nil {
-			fmt.Printf(
-				"  [structured] Test case '%s' failed: %v\n",
-				tc.ID, err,
-			)
+) {
+	var cases []testbank.TestCase
+	for _, bank := range banks {
+		fmt.Printf(
+			"  [structured] Loaded bank: %s (%d test cases)\n",
+			bank.Name, len(bank.TestCases),
+		)
+		for _, tc := range bank.TestCases {
+			if ste.testAppliesToPlatforms(tc) {
+				cases = append(cases, tc)
+			}
 		}
 	}
+	// Unique keys (a duplicated ID keeps every case); dependencies name IDs
+	// and resolve to the first case with that ID.
+	keys := make([]string, len(cases))
+	first := map[string]string{}
+	byKey := map[string]testbank.TestCase{}
+	for i, tc := range cases {
+		k := tc.ID
+		if _, dup := first[tc.ID]; dup {
+			k = fmt.Sprintf("%s\x00%d", tc.ID, i)
+		} else {
+			first[tc.ID] = k
+		}
+		keys[i] = k
+		byKey[k] = tc
+	}
+	deps := map[string][]string{}
+	for i, tc := range cases {
+		for _, d := range tc.Dependencies {
+			if k, ok := first[d]; ok {
+				deps[keys[i]] = append(deps[keys[i]], k)
+			}
+		}
+	}
+	order, cyclic := testbank.DependencyOrder(keys, deps)
+	for _, k := range order {
+		tc := byKey[k]
+		if err := ste.executeTestCase(ctx, tc, result); err != nil {
+			fmt.Printf("  [structured] Test case '%s' failed: %v\n", tc.ID, err)
+		}
+	}
+	var cycleIDs []string
+	for _, k := range cyclic {
+		cycleIDs = append(cycleIDs, byKey[k].ID)
+	}
+	for _, k := range cyclic {
+		ste.blockCaseUnrun(byKey[k], "not run: dependency cycle among "+strings.Join(cycleIDs, ", "), result)
+	}
+}
 
-	return nil
+// blockCaseUnrun records a case that was not run at all as BLOCKED with an
+// environment finding naming why.
+func (ste *StructuredTestExecutor) blockCaseUnrun(tc testbank.TestCase, why string, result *StructuredExecutionResult) {
+	result.TestCasesRun++
+	result.TestCasesBlocked++
+	fmt.Printf("  [structured] [%s] ⊘ BLOCKED — %s\n", tc.ID, why)
+	result.Cases = append(result.Cases, StructuredCaseResult{ID: tc.ID, Name: tc.Name, Verdict: CaseVerdictBlocked})
+	platform := ""
+	if len(tc.Steps) > 0 {
+		platform = ste.getPlatformForStep(tc.Steps[0])
+	}
+	finding := analysis.AnalysisFinding{
+		Category:           analysis.CategoryEnvironment,
+		Severity:           ste.priorityToSeverity(tc.Priority),
+		Title:              fmt.Sprintf("Test Case BLOCKED (could not determine): %s", tc.Name),
+		Description:        fmt.Sprintf("Case %s was not run — its outcome is UNKNOWN, not passed.\n%s", tc.ID, why),
+		Platform:           platform,
+		AcceptanceCriteria: "The bank's dependencies form no cycle, so every case can be ordered and run.",
+	}
+	result.Findings = append(result.Findings, finding)
+	if ste.onFinding != nil {
+		ste.onFinding(finding)
+	}
 }
 
 // executeTestCase runs a single test case with all its steps.
@@ -273,6 +321,12 @@ func (ste *StructuredTestExecutor) executeTestCase(
 	var stepResults []TestStepResult
 
 	for i, step := range tc.Steps {
+		if step.Skip {
+			// `_skip: true`: the author disabled this step — not this run's
+			// action or assertion (the bank runner honours it the same way).
+			fmt.Printf("    [step %d] %s — disabled (_skip)\n", i+1, step.Name)
+			continue
+		}
 		var stepResult TestStepResult
 		if cerr := ctx.Err(); cerr != nil {
 			// The session ended (timeout / cancel) before this step: it
@@ -464,7 +518,7 @@ func (ste *StructuredTestExecutor) executeStep(
 		result.VisionGated = step.IsVisionGated()
 		what := "executor could not be created"
 		if unreachable {
-			what = "device / display is unreachable (probed once)"
+			what = "device / display is unreachable (reachability probe failed)"
 		}
 		result.Actual = fmt.Sprintf(
 			"BLOCKED (could not determine): %s for %q: %v", what, platform, err,
@@ -643,8 +697,7 @@ func (ste *StructuredTestExecutor) performAction(
 			)
 			defer cancel()
 		}
-		shCmd := osexec.CommandContext(shCtx, "sh", "-c", actionValue)
-		shCmd.WaitDelay = 500 * time.Millisecond
+		shCmd := shellexec.Command(shCtx, actionValue)
 		shOut, shErr := shCmd.CombinedOutput()
 		exitCode := 0
 		if shCmd.ProcessState != nil {
@@ -676,7 +729,11 @@ func (ste *StructuredTestExecutor) performAction(
 			ms = 2000 // Default 2 seconds
 		}
 		fmt.Printf("      [action] sleep: %dms\n", ms)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
+		select {
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+		case <-ctx.Done():
+			return ActionResult{Success: false, Message: fmt.Sprintf("sleep %dms cut short: %v", ms, ctx.Err())}
+		}
 		return ActionResult{Success: true, Message: fmt.Sprintf("Slept %dms", ms)}
 
 	case testbank.ActionTypeScreenshot:
@@ -1222,8 +1279,10 @@ var verifiedAnswerRe = regexp.MustCompile(`(?im)^[ \t]*VERIFIED:[ \t]*(yes|no)[ 
 // actualLineRe matches the one optional "ACTUAL: <description>" line.
 var actualLineRe = regexp.MustCompile(`^[ \t]*ACTUAL:`)
 
-// verdictInTextRe finds a second verdict ("verified: …") inside free text.
-var verdictInTextRe = regexp.MustCompile(`(?i)\bverified\s*:`)
+// verdictInTextRe finds a second verdict — the template's upper-case
+// "VERIFIED: yes|no" — inside free text (a lower-case "Email verified: yes"
+// badge is screen content, not a verdict).
+var verdictInTextRe = regexp.MustCompile(`\bVERIFIED\s*:\s*(?i:yes|no)\b`)
 
 // suspectActual scans the ACTUAL description of a VERIFIED reply and names
 // what makes it unusable as support for the answer: a second verdict, or the
@@ -1236,11 +1295,20 @@ func suspectActual(actualLine string) string {
 	switch {
 	case verdictInTextRe.MatchString(text):
 		return "carries a second verdict"
-	case modelStatementAnywhereRe.MatchString(testbank.VisionTokenKey(text)):
+	case inabilityRe.MatchString(testbank.VisionTokenKey(text)):
 		return "says the model could not see / read the image"
 	}
 	return ""
 }
+
+// inabilityRe finds, in a normalised ACTUAL text, the model saying it could
+// not see / view / read the IMAGE itself ("I cannot see the image",
+// "unable to view images", "could not read the screenshot"). It is
+// deliberately narrow: an ordinary description ("The screenshot shows …",
+// "I don't see any error dialogs") is not an inability. A heuristic — other
+// hedges are documented, not detected.
+var inabilityRe = regexp.MustCompile(`(^| )(cannot|can t|can not|could not|couldn t|unable to|not able to|am unable to|m unable to) ` +
+	`(see|view|read|access|open|load|analy[sz]e|process|make out) ((the|this|that|any|your|an|a) )?(images?|screenshots?|pictures?|attachments?)( |$)`)
 
 // strayReplyLine returns the first non-blank line of a VERIFIED reply that
 // is neither a VERIFIED answer line nor the (single) ACTUAL: line — a
@@ -1364,7 +1432,7 @@ func askVerified(
 		}
 		return false, fmt.Sprintf("Vision response carries text besides the VERIFIED line and one ACTUAL: line (%q) — the answer may be quoted, hedged or retracted", stray),
 			errors.New("vision response ambiguous")
-	case len(answers) == 1 && suspectActual(actual) != "":
+	case saidYes && suspectActual(actual) != "":
 		return false, "Vision response's ACTUAL line " + suspectActual(actual) + " — the answer may not rest on the frame",
 			errors.New("vision response ambiguous")
 	case saidYes:

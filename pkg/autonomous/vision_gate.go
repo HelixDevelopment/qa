@@ -213,6 +213,7 @@ func (ste *StructuredTestExecutor) judgeStep(
 			r.VisionDescription = desc
 			r.VisionProvider = who
 			missing, forbidden := matchTokensInTexts(texts, step.Recognize, step.Forbid, step.ExactRecognize())
+			forbidden = forbiddenPresent(texts, step.Forbid)
 			if len(forbidden) > 0 {
 				refute(fmt.Sprintf("forbidden token(s) present: %s", strings.Join(forbidden, ", ")))
 				return
@@ -240,6 +241,11 @@ func (ste *StructuredTestExecutor) judgeStep(
 			notes = append(notes, fmt.Sprintf("tokens: %d recognized, %d forbidden absent", len(step.Recognize), len(step.Forbid)))
 		}
 		if step.VisionVerify {
+			if strings.TrimSpace(step.Expected) == "" {
+				// A "yes" to an empty question confirms nothing.
+				block("vision_verify with an empty expected — there is no expected state for the model to confirm")
+				return
+			}
 			ok, actual, who, err := ste.verifyOutcome(ctx, frame, step.Expected)
 			if err != nil {
 				block(actual)
@@ -343,7 +349,7 @@ func (ste *StructuredTestExecutor) blindTranscription(ctx context.Context, frame
 		}
 		t, d, perr := parseBlindReply(content)
 		if perr == nil {
-			if _, present := matchTokensInTexts(t, nil, forbid, true); len(present) > 0 {
+			if present := forbiddenPresent(t, forbid); len(present) > 0 {
 				// A forbidden token PRESENT is decisive whatever else the
 				// reading holds (a refusal-looking element included).
 				return t, d, p.Name(), ""
@@ -397,6 +403,11 @@ func (ste *StructuredTestExecutor) judgeAdvisory(
 		return
 	case !frameUsable:
 		unverified("after-action frame is blank or undecodable")
+		return
+	case strings.TrimSpace(step.Expected) == "":
+		// No expected state: a model's "yes" would confirm nothing, so
+		// it is not asked.
+		unverified("the step declares no expected state to verify")
 		return
 	}
 	ok, actual, who, err := ste.verifyOutcome(ctx, frame, step.Expected)
