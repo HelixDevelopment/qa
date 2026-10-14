@@ -315,10 +315,16 @@ func (p *openaiProvider) doRequest(
 		if len(snippet) > openaiErrorBodySnippet {
 			snippet = append(append([]byte(nil), snippet[:openaiErrorBodySnippet]...), "…(truncated)"...)
 		}
+		text := string(snippet)
+		if p.apiKey != "" {
+			// A server that echoes the request must not put our own key
+			// into an error that reaches logs, findings and reports.
+			text = strings.ReplaceAll(text, p.apiKey, "[REDACTED]")
+		}
 		return nil, fmt.Errorf(
 			"openai: API error %d: %s",
 			httpResp.StatusCode,
-			string(snippet),
+			text,
 		)
 	}
 	if len(respBody) > openaiMaxResponseBytes {
@@ -353,6 +359,12 @@ func chatCompletionsURL(base string) string {
 		return base + "/v1/chat/completions"
 	}
 	path := strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(path, "/chat/completions") {
+		// The base already names the endpoint: use it as is.
+		u.Path = path
+		u.RawPath = ""
+		return u.String()
+	}
 	suffix := "/v1/chat/completions"
 	for _, vp := range []string{"/v1", "/v2", "/v3", "/v4", "/v5"} {
 		if strings.HasSuffix(path, vp) {

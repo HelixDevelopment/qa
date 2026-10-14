@@ -42,7 +42,7 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_'
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_'
 PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/)
 
 echo "== control (unmutated tree)"
@@ -137,6 +137,15 @@ M = [
  ("K06-frame-diff-capture-problem-is-fail", A+"structured_executor.go", A, [("return ActionResult{Blocked: true, Message: fmt.Sprintf(\"frame_diff: %v", "return ActionResult{Success: false, Message: fmt.Sprintf(\"frame_diff: %v")]),
  ("K07-blocked-action-ignored", A+"structured_executor.go", A, [("\tif actionResult.Blocked {\n\t\tresult.Blocked = true", "\tif actionResult.Blocked && false {\n\t\tresult.Blocked = true")]),
  ("K08-executor-failure-is-app-fail", A+"structured_executor.go", A, [("\t\t// defect — BLOCKED (filed as an environment finding).\n\t\tresult.Blocked = true", "\t\t// defect — BLOCKED (filed as an environment finding).\n\t\tresult.Blocked = false")]),
+ ("N19-circuit-breaker-ignored", L+"vision_via.go", L, [("if rl.isCircuitOpen() {", "if false && rl.isCircuitOpen() {")]),
+ ("N20-failure-not-recorded", L+"vision_via.go", L, [("\trl.RecordFailure(err)\n", "")]),
+ ("N34-enhanced-ctx-check-dropped", L+"vision_via.go", L, [("func (eap *EnhancedAdaptiveProvider) VisionVia(ctx context.Context, p Provider, image []byte, prompt string) (*Response, error) {\n\tif err := ctx.Err(); err != nil {\n\t\treturn nil, err\n\t}", "func (eap *EnhancedAdaptiveProvider) VisionVia(ctx context.Context, p Provider, image []byte, prompt string) (*Response, error) {")]),
+ ("S01-encoded-path-secret-accepted", L+"vision_endpoint.go", L, [('return refuse("its path carries an encoded', 'return cfg, true, nil\n\t\t_ = refuse\n\t\treturn refuse("its path carries an encoded')]),
+ ("S02-own-key-echo-not-redacted", L+"openai.go", L, [('text = strings.ReplaceAll(text, p.apiKey, "[REDACTED]")', "_ = text")]),
+ ("S03-chat-completions-double-appended", L+"openai.go", L, [('if strings.HasSuffix(path, "/chat/completions") {\n\t\t// The base', 'if false {\n\t\t// The base')]),
+ ("S04-anthropic-transport-unscrubbed", L+"anthropic.go", L, [('fmt.Errorf("anthropic: send request: %w", scrubURLError(err))', 'fmt.Errorf("anthropic: send request: %w", err)')]),
+ ("S05-ollama-transport-unscrubbed", L+"ollama.go", L, [('fmt.Errorf("ollama: send request: %w", scrubURLError(err))', 'fmt.Errorf("ollama: send request: %w", err)')]),
+ ("S06-astica-transport-unscrubbed", L+"astica.go", L, [('fmt.Errorf("astica: send request: %w", scrubURLError(err))', 'fmt.Errorf("astica: send request: %w", err)')]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),

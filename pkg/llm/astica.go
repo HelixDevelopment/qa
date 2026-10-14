@@ -157,7 +157,7 @@ func (p *asticaProvider) doRequest(
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("astica: send request: %w", err)
+		return nil, fmt.Errorf("astica: send request: %w", scrubURLError(err))
 	}
 	defer httpResp.Body.Close()
 

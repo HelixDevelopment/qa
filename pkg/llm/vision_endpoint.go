@@ -67,6 +67,14 @@ func VisionEndpointConfigFromEnvChecked(getenv func(string) string) (ProviderCon
 		return refuse("it carries a query string")
 	case u.Fragment != "" || strings.Contains(cfg.BaseURL, "#"):
 		return refuse("it carries a fragment")
+	case strings.Contains(strings.ToLower(u.EscapedPath()), "%3f") ||
+		strings.Contains(strings.ToLower(u.EscapedPath()), "%23") ||
+		strings.Contains(u.Path, ";"):
+		// An encoded '?' / '#' or a ';' parameter in the path is a query or
+		// fragment in disguise. (A secret written as a plain path segment,
+		// e.g. /key/<secret>/, cannot be told from a real path and is NOT
+		// detected — documented.)
+		return refuse("its path carries an encoded '?' / '#' or a ';' parameter")
 	}
 	return cfg, true, nil
 }

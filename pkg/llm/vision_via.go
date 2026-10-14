@@ -5,9 +5,14 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrCircuitOpen is returned (wrapped) by VisionVia when the member's
+// circuit breaker is open: the member was not called.
+var ErrCircuitOpen = errors.New("llm: circuit breaker open")
 
 // VisionRouter is implemented by the adaptive wrappers. VisionVia asks ONE
 // chosen member provider while the wrapper keeps its own bookkeeping
@@ -58,7 +63,7 @@ func (eap *EnhancedAdaptiveProvider) VisionVia(ctx context.Context, p Provider, 
 	}
 	rl := GetRateLimiter(name)
 	if rl.isCircuitOpen() {
-		return nil, fmt.Errorf("llm: %s: circuit breaker open", name)
+		return nil, fmt.Errorf("%w for %s", ErrCircuitOpen, name)
 	}
 	if err := rl.Wait(ctx, EstimateTokens(prompt)+len(image)/4); err != nil {
 		return nil, fmt.Errorf("llm: %s: rate limit wait failed: %w", name, err)
