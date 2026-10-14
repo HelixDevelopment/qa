@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
@@ -200,7 +199,7 @@ func (p *anthropicProvider) doRequest(
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, tooBig, err := readCappedBody(httpResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic: read response body: %w", err)
 	}
@@ -209,8 +208,11 @@ func (p *anthropicProvider) doRequest(
 		return nil, fmt.Errorf(
 			"anthropic: API error %d: %s",
 			httpResp.StatusCode,
-			string(respBody),
+			errorBodyText(respBody, p.apiKey),
 		)
+	}
+	if tooBig {
+		return nil, fmt.Errorf("anthropic: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 
 	var apiResp anthropicResponse

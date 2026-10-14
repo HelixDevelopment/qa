@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -306,28 +305,18 @@ func (p *openaiProvider) doRequest(
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, openaiMaxResponseBytes+1))
+	respBody, tooBig, err := readCappedBody(httpResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("openai: read response body: %w", err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
-		snippet := respBody
-		if len(snippet) > openaiErrorBodySnippet {
-			snippet = append(append([]byte(nil), snippet[:openaiErrorBodySnippet]...), "…(truncated)"...)
-		}
-		text := string(snippet)
-		if p.apiKey != "" {
-			// A server that echoes the request must not put our own key
-			// into an error that reaches logs, findings and reports.
-			text = strings.ReplaceAll(text, p.apiKey, "[REDACTED]")
-		}
 		return nil, fmt.Errorf(
 			"openai: API error %d: %s",
 			httpResp.StatusCode,
-			text,
+			errorBodyText(respBody, p.apiKey),
 		)
 	}
-	if len(respBody) > openaiMaxResponseBytes {
+	if tooBig {
 		return nil, fmt.Errorf("openai: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 

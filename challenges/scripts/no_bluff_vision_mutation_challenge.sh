@@ -42,7 +42,7 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_'
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_'
 PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/)
 
 echo "== control (unmutated tree)"
@@ -81,8 +81,8 @@ M = [
  ("M29-gated-screenshot-promoted", O+"definition_challenge.go", O, [("gated := step.IsVisionGated()", "gated := false")]),
  ("M30-endpoint-sends-cloud-model", L+"openai.go", L, [('if model == "" && cfg.Name != ProviderVisionEndpoint {', 'if model == "" {')]),
  ("M31-endpoint-sampling-not-fixed", L+"openai.go", L, [("if p.providerName == ProviderVisionEndpoint {\n\t\ttemp, seed", "if false {\n\t\ttemp, seed")]),
- ("M32-error-body-uncapped", L+"openai.go", L, [("if len(snippet) > openaiErrorBodySnippet {", "if len(snippet) > openaiErrorBodySnippet*100000 {")]),
- ("M33-oversized-body-accepted", L+"openai.go", L, [("if len(respBody) > openaiMaxResponseBytes {", "if len(respBody) > openaiMaxResponseBytes*4 {")]),
+ ("M32-error-body-uncapped", L+"http_body.go", L, [("if len(text) > openaiErrorBodySnippet {", "if len(text) > openaiErrorBodySnippet*100000 {")]),
+ ("M33-oversized-body-accepted", L+"openai.go", L, [('if tooBig {\n\t\treturn nil, fmt.Errorf("openai: response body exceeds', 'if tooBig && false {\n\t\treturn nil, fmt.Errorf("openai: response body exceeds')]),
  ("M34-unparsable-url-printed", L+"vision_endpoint.go", L, [('shown := "(unparsable endpoint URL — not printed)"', "shown := cfg.BaseURL")]),
  ("M35-url-query-printed", L+"vision_endpoint.go", L, [("clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}", "clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawQuery: u.RawQuery}")]),
  ("M36-endpoint-not-preferred", L+"vision_ranking.go", L, [("if p.Name() == ProviderVisionEndpoint {\n\t\treturn 10.0", "if false {\n\t\treturn 10.0")]),
@@ -103,7 +103,7 @@ M = [
  ("M54-endpoint-query-accepted", L+"vision_endpoint.go", L, [("case u.RawQuery != \"\" || u.ForceQuery:", "case false:")]),
  ("M55-transport-error-not-scrubbed", L+"openai.go", L, [("fmt.Errorf(\"openai: send request: %w\", scrubURLError(err))", "fmt.Errorf(\"openai: send request: %w\", err)")]),
  ("M56-path-appended-after-query", L+"openai.go", L, [("endpoint := chatCompletionsURL(p.baseURL)", "endpoint := p.baseURL + \"/chat/completions\"")]),
- ("M57-response-read-uncapped", L+"openai.go", L, [("io.ReadAll(io.LimitReader(httpResp.Body, openaiMaxResponseBytes+1))", "io.ReadAll(httpResp.Body)")]),
+ ("M57-response-read-uncapped", L+"http_body.go", L, [("io.ReadAll(io.LimitReader(r, openaiMaxResponseBytes+1))", "io.ReadAll(r)")]),
  ("M58-blocked-filed-as-functional-bug", A+"structured_executor.go", A, [("Category: analysis.CategoryEnvironment,", "Category: analysis.CategoryFunctional,")]),
  ("M59-environment-counts-as-app-defect", "pkg/analysis/types.go", A, [("return c != CategoryEnvironment", "return true")]),
  ("M60-reproducer-gets-environment-findings", A+"pipeline.go", A, [("if !f.Category.IsAppDefect() {\n\t\t\t// The QA run could not judge", "if false {\n\t\t\t// The QA run could not judge")]),
@@ -141,7 +141,7 @@ M = [
  ("N20-failure-not-recorded", L+"vision_via.go", L, [("\trl.RecordFailure(err)\n", "")]),
  ("N34-enhanced-ctx-check-dropped", L+"vision_via.go", L, [("func (eap *EnhancedAdaptiveProvider) VisionVia(ctx context.Context, p Provider, image []byte, prompt string) (*Response, error) {\n\tif err := ctx.Err(); err != nil {\n\t\treturn nil, err\n\t}", "func (eap *EnhancedAdaptiveProvider) VisionVia(ctx context.Context, p Provider, image []byte, prompt string) (*Response, error) {")]),
  ("S01-encoded-path-secret-accepted", L+"vision_endpoint.go", L, [('return refuse("its path carries an encoded', 'return cfg, true, nil\n\t\t_ = refuse\n\t\treturn refuse("its path carries an encoded')]),
- ("S02-own-key-echo-not-redacted", L+"openai.go", L, [('text = strings.ReplaceAll(text, p.apiKey, "[REDACTED]")', "_ = text")]),
+ ("S02-own-key-echo-not-redacted", L+"openai.go", L, [("errorBodyText(respBody, p.apiKey)", "string(respBody)")]),
  ("S03-chat-completions-double-appended", L+"openai.go", L, [('if strings.HasSuffix(path, "/chat/completions") {\n\t\t// The base', 'if false {\n\t\t// The base')]),
  ("S04-anthropic-transport-unscrubbed", L+"anthropic.go", L, [('fmt.Errorf("anthropic: send request: %w", scrubURLError(err))', 'fmt.Errorf("anthropic: send request: %w", err)')]),
  ("S05-ollama-transport-unscrubbed", L+"ollama.go", L, [('fmt.Errorf("ollama: send request: %w", scrubURLError(err))', 'fmt.Errorf("ollama: send request: %w", err)')]),
@@ -153,6 +153,20 @@ M = [
  ("T05-host-only-steps-blocked-without-executor", A+"structured_executor.go", A, [("if err != nil && isHostOnlyStep(step) {", "if err != nil && false && isHostOnlyStep(step) {")]),
  ("T06-gated-host-step-runs-without-frame", A+"structured_executor.go", A, [("\tif step.IsVisionGated() {\n\t\treturn false\n\t}\n\tkind, _ := step.ParseAction()\n\treturn kind.IsNonScreen()", "\tif false {\n\t\treturn false\n\t}\n\tkind, _ := step.ParseAction()\n\treturn kind.IsNonScreen()")]),
  ("T07-ui-step-treated-host-only", A+"structured_executor.go", A, [("return kind.IsNonScreen() || kind == testbank.ActionTypeSleep", "return true || kind.IsNonScreen()")]),
+ ("R10-adaptive-visionvia-ctx-dropped", L+"vision_via.go", L, [("func (a *AdaptiveProvider) VisionVia(ctx context.Context, p Provider, image []byte, prompt string) (*Response, error) {\n\tif err := ctx.Err(); err != nil {\n\t\treturn nil, err\n\t}", "func (a *AdaptiveProvider) VisionVia(ctx context.Context, p Provider, image []byte, prompt string) (*Response, error) {")]),
+ ("R20-google-transport-unscrubbed", L+"google.go", L, [('fmt.Errorf("google: send request: %w", scrubURLError(err))', 'fmt.Errorf("google: send request: %w", err)')]),
+ ("R27-empty-fragment-accepted", L+"vision_endpoint.go", L, [('case u.Fragment != "" || strings.Contains(cfg.BaseURL, "#"):', 'case u.Fragment != "":')]),
+ ("R28-empty-query-accepted", L+"vision_endpoint.go", L, [('case u.RawQuery != "" || u.ForceQuery:', 'case u.RawQuery != "":')]),
+ ("U01-redaction-case-sensitive", L+"http_body.go", L, [("regexp.MustCompile(`(?i)`+regexp.QuoteMeta(f))", "regexp.MustCompile(regexp.QuoteMeta(f))")]),
+ ("U02-truncate-before-redact", L+"http_body.go", L, [("\ttext := string(body)\n\tfor _, s := range secrets {", "\ttext := string(body)\n\tif len(text) > openaiErrorBodySnippet {\n\t\ttext = text[:openaiErrorBodySnippet]\n\t}\n\tfor _, s := range secrets {")]),
+ ("U03-base64-forms-not-redacted", L+"http_body.go", L, [("base64.StdEncoding.EncodeToString(raw),", "strings.Repeat(base64.StdEncoding.EncodeToString(raw), 0),"), ("base64.URLEncoding.EncodeToString(raw),", "strings.Repeat(base64.URLEncoding.EncodeToString(raw), 0),"), ("base64.RawStdEncoding.EncodeToString(raw),", "strings.Repeat(base64.RawStdEncoding.EncodeToString(raw), 0),"), ("base64.RawURLEncoding.EncodeToString(raw),", "strings.Repeat(base64.RawURLEncoding.EncodeToString(raw), 0),")]),
+ ("U04-escaped-forms-not-redacted", L+"http_body.go", L, [("url.QueryEscape(secret),", "strings.Repeat(url.QueryEscape(secret), 0),"), ("url.PathEscape(secret),", "strings.Repeat(url.PathEscape(secret), 0),")]),
+ ("U05a-anthropic-bypasses-redaction", L+"anthropic.go", L, [("errorBodyText(respBody, p.apiKey)", "string(respBody)")]),
+ ("U05b-astica-bypasses-redaction", L+"astica.go", L, [("errorBodyText(respBody, p.apiKey)", "string(respBody)")]),
+ ("U05c-google-bypasses-redaction", L+"google.go", L, [("errorBodyText(respBody, p.apiKey)", "string(respBody)")]),
+ ("U06a-anthropic-over-cap-accepted", L+"anthropic.go", L, [('if tooBig {\n\t\treturn nil, fmt.Errorf("anthropic: response body exceeds', 'if tooBig && false {\n\t\treturn nil, fmt.Errorf("anthropic: response body exceeds')]),
+ ("U06b-ollama-over-cap-accepted", L+"ollama.go", L, [('if tooBig {\n\t\treturn nil, fmt.Errorf("ollama: response body exceeds', 'if tooBig && false {\n\t\treturn nil, fmt.Errorf("ollama: response body exceeds')]),
+ ("U07-short-secret-floor-lifted", L+"http_body.go", L, [("const minRedactableSecret = 8", "const minRedactableSecret = 1000")]),
  ("M09-golden-distance-ignored", A+"vision_gate.go", A, [("if d > max {", "if d > max+64 {")]),
  ("M10-forbid-ignored", A+"vision_gate.go", A, [("if len(forbidden) > 0 {", "if len(forbidden) > 99 {")]),
  ("M11-recognize-ignored", A+"vision_gate.go", A, [("if len(missing) > 0 {", "if len(missing) > 99 {")]),

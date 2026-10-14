@@ -9,8 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -29,6 +29,9 @@ type googleProvider struct {
 	apiKey string
 	model  string
 	client *http.Client
+	// baseURL overrides the Gemini API origin (tests / proxies); empty
+	// means the public endpoint in geminiGenerateURLFmt.
+	baseURL string
 }
 
 // geminiRequest is the JSON body sent to the generateContent
@@ -82,8 +85,9 @@ func NewGoogleProvider(cfg ProviderConfig) Provider {
 		model = geminiDefaultModel
 	}
 	return &googleProvider{
-		apiKey: cfg.APIKey,
-		model:  model,
+		apiKey:  cfg.APIKey,
+		model:   model,
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		// Transport-level timeout ensures TCP connections can't
 		// hang indefinitely even when context cancellation fails
 		// to propagate (common on some Go/Linux combinations).
@@ -180,6 +184,9 @@ func (p *googleProvider) doRequest(
 	req geminiRequest,
 ) (*Response, error) {
 	url := fmt.Sprintf(geminiGenerateURLFmt, p.model)
+	if p.baseURL != "" {
+		url = p.baseURL + "/v1beta/models/" + p.model + ":generateContent"
+	}
 	var lastErr error
 	for attempt := 0; attempt <= geminiMaxRetries; attempt++ {
 		if attempt > 0 {
@@ -273,7 +280,7 @@ func (p *googleProvider) doRequestURL(
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, tooBig, err := readCappedBody(httpResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"google: read response body: %w", err,
@@ -284,8 +291,11 @@ func (p *googleProvider) doRequestURL(
 		return nil, fmt.Errorf(
 			"google: API error %d: %s",
 			httpResp.StatusCode,
-			string(respBody),
+			errorBodyText(respBody, p.apiKey),
 		)
+	}
+	if tooBig {
+		return nil, fmt.Errorf("google: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 
 	var apiResp geminiResponse
