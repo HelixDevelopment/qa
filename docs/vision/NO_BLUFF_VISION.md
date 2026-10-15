@@ -149,14 +149,20 @@ tatweel U+0640 (`خطـــأ` matches `خطأ`).
   retraction ("Wait, no."), a second verdict inside prose, a filled
   template followed by "the screen does not match", a code fence — makes
   the reply ambiguous: next provider, else BLOCKED. Multi-line `ACTUAL`
-  descriptions are ambiguous (recall cost). The ACTUAL text of a
-  `VERIFIED: yes` reply is scanned (a definite NO never is): the
-  template's upper-case second verdict (`VERIFIED: no`) or the model saying
-  it could not see / view / read the IMAGE ("I cannot see the image",
-  "unable to view images; assuming yes", "could not read the screenshot")
-  makes the reply ambiguous. An ordinary description ("The screenshot
-  shows …", "I don't see any error dialogs", an "Email verified: yes"
-  badge) is not. **This scan is a heuristic (waived, review round 7,
+  descriptions are ambiguous (recall cost). The ACTUAL text is scanned:
+  for a `VERIFIED: yes`, the template's upper-case second verdict
+  (`VERIFIED: no`) or the model saying it could not see / view / read the
+  IMAGE makes the reply ambiguous; for a `VERIFIED: no`, only the latter
+  (a refusal is not evidence of absence — it is BLOCKED, not filed as an
+  app defect). "The model saying it" means the inability verb group at the
+  start of the text or after a first-person subject ("I cannot see the
+  image", "I can't view the attached image", "I'm unable to see the
+  provided screenshot", "As an AI, I can't see pictures", "Unable to view
+  images; assuming yes"), and not an app image ("I cannot see the image
+  OF the user avatar"). Quoted app text ("A dialog reads 'Could not load
+  image'", "Toast: Unable to open image"), an ordinary description ("The
+  screenshot shows …", "I don't see any error dialogs") and an "Email
+  verified: yes" badge are not. **This scan is a heuristic (waived, review round 7,
   finding 3):** other hedges are NOT detected and a `yes` next to them is
   honoured — e.g. "Unable to determine; assuming yes", "No image was
   attached, so I assumed …", "I do not have the ability to view images",
@@ -212,7 +218,13 @@ tatweel U+0640 (`خطـــأ` matches `خطأ`).
   to the token counts. Tokens in scripts written without spaces between
   words (Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) match as
   SUBSTRINGS of an element (`错误` in `发生错误了`); Latin and other spaced
-  scripts keep whole-word matching. Normalisation applies NFKC (fullwidth
+  scripts keep whole-word matching. Limits of this rule: a MIXED-script
+  token (`error错误`) is matched as a substring as a whole, so its Latin
+  part loses whole-word matching; a Latin forbid token glued to Han text or
+  digits (`Error错误`, `Error500`) is missed; Hangul is not in the no-space
+  list, so a Korean compound written without a space (`오류발생`) does not
+  contain `오류`; CJK text that an OCR-like model spaced out (`错 误`) does
+  not contain `错误`; refusal / inability detection is English-only. Normalisation applies NFKC (fullwidth
   letters, ligatures, mathematical alphanumerics fold to plain letters)
   and drops Unicode format characters (Cf: zero-width space / joiner, BOM,
   soft hyphen, tag characters) and the other invisible code points —
@@ -402,15 +414,31 @@ breaks none of them.
   the app, and an `http:` step counts on its expected status / body checks
   (a 2xx when it declares none). 46 `http:` steps in this repository's,
   catalogizer's and boba's banks declare no `expect_status` (e.g.
-  WK-AUTH-007, WK-PROG-009, SEC-009, COD-RED-UNREACHABLE-001): they now
-  FAIL on any non-2xx status; a step that expects an error must say
-  `expect_status: 4xx-code`.
+  WK-AUTH-007, WK-PROG-009, SEC-009, COD-RED-UNREACHABLE-001) — and ALL 46
+  are `_skip: true` (re-measured), so no step that runs today changes
+  verdict. At load, `helixqa run` and the structured phase print every
+  executed `http:` step relying on the default 2xx as a WARNING and the
+  `_skip`ped ones separately. Migration when such a step is re-enabled:
+  declare `expect_status` (with `expect_body_contains` /
+  `expect_json_path` as needed), or `expect_status` plus a following
+  `assert:`. A negative test written as `http:` + `assert: status_eq: 401`
+  now FAILS at the `http:` step (401 is not a 2xx) before the assert runs —
+  write it as `http:` with `expect_status: 401`.
 - Reachability: both production executor factories probe each platform
   (last `adb -s <serial> get-state` line must be `device`; desktop / web
   one real capture); `cli` / `api` platforms are not probed and the web
   probe starts the browser. A device action that fails while the device
   still probes reachable is a FAILED step (a device that drops between the
   failure and the re-probe is reported unreachable).
+- Dependencies: a `dependencies:` entry naming a case that is not in the
+  run (another bank, or filtered out by platform) is ignored silently —
+  the dependent case still runs.
+- `shell:` steps are killed with SIGKILL on cancellation, by design: a
+  `trap … TERM INT` in the command never runs (no grace period for
+  cleanup). The interruption is recorded STRUCTURALLY — only the wrapper's
+  own entry marks it; the step's output, whatever text it contains, is
+  data and never decides the verdict (the same holds for the
+  `skip-reason:` sentinel).
 - The run's cancellation / timeout: `helixqa run` keeps the challenges a
   platform already ran (a FAILED one exits 1) and records a challenge cut
   by the cancellation as SKIPPED "interrupted" (exit 2 when nothing

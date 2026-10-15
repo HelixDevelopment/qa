@@ -97,6 +97,8 @@ For Go tests: `<path>.go::<TestFuncName>`. Verifier greps for
 | CAP-069 | submodule:HelixQA | Dependency order (ID tie-break) and cycle reporting in run and autonomous | pkg/orchestrator/no_bluff_vision_orch_test.go::TestOrchRun_DependencyOrderAndCycle | z-setup before a-check; cycle members SKIPPED with "dependency cycle" | active |
 | CAP-070 | submodule:HelixQA | ACTUAL scan: inability wording only, yes only | pkg/autonomous/no_bluff_vision_round8_test.go::TestNoBluffVision_R8_ActualScanOnlyInabilityAndNeverOnNo | ordinary descriptions pass; definite NO refuted; "cannot see the image" blocks; phrasing does not change the verdict | active |
 | CAP-071 | submodule:HelixQA | http: without expect_status requires a 2xx | pkg/autonomous/no_bluff_vision_round8_test.go::TestNoBluffVision_R8_HTTPDefaultsTo2xx | 500 FAILS, 204 PASSES, declared 404 PASSES | active |
+| CAP-072 | submodule:HelixQA | A step's output can never decide the interruption verdict | pkg/orchestrator/no_bluff_vision_orch_test.go::TestOrchRun_MarkerTextInStepOutputIsData | marker text printed by a FAILED step, then cancel / deadline -> FAILED, exit 1; sentinel text in output never restores SKIPPED | active |
+| CAP-073 | submodule:HelixQA | ACTUAL inability scan: first-person subject, no app images, attached / provided images, NO with inability BLOCKED | pkg/autonomous/no_bluff_vision_round8_test.go::TestNoBluffVision_R9_InabilityScanScope | quoted app text passes; "I can't view the attached image" blocks; NO + "I cannot see the image" BLOCKED | active |
 
 (Manifest now covers core orchestrator+autonomous+LLM+evidence+
 testbank+ticket+analysis+video+CLI capabilities — 27 active rows.

@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Round-9 hardening (review round 8):** the interruption is structural
+  — text in a step's output ("interrupted-by-run-cancellation") can no
+  longer turn a FAILED challenge into SKIPPED (round 8 exited 2 for it).
+  `http:` steps relying on the default 2xx are listed at load (executed:
+  WARNING; `_skip`: separately); the migration recipe is documented. The
+  ACTUAL inability scan needs a first-person subject (or the text start),
+  ignores an app image and knows attached / provided images; a NO resting
+  on "could not see the image" is BLOCKED, not an app defect. Documented
+  limits: no-space-script rule (mixed-script tokens, glued Latin, Hangul,
+  OCR-spaced CJK), English-only refusal detection, dependencies on cases
+  outside the run ignored, SIGKILL without grace. Mutants Q01-Q08 (Q02
+  equivalent, removed).
 - **Round-8 hardening (review round 7):** Ctrl-C during a real `shell:`
   step is SKIPPED "interrupted" (round 7 still exited 1 for a cancel: the
   interrupted result had no assertion and the runner's anti-bluff gate
@@ -52,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a yes (round 7 blocked "The screenshot shows …" and definite NOs); its
   limits are documented (waived). An empty `expected` is never sent to the
   model. **Breaking:** an `http:` step without `expect_status` must return
-  a 2xx (46 bank steps affected). A refusal sentence mentioning a forbidden
+  a 2xx (46 bank steps declare none — all 46 are `_skip: true`, so no
+  executed step changes verdict; listed at load since round 9). A refusal sentence mentioning a forbidden
   word is not a FAIL; Han / kana / Thai / Lao / Khmer / Myanmar tokens
   match as substrings; tatweel folded. `sleep:` honours cancellation;
   `_skip: true` steps are not run by the structured phase; adb get-state
