@@ -339,3 +339,29 @@ func TestNoBluffVision_R10_DocumentedScanEdges(t *testing.T) {
 		t.Fatalf("documented recall cost changed: %q", r.Actual)
 	}
 }
+
+// Pins the documented MISS list of the ACTUAL inability scan (review round
+// 9, item 2): docs/vision/NO_BLUFF_VISION.md says a `yes` next to each of
+// these is honoured. If the scan learns one, this test fails and the docs
+// list must shrink with it — the documentation may not drift from the code.
+func TestNoBluffVision_R10_DocumentedMisses(t *testing.T) {
+	for _, a := range []string{
+		"Unable to determine; assuming yes",
+		"No image was attached, so I assumed it",
+		"I do not have the ability to view images",
+		"I'm an AI and cannot see images",
+		"Sorry, cannot see the image",
+		"I was unable to see the image",
+		"Unfortunately, unable to view the screenshot",
+		"My vision model cannot see the image",
+		"I honestly cannot see the image",
+		"I cannot see or read the image",
+		"Je ne peux pas voir l'image",
+		"the settings screen is NOT shown",
+	} {
+		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes\nACTUAL: " + a}, noisePNG(t, 1), noisePNG(t, 2))
+		if r := run(ste, gated(nil)); !r.Passed {
+			t.Errorf("documented miss %q is no longer honoured (docs list stale): %q", a, r.Actual)
+		}
+	}
+}
