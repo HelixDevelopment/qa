@@ -40,6 +40,9 @@ func TestNoBluffVision_R8_ActualScanOnlyInabilityAndNeverOnNo(t *testing.T) {
 	refuted := []string{
 		"VERIFIED: no\nACTUAL: The screenshot shows a login form",
 		"VERIFIED: no\nACTUAL: I cannot see the settings screen, an error dialog covers it",
+		// The second-verdict scan is for a YES only: a definite NO is not
+		// overridden by template wording quoted in its ACTUAL.
+		"VERIFIED: no\nACTUAL: a login form, so not VERIFIED: yes",
 	}
 	for _, reply := range refuted {
 		ste, _ := newSTE(&fakeVision{verify: reply}, noisePNG(t, 1), noisePNG(t, 2))
