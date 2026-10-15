@@ -97,6 +97,9 @@ func TestNoBluffVision_DescriptionProseNeverMatches(t *testing.T) {
 		pass        bool
 	}{
 		{"negated recognize in description", `{"texts":["Settings"],"description":"The Login button is not shown"}`, []string{"Login"}, nil, false},
+		// Round 8: recognize is exact by default, so the description must be
+		// ignored even when it EQUALS the token.
+		{"description equal to the token", `{"texts":["Settings"],"description":"Login"}`, []string{"Login"}, nil, false},
 		{"(no search bar visible) as prose", `{"texts":["Settings"],"description":"(no search bar visible)"}`, []string{"search bar"}, nil, false},
 		{"(No error messages visible) as prose", `{"texts":["Settings"],"description":"(No error messages visible)"}`, []string{"Settings"}, []string{"Error"}, true},
 		{"forbid in texts fails", `{"texts":["Settings","Error 500"],"description":"banner"}`, []string{"Settings"}, []string{"Error"}, false},

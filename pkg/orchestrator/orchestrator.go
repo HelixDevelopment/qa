@@ -10,7 +10,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -223,11 +222,11 @@ platforms:
 					EndTime:   time.Now(),
 				}
 			}
-			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			if ctx.Err() != nil {
 				// Cancelled / timed out WHILE the platform ran: keep the
 				// challenges it already ran (a FAILED one still decides
-				// the exit code) and stop — the run is incomplete.
-				runErr = err
+				// the exit code) and stop — the run is incomplete (runErr
+				// is set from ctx after the loop).
 				platformResults = append(platformResults, pr)
 				break platforms
 			}

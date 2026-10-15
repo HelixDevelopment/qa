@@ -261,7 +261,6 @@ M = [
  ("Y26-optional-vowel-marks-kept", T+"schema.go", T, [("if isOptionalVowelMark(r) || r == '\\u0640' {", "if r == '\\u0640' {")]),
  ("Y27-loader-forbid-without-recognize", T+"schema.go", T, [("if len(st.Forbid) > 0 && len(st.Recognize) == 0 {", "if false {")]),
  ("Y28-orch-cancel-drops-partial-platform", O+"orchestrator.go", O, [("if pr == nil {\n\t\t\t\tpr = &reporter.PlatformResult{", "if true {\n\t\t\t\tpr = &reporter.PlatformResult{")]),
- ("Y29-orch-cancel-not-surfaced", O+"orchestrator.go", O, [("\t\t\t\trunErr = err\n\t\t\t\tplatformResults = append(platformResults, pr)", "\t\t\t\tplatformResults = append(platformResults, pr)")]),
  ("Y30-interrupted-challenge-counted-failed", O+"orchestrator.go", O, [("if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {", "if false && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {")]),
  ("Y31-interrupted-shell-is-failure", O+"definition_challenge.go", O, [("if ctx.Err() != nil && allPassed {", "if false && allPassed {")]),
  ("Y32-autonomous-report-error-ignored", C+"exit_codes.go", C, [("if reportErr != nil && code == 0 {", "if false {")]),
