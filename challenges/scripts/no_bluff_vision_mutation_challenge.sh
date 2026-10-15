@@ -262,7 +262,7 @@ M = [
  ("Y27-loader-forbid-without-recognize", T+"schema.go", T, [("if len(st.Forbid) > 0 && len(st.Recognize) == 0 {", "if false {")]),
  ("Y28-orch-cancel-drops-partial-platform", O+"orchestrator.go", O, [("if pr == nil {\n\t\t\t\tpr = &reporter.PlatformResult{", "if true {\n\t\t\t\tpr = &reporter.PlatformResult{")]),
  ("Y30-interrupted-challenge-counted-failed", O+"orchestrator.go", O, [("if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {", "if false && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {")]),
- ("Y31-interrupted-shell-is-failure", O+"definition_challenge.go", O, [("if ctx.Err() != nil && allPassed {", "if false && allPassed {")]),
+ ("Y31-interrupted-shell-is-failure", O+"definition_challenge.go", O, [("if ctx.Err() != nil && allPassed && !exitedNormally {", "if false && allPassed && !exitedNormally {")]),
  ("Y32-autonomous-report-error-ignored", C+"exit_codes.go", C, [("if reportErr != nil && code == 0 {", "if false {")]),
  ("Y33-crash-not-outranking-error", C+"exit_codes.go", C, [("if result != nil && result.Report != nil && result.ExitCode() == 1 {", "if result != nil && result.Report != nil && result.Report.FailedChallenges > 0 {")]),
  ("Y34-learn-error-is-failed", A+"pipeline.go", A, [("// The project could not be read: environment, not an app verdict.\n\t\tresult.Status = StatusBlocked", "// The project could not be read: environment, not an app verdict.\n\t\tresult.Status = StatusFailed")]),
