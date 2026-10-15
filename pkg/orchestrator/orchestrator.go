@@ -175,8 +175,8 @@ func (o *Orchestrator) Run(
 	// autonomous structured phase uses. Cases in a dependency cycle are not
 	// run; they are reported (SKIPPED, reason "dependency cycle").
 	definitions, cyclic := orderDefinitions(o.bank.All())
-	o.log("Loaded %d challenge definitions from %d sources",
-		len(definitions), len(o.bank.Sources()))
+	o.log("Loaded %d challenge definitions from %d sources (%d in a dependency cycle, not run)",
+		len(definitions)+len(cyclic), len(o.bank.Sources()), len(cyclic))
 
 	// 1.5. Load executable bank cases via pkg/testbank. The generic
 	// challenges/pkg/bank loader drops each case's `steps` array, so
@@ -374,17 +374,18 @@ func (o *Orchestrator) runPlatform(
 			cr, err := platformRunner.Run(
 				ctx, def.ID, cfg,
 			)
+			keptFailure := false
 			if ctx.Err() != nil {
 				// What the wrapper itself concluded (the runner replaces it
 				// with "timed out" when the run's deadline passed): a step
 				// that FAILED before the cancellation keeps its verdict.
 				if w := wrappers[def.ID]; w != nil {
 					if lr := w.lastResult(); lr != nil && lr.Status == challenge.StatusFailed {
-						cr, err = lr, nil
+						cr, err, keptFailure = lr, nil, true
 					}
 				}
 			}
-			if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {
+			if ctx.Err() != nil && !keptFailure && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {
 				// The run was cancelled / timed out while this challenge
 				// ran and it reports an error / timeout: its outcome is
 				// unknown — not a failure. Record it as not executed and
@@ -558,6 +559,7 @@ func (o *Orchestrator) loadExecutableCases() {
 				tc := bf.TestCases[i]
 				o.executableCases[challenge.ID(tc.ID)] = &tc
 			}
+			warnDefaultStatusHTTPSteps(f, bf.TestCases, o.log)
 		}
 	}
 }
@@ -744,4 +746,17 @@ func completeRecords(platforms []config.Platform, prs []*reporter.PlatformResult
 		out = append(out, pr)
 	}
 	return out
+}
+
+// warnDefaultStatusHTTPSteps prints, at load, the http: steps of a bank that
+// declare no expect_status and so expect a 2xx by default — executed steps
+// as a WARNING, `_skip`ped ones separately.
+func warnDefaultStatusHTTPSteps(file string, cases []testbank.TestCase, logf func(string, ...interface{})) {
+	active, skipped := testbank.DefaultStatusHTTPSteps(cases)
+	for _, row := range active {
+		logf("WARNING: %s: http: step without expect_status expects a 2xx by default: %s", file, row)
+	}
+	if len(skipped) > 0 {
+		logf("note: %s: %d disabled (_skip) http: step(s) without expect_status: %s", file, len(skipped), strings.Join(skipped, "; "))
+	}
 }

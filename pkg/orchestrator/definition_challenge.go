@@ -459,13 +459,16 @@ func snapshotResult(r *challenge.Result) *challenge.Result {
 // timeout cut short.
 const interruptedMarker = "interrupted-by-run-cancellation"
 
-// hasInterruptedMarker reports a result carrying interruptedMarker.
+// hasInterruptedMarker reports a result carrying the wrapper's OWN
+// interruption entry. Only an entry that STARTS with the skip sentinel and
+// the marker counts: recorded step output ("shell-step[i]: … output=…") is
+// data and can never be read as the verdict, whatever text it contains.
 func hasInterruptedMarker(r *challenge.Result) bool {
 	if r == nil {
 		return false
 	}
 	for _, a := range r.RecordedActions {
-		if strings.Contains(a, interruptedMarker) {
+		if strings.HasPrefix(a, definitionWrapperSkipSentinel+" "+interruptedMarker) {
 			return true
 		}
 	}

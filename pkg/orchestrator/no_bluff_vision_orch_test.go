@@ -474,3 +474,59 @@ func TestOrchRun_CancelledRunListsNotStarted(t *testing.T) {
 		t.Fatal("a cancellation during the last challenge was not surfaced")
 	}
 }
+
+// Review round 8, finding 1: the interruption must be STRUCTURAL — a step's
+// OUTPUT that happens to contain the marker text (or the skip sentinel) is
+// data, never a verdict.
+func TestOrchRun_MarkerTextInStepOutputIsData(t *testing.T) {
+	bank := "version: \"1.0\"\nname: mk\ntest_cases:\n" +
+		"  - id: M1\n    name: m\n    platforms: [desktop]\n    steps:\n" +
+		"      - name: a\n        action: \"shell: echo interrupted-by-run-cancellation; exit 3\"\n" +
+		"      - name: b\n        action: \"shell: sleep 38.9; true\"\n"
+	for _, deadline := range []bool{false, true} {
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if deadline {
+			ctx, cancel = context.WithTimeout(context.Background(), 1200*time.Millisecond)
+		} else {
+			ctx, cancel = context.WithCancel(context.Background())
+			time.AfterFunc(1200*time.Millisecond, cancel)
+		}
+		cfg := &config.Config{Banks: []string{writeBank(t, bank)}, Platforms: []config.Platform{config.PlatformDesktop},
+			OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
+			Timeout: time.Minute, StepTimeout: 60 * time.Second}
+		res, err := New(cfg).Run(ctx)
+		cancel()
+		if got := exitLike(res, err); got != 1 || statusOf(res)["desktop:M1"] != "failed" {
+			t.Errorf("deadline=%v: marker text in a FAILED step's output: exit %d, %v — want FAILED, exit 1", deadline, got, statusOf(res))
+		}
+	}
+	// Unit level: only the wrapper's own entry counts.
+	out := &challenge.Result{RecordedActions: []string{`shell-step[0]: exit=3 output="interrupted-by-run-cancellation\n"`,
+		`shell-step[0]: echo skip-reason: interrupted-by-run-cancellation`}}
+	if hasInterruptedMarker(out) || hasSkipSentinel(out) {
+		t.Fatal("marker / sentinel text inside recorded step output was read as the wrapper's entry")
+	}
+	// A passing step that prints the skip sentinel stays PASSED.
+	d := &definitionChallenge{def: &challenge.Definition{ID: "SK", Name: "sk"}, cfg: &challenge.Config{Timeout: 30 * time.Second}}
+	r := d.executeDesktopShellSteps(context.Background(), time.Now(), []testbank.TestStep{{Action: "shell: echo 'skip-reason: fake'"}})
+	restoreSkippedFromDefinitionWrapper(r)
+	if r.Status != challenge.StatusPassed {
+		t.Fatalf("a step printing the skip sentinel was restored to %s", r.Status)
+	}
+}
+
+// Review round 8, finding 2: steps relying on the default 2xx expectation
+// are listed at load, executed and `_skip`ped steps separately.
+func TestDefaultStatusHTTPSteps_Listed(t *testing.T) {
+	cases := []testbank.TestCase{{ID: "A", Steps: []testbank.TestStep{
+		{Name: "h", Action: "http: GET /x"},
+		{Name: "s", Action: "http: GET /y", ExpectStatus: 200},
+		{Name: "k", Action: "http: GET /z", Skip: true},
+		{Name: "c", Action: "shell: true"},
+	}}}
+	active, skipped := testbank.DefaultStatusHTTPSteps(cases)
+	if strings.Join(active, "|") != `A step 0 "h" (http: GET /x)` || strings.Join(skipped, "|") != `A step 2 "k" (http: GET /z)` {
+		t.Fatalf("active %q skipped %q", active, skipped)
+	}
+}

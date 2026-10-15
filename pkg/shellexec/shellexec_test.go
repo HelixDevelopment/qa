@@ -64,8 +64,18 @@ func TestShellExec_WaitDelayBoundsEscapedChild(t *testing.T) {
 			t.Fatalf("setsid not available on this host: %v", err)
 		}
 	}
+	pidFile := filepath.Join(t.TempDir(), "escaped.pid")
+	t.Cleanup(func() {
+		// The escaped grandchild left the group by design; do not leave it
+		// running after the test.
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := Command(ctx, "setsid sleep 4 & sleep 30")
+	cmd := Command(ctx, "setsid sh -c 'echo $$ > "+pidFile+"; exec sleep 4' & sleep 30")
 	done := make(chan struct{})
 	go func() { _, _ = cmd.CombinedOutput(); close(done) }()
 	time.Sleep(300 * time.Millisecond)

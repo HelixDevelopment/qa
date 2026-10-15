@@ -943,3 +943,25 @@ func DependencyOrder(ids []string, deps map[string][]string) (order, cyclic []st
 	sort.Strings(cyclic)
 	return order, cyclic
 }
+
+// DefaultStatusHTTPSteps lists the `http:` steps that declare no
+// expect_status and therefore rely on the default 2xx expectation, as
+// `<case> step <i> "<name>" (<action>)`: active (executed) steps and
+// `_skip: true` steps separately. Callers print them at load so a bank
+// author sees which steps changed meaning when the default became 2xx.
+func DefaultStatusHTTPSteps(cases []TestCase) (active, skipped []string) {
+	for _, tc := range cases {
+		for i, st := range tc.Steps {
+			if k, _ := st.ParseAction(); k != ActionTypeHTTP || st.ExpectStatus != 0 {
+				continue
+			}
+			row := fmt.Sprintf("%s step %d %q (%s)", tc.ID, i, st.Name, strings.TrimSpace(st.Action))
+			if st.Skip {
+				skipped = append(skipped, row)
+			} else {
+				active = append(active, row)
+			}
+		}
+	}
+	return active, skipped
+}
