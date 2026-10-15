@@ -40,7 +40,6 @@ func TestNoBluffVision_R8_ActualScanOnlyInabilityAndNeverOnNo(t *testing.T) {
 	refuted := []string{
 		"VERIFIED: no\nACTUAL: The screenshot shows a login form",
 		"VERIFIED: no\nACTUAL: I cannot see the settings screen, an error dialog covers it",
-		"VERIFIED: no\nACTUAL: I cannot see the image",
 	}
 	for _, reply := range refuted {
 		ste, _ := newSTE(&fakeVision{verify: reply}, noisePNG(t, 1), noisePNG(t, 2))
@@ -259,4 +258,39 @@ func TestNoBluffVision_R8_StructuredDependencyOrder(t *testing.T) {
 	if verdict["c-loop"] != CaseVerdictBlocked || verdict["d-loop"] != CaseVerdictBlocked || verdict["a-check"] != CaseVerdictPassed {
 		t.Fatalf("verdicts %v — a dependency cycle is BLOCKED, the rest runs", verdict)
 	}
+}
+
+// Review round 8, findings 4 + 5: the inability scan needs a first-person
+// subject (or the text's start) and ignores an app image ("the image OF …");
+// it knows attached / provided / uploaded images; and a NO resting on
+// "could not see the image" is BLOCKED, not filed as an app defect.
+func TestNoBluffVision_R9_InabilityScanScope(t *testing.T) {
+	blocked := []string{
+		"I cannot see the image", "I can't view the attached image, but assuming the state is met",
+		"I'm unable to see the provided screenshot", "I am not able to see the screenshot",
+		"Unable to view images; assuming yes", "As an AI, I can't see pictures", "cannot see any images",
+		"settings; I cannot see the image", "I cannot see the attached screenshot", "couldn't load the image",
+		"I am unable to view the image", "Unable to see the screenshot",
+	}
+	for _, a := range blocked {
+		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes\nACTUAL: " + a}, noisePNG(t, 1), noisePNG(t, 2))
+		requireBlocked(t, run(ste, gated(nil)), a)
+	}
+	pass := []string{
+		"Settings. I cannot see the image of the user avatar as it is blank",
+		"A dialog reads 'Could not load image'", "Toast: Unable to open image. Settings screen behind it",
+		"Settings. Note: you cannot see the image thumbnails until they load",
+		"The attached screenshot shows the settings screen",
+	}
+	for _, a := range pass {
+		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes\nACTUAL: " + a}, noisePNG(t, 1), noisePNG(t, 2))
+		if r := run(ste, gated(nil)); !r.Passed {
+			t.Errorf("%q: %q — quoted app text / app image is not an inability", a, r.Actual)
+		}
+	}
+	ste, _ := newSTE(&fakeVision{verify: "VERIFIED: no\nACTUAL: I cannot see the image"}, noisePNG(t, 1), noisePNG(t, 2))
+	res := runCase(t, ste, gated(nil))
+	requireCaseVerdict(t, res, CaseVerdictBlocked, "NO resting on an inability")
+	ste, _ = newSTE(&fakeVision{verify: "VERIFIED: no\nACTUAL: The screenshot shows a login form"}, noisePNG(t, 1), noisePNG(t, 2))
+	requireCaseVerdict(t, runCase(t, ste, gated(nil)), CaseVerdictFailed, "definite NO with an ordinary description")
 }

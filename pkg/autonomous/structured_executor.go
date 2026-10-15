@@ -215,6 +215,13 @@ func (ste *StructuredTestExecutor) executeBanks(
 				cases = append(cases, tc)
 			}
 		}
+		active, skipped := testbank.DefaultStatusHTTPSteps(bank.TestCases)
+		for _, row := range active {
+			fmt.Printf("  [structured] WARNING: bank %s: http: step without expect_status expects a 2xx by default: %s\n", bank.Name, row)
+		}
+		if len(skipped) > 0 {
+			fmt.Printf("  [structured] note: bank %s: %d disabled (_skip) http: step(s) without expect_status\n", bank.Name, len(skipped))
+		}
 	}
 	// Unique keys (a duplicated ID keeps every case); dependencies name IDs
 	// and resolve to the first case with that ID.
@@ -1288,27 +1295,48 @@ var verdictInTextRe = regexp.MustCompile(`\bVERIFIED\s*:\s*(?i:yes|no)\b`)
 // what makes it unusable as support for the answer: a second verdict, or the
 // model saying it could not see / read the image. "" when clean.
 func suspectActual(actualLine string) string {
-	text := actualLine
-	if i := strings.Index(strings.ToUpper(text), "ACTUAL:"); i >= 0 {
-		text = text[i+len("ACTUAL:"):]
-	}
+	text := actualText(actualLine)
 	switch {
 	case verdictInTextRe.MatchString(text):
 		return "carries a second verdict"
-	case inabilityRe.MatchString(testbank.VisionTokenKey(text)):
+	case saysCannotSeeImage(text):
 		return "says the model could not see / read the image"
 	}
 	return ""
 }
 
-// inabilityRe finds, in a normalised ACTUAL text, the model saying it could
-// not see / view / read the IMAGE itself ("I cannot see the image",
-// "unable to view images", "could not read the screenshot"). It is
-// deliberately narrow: an ordinary description ("The screenshot shows …",
-// "I don't see any error dialogs") is not an inability. A heuristic — other
+// saysCannotSeeImage reports, for a free-text ACTUAL, the model saying IT
+// could not see / view / read the input image: the inability verb group at
+// the start of the text or after a first-person subject ("I", "I'm", "we",
+// "as an AI, I"), with an optional determiner and attached / provided /
+// uploaded / given / shared, and the image not qualified as an app image
+// ("the image of the user avatar"). Quoted app text ("A dialog reads
+// 'Could not load image'", "Toast: Unable to open image") has no such
+// subject and is a description.
+func saysCannotSeeImage(text string) bool {
+	k := testbank.VisionTokenKey(text)
+	for _, m := range inabilityRe.FindAllStringIndex(k, -1) {
+		if !strings.HasPrefix(k[m[1]:], "of ") {
+			return true
+		}
+	}
+	return false
+}
+
+// inabilityRe: see saysCannotSeeImage. A heuristic (English only) — other
 // hedges are documented, not detected.
-var inabilityRe = regexp.MustCompile(`(^| )(cannot|can t|can not|could not|couldn t|unable to|not able to|am unable to|m unable to) ` +
-	`(see|view|read|access|open|load|analy[sz]e|process|make out) ((the|this|that|any|your|an|a) )?(images?|screenshots?|pictures?|attachments?)( |$)`)
+var inabilityRe = regexp.MustCompile(`(?:^|(?:^| )(?:as an ai )?(?:i|i m|i am|we|we re|we are) )` +
+	`(?:cannot|can t|can not|could not|couldn t|unable to|not able to|am unable to|m unable to|am not able to) ` +
+	`(?:see|view|read|access|open|load|analy[sz]e|process|make out) (?:(?:the|this|that|any|your|an|a) )?` +
+	`(?:(?:attached|provided|uploaded|given|shared) )?(?:images?|screenshots?|pictures?|attachments?)(?: |$)`)
+
+// actualText strips the "ACTUAL:" label from an ACTUAL line.
+func actualText(actualLine string) string {
+	if i := strings.Index(strings.ToUpper(actualLine), "ACTUAL:"); i >= 0 {
+		return actualLine[i+len("ACTUAL:"):]
+	}
+	return actualLine
+}
 
 // strayReplyLine returns the first non-blank line of a VERIFIED reply that
 // is neither a VERIFIED answer line nor the (single) ACTUAL: line — a
@@ -1434,6 +1462,11 @@ func askVerified(
 			errors.New("vision response ambiguous")
 	case saidYes && suspectActual(actual) != "":
 		return false, "Vision response's ACTUAL line " + suspectActual(actual) + " — the answer may not rest on the frame",
+			errors.New("vision response ambiguous")
+	case saidNo && saysCannotSeeImage(actualText(actual)):
+		// A NO resting on "I could not see the image" is a refusal, not
+		// evidence that the expected state is absent.
+		return false, "Vision response answers NO but its ACTUAL line says the model could not see / read the image — a refusal is not evidence of absence",
 			errors.New("vision response ambiguous")
 	case saidYes:
 		return true, actual, nil
