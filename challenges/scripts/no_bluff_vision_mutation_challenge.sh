@@ -302,6 +302,14 @@ M = [
  ("Q06-app-image-not-excluded", A+"structured_executor.go", A, [('if !strings.HasPrefix(k[m[1]:], "of ") {', 'if !strings.HasPrefix(k[m[1]:], "of ") || true {')]),
  ("Q07-attached-image-unknown", A+"structured_executor.go", A, [("`(?:(?:attached|provided|uploaded|given|shared) )?(?:images?|screenshots?|pictures?|attachments?)(?: |$)`", "`(?:images?|screenshots?|pictures?|attachments?)(?: |$)`")]),
  ("Q08-no-with-inability-refuted", A+"structured_executor.go", A, [("case saidNo && saysCannotSeeImage(actualText(actual)):", "case false:")]),
+ # ── review round 9 cleanup ──
+ ("P01-load-warning-at-info", O+"orchestrator.go", O, [("o.logger.Warn(fmt.Sprintf(format, args...))", "o.logger.Info(fmt.Sprintf(format, args...))")]),
+ ("P02-skip-rows-not-listed", A+"structured_executor.go", A, [("for _, row := range skipped {\n\t\tout = append(out", "for _, row := range skipped[:0] {\n\t\tout = append(out")]),
+ ("P03-zero-cycle-printed", O+"orchestrator.go", O, [('if len(cyclic) > 0 {\n\t\to.log("Loaded', 'if true {\n\t\to.log("Loaded')]),
+ ("P04-duplicate-id-unreported", O+"orchestrator.go", O, [("if prev, dup := origin[id]; dup && !bankPeers(prev, f) {", "if prev, dup := origin[id]; dup && false {")]),
+ ("P05-peers-reported-as-duplicates", O+"orchestrator.go", O, [("return strings.TrimSuffix(a, filepath.Ext(a)) == strings.TrimSuffix(b, filepath.Ext(b))", "return false")]),
+ ("P06-normal-exit-after-cancel-interrupted", O+"definition_challenge.go", O, [("if ctx.Err() != nil && allPassed && !exitedNormally {", "if ctx.Err() != nil && allPassed && (exitedNormally || !exitedNormally) {")]),
+ ("P07-actual-label-byte-index", A+"structured_executor.go", A, [("if len(t) >= len(label) && strings.EqualFold(t[:len(label)], label) {\n\t\treturn t[len(label):]\n\t}", "_ = t\n\tif i := strings.Index(strings.ToUpper(actualLine), label); i >= 0 {\n\t\treturn actualLine[i+len(label):]\n\t}")]),
  ("X45-main-without-guard-panic", C+"main.go", C, [("if code := guardPanic(realMainFn); code != 0 {", "if code := func() int { realMainFn(); return 0 }(); code != 0 {")]),
 ]
 os.makedirs(work, exist_ok=True)

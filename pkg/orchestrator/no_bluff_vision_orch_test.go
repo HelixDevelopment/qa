@@ -623,3 +623,15 @@ func TestShellStep_NormalExitAfterCancelIsJudged(t *testing.T) {
 		}
 	}
 }
+
+// The YAML / JSON peers of one bank are not "duplicate case IDs".
+func TestOrchRun_BankPeers(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{{"/x/a.yaml", "/x/a.json", true}, {"/x/a.yaml", "/y/a.json", false}, {"/x/a.yaml", "/x/b.yaml", false}} {
+		if got := bankPeers(c.a, c.b); got != c.want {
+			t.Errorf("bankPeers(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
