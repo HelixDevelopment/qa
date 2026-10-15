@@ -159,13 +159,24 @@ tatweel U+0640 (`خطـــأ` matches `خطأ`).
   image", "I can't view the attached image", "I'm unable to see the
   provided screenshot", "As an AI, I can't see pictures", "Unable to view
   images; assuming yes"), and not an app image ("I cannot see the image
-  OF the user avatar"). Quoted app text ("A dialog reads 'Could not load
-  image'", "Toast: Unable to open image"), an ordinary description ("The
-  screenshot shows …", "I don't see any error dialogs") and an "Email
-  verified: yes" badge are not. **This scan is a heuristic (waived, review round 7,
+  OF the user avatar"). Recall cost of that exclusion: "I cannot see the
+  image of the settings screen" is NOT detected — a YES next to it passes
+  and a NO next to it is REFUTED. Quoted app text WITHOUT a first-person
+  subject ("A dialog reads 'Could not load image'", "Toast: Unable to open
+  image"), an ordinary description ("The screenshot shows …", "I don't see
+  any error dialogs") and an "Email verified: yes" badge are not detected.
+  Quoted app text that CARRIES a first-person subject ("A chat bubble
+  reads \"I cannot see the image\"", "The bot message says: I can't see the
+  image you sent") cannot be told from the model's own words and IS
+  treated as an inability — BLOCKED (fail-safe, a recall cost on chat
+  screens). **This scan is a heuristic (waived, review round 7,
   finding 3):** other hedges are NOT detected and a `yes` next to them is
   honoured — e.g. "Unable to determine; assuming yes", "No image was
   attached, so I assumed …", "I do not have the ability to view images",
+  "I'm an AI and cannot see images", "Sorry, cannot see the image",
+  "I was unable to see the image", "Unfortunately, unable to view the
+  screenshot", "My vision model cannot see the image", "I honestly cannot
+  see the image", "I cannot see or read the image",
   a refusal in another language ("Je ne peux pas voir l'image"), a plain
   contradiction ("the settings screen is NOT shown"); and "VERIFIED - no"
   (no colon) is not an answer line at all.
@@ -433,6 +444,16 @@ breaks none of them.
 - Dependencies: a `dependencies:` entry naming a case that is not in the
   run (another bank, or filtered out by platform) is ignored silently —
   the dependent case still runs.
+- Duplicate case IDs: when two bank files (other than the YAML / JSON
+  peers of one bank) define the same case ID, `helixqa run` logs a
+  WARNING naming both files and the later definition replaces the earlier
+  — it is not an error, because bank directories are loaded whole (this
+  repository's `banks/` has one such ID, `HXC029-CLI-PROBE`, in three
+  JSON banks; catalogizer and boba have none). Inside one file a
+  duplicate is refused at load.
+- A command that EXITED on its own is scored on its own outcome even when
+  the run's context ended meanwhile; only a command the cancellation
+  killed (or that never started) makes the case "interrupted".
 - `shell:` steps are killed with SIGKILL on cancellation, by design: a
   `trap … TERM INT` in the command never runs (no grace period for
   cleanup). The interruption is recorded STRUCTURALLY — only the wrapper's

@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Final cleanup (review round 9):** load warnings are logged at WARN
+  level and `_skip` default-2xx rows are printed one per line by both
+  runners; "(0 in a dependency cycle)" is no longer printed; a case ID
+  defined in two non-peer bank files is a WARNING naming both (not an
+  error: bank directories load whole; one such ID in this repository's
+  banks, none in catalogizer / boba); a shell command that exited on its
+  own is scored on its outcome even if the run was cancelled meanwhile;
+  the ACTUAL label is stripped by a case-insensitive prefix check. Docs:
+  quoted first-person app text is BLOCKED (fail-safe), more listed ACTUAL
+  misses, recall cost of the "image of …" exclusion. Mutants added.
 - **Round-9 hardening (review round 8):** the interruption is structural
   — text in a step's output ("interrupted-by-run-cancellation") can no
   longer turn a FAILED challenge into SKIPPED (round 8 exited 2 for it).
