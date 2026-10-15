@@ -137,6 +137,8 @@ func NewAdaptiveFromConfigs(
 			providers = append(providers, NewAsticaProvider(cfg))
 		case ProviderVisionEndpoint:
 			providers = append(providers, NewOpenAIProvider(cfg))
+		case ProviderLlmctl:
+			providers = append(providers, NewLlmctlProvider(cfg))
 		default:
 			// Check registry for OpenAI-compatible providers
 			if defaults, ok := providerDefaults[cfg.Name]; ok {
