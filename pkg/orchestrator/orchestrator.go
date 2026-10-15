@@ -175,8 +175,13 @@ func (o *Orchestrator) Run(
 	// autonomous structured phase uses. Cases in a dependency cycle are not
 	// run; they are reported (SKIPPED, reason "dependency cycle").
 	definitions, cyclic := orderDefinitions(o.bank.All())
-	o.log("Loaded %d challenge definitions from %d sources (%d in a dependency cycle, not run)",
-		len(definitions)+len(cyclic), len(o.bank.Sources()), len(cyclic))
+	if len(cyclic) > 0 {
+		o.log("Loaded %d challenge definitions from %d sources (%d in a dependency cycle, not run)",
+			len(definitions)+len(cyclic), len(o.bank.Sources()), len(cyclic))
+	} else {
+		o.log("Loaded %d challenge definitions from %d sources",
+			len(definitions), len(o.bank.Sources()))
+	}
 
 	// 1.5. Load executable bank cases via pkg/testbank. The generic
 	// challenges/pkg/bank loader drops each case's `steps` array, so
@@ -527,6 +532,7 @@ func (o *Orchestrator) runPlatform(
 // re-parse, so the map stays empty and every wrapper honestly skips.
 func (o *Orchestrator) loadExecutableCases() {
 	o.executableCases = make(map[challenge.ID]*testbank.TestCase)
+	origin := map[challenge.ID]string{}
 	for _, path := range o.config.Banks {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -559,9 +565,19 @@ func (o *Orchestrator) loadExecutableCases() {
 			}
 			for i := range bf.TestCases {
 				tc := bf.TestCases[i]
-				o.executableCases[challenge.ID(tc.ID)] = &tc
+				id := challenge.ID(tc.ID)
+				if prev, dup := origin[id]; dup && !bankPeers(prev, f) {
+					// Two bank files define the same case ID: the later one
+					// replaces the earlier in the run. Not an error (bank
+					// directories are loaded whole), but never silent. A
+					// YAML / JSON peer pair of one bank is the documented
+					// convention and is not reported.
+					o.logWarn("WARNING: case %s is defined in both %s and %s — the definition from %s replaces the other", id, prev, f, f)
+				}
+				origin[id] = f
+				o.executableCases[id] = &tc
 			}
-			warnDefaultStatusHTTPSteps(f, bf.TestCases, o.log)
+			warnDefaultStatusHTTPSteps(f, bf.TestCases, o.logWarn, o.log)
 		}
 	}
 }
@@ -651,6 +667,20 @@ func (o *Orchestrator) log(format string, args ...any) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	o.logger.Info(msg)
+}
+
+// logWarn writes a warning-level log message.
+func (o *Orchestrator) logWarn(format string, args ...any) {
+	if o.logger == nil {
+		return
+	}
+	o.logger.Warn(fmt.Sprintf(format, args...))
+}
+
+// bankPeers reports two paths of ONE bank in its YAML and JSON forms (same
+// directory and base name).
+func bankPeers(a, b string) bool {
+	return strings.TrimSuffix(a, filepath.Ext(a)) == strings.TrimSuffix(b, filepath.Ext(b))
 }
 
 // logError writes an error-level log message.
@@ -753,12 +783,12 @@ func completeRecords(platforms []config.Platform, prs []*reporter.PlatformResult
 // warnDefaultStatusHTTPSteps prints, at load, the http: steps of a bank that
 // declare no expect_status and so expect a 2xx by default — executed steps
 // as a WARNING, `_skip`ped ones separately.
-func warnDefaultStatusHTTPSteps(file string, cases []testbank.TestCase, logf func(string, ...interface{})) {
+func warnDefaultStatusHTTPSteps(file string, cases []testbank.TestCase, warnf, infof func(string, ...interface{})) {
 	active, skipped := testbank.DefaultStatusHTTPSteps(cases)
 	for _, row := range active {
-		logf("WARNING: %s: http: step without expect_status expects a 2xx by default: %s", file, row)
+		warnf("WARNING: %s: http: step without expect_status expects a 2xx by default: %s", file, row)
 	}
-	if len(skipped) > 0 {
-		logf("note: %s: %d disabled (_skip) http: step(s) without expect_status: %s", file, len(skipped), strings.Join(skipped, "; "))
+	for _, row := range skipped {
+		infof("note: %s: disabled (_skip) http: step without expect_status: %s", file, row)
 	}
 }

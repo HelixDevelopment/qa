@@ -215,12 +215,8 @@ func (ste *StructuredTestExecutor) executeBanks(
 				cases = append(cases, tc)
 			}
 		}
-		active, skipped := testbank.DefaultStatusHTTPSteps(bank.TestCases)
-		for _, row := range active {
-			fmt.Printf("  [structured] WARNING: bank %s: http: step without expect_status expects a 2xx by default: %s\n", bank.Name, row)
-		}
-		if len(skipped) > 0 {
-			fmt.Printf("  [structured] note: bank %s: %d disabled (_skip) http: step(s) without expect_status\n", bank.Name, len(skipped))
+		for _, line := range defaultStatusLines(bank.Name, bank.TestCases) {
+			fmt.Printf("  [structured] %s\n", line)
 		}
 	}
 	// Unique keys (a duplicated ID keeps every case); dependencies name IDs
@@ -1332,8 +1328,13 @@ var inabilityRe = regexp.MustCompile(`(?:^|(?:^| )(?:as an ai )?(?:i|i m|i am|we
 
 // actualText strips the "ACTUAL:" label from an ACTUAL line.
 func actualText(actualLine string) string {
-	if i := strings.Index(strings.ToUpper(actualLine), "ACTUAL:"); i >= 0 {
-		return actualLine[i+len("ACTUAL:"):]
+	const label = "ACTUAL:"
+	t := strings.TrimLeft(actualLine, " \t")
+	// Case-insensitive PREFIX check on the label's own bytes (ASCII): no
+	// byte index is taken from a case-mapped copy, whose length can differ
+	// from the original (ɐ→Ɐ grows, ı→I shrinks).
+	if len(t) >= len(label) && strings.EqualFold(t[:len(label)], label) {
+		return t[len(label):]
 	}
 	return actualLine
 }
@@ -1851,4 +1852,20 @@ func isHostOnlyStep(step testbank.TestStep) bool {
 	}
 	kind, _ := step.ParseAction()
 	return kind.IsNonScreen() || kind == testbank.ActionTypeSleep
+}
+
+// defaultStatusLines renders the load-time listing of a bank's http: steps
+// that rely on the default 2xx expectation: one WARNING line per executed
+// step, one note line per `_skip`ped step (the same rows `helixqa run`
+// prints).
+func defaultStatusLines(bank string, cases []testbank.TestCase) []string {
+	active, skipped := testbank.DefaultStatusHTTPSteps(cases)
+	var out []string
+	for _, row := range active {
+		out = append(out, fmt.Sprintf("WARNING: bank %s: http: step without expect_status expects a 2xx by default: %s", bank, row))
+	}
+	for _, row := range skipped {
+		out = append(out, fmt.Sprintf("note: bank %s: disabled (_skip) http: step without expect_status: %s", bank, row))
+	}
+	return out
 }

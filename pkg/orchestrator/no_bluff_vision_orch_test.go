@@ -8,12 +8,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"digital.vasic.challenges/pkg/challenge"
+	"digital.vasic.challenges/pkg/logging"
 
 	"digital.vasic.helixqa/pkg/config"
 	"digital.vasic.helixqa/pkg/reporter"
@@ -528,5 +531,95 @@ func TestDefaultStatusHTTPSteps_Listed(t *testing.T) {
 	active, skipped := testbank.DefaultStatusHTTPSteps(cases)
 	if strings.Join(active, "|") != `A step 0 "h" (http: GET /x)` || strings.Join(skipped, "|") != `A step 2 "k" (http: GET /z)` {
 		t.Fatalf("active %q skipped %q", active, skipped)
+	}
+}
+
+// recLogger records every log line with its level.
+type recLogger struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *recLogger) add(level, msg string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, level+" "+msg)
+}
+func (l *recLogger) Info(msg string, _ ...logging.Field)        { l.add("INFO", msg) }
+func (l *recLogger) Warn(msg string, _ ...logging.Field)        { l.add("WARN", msg) }
+func (l *recLogger) Error(msg string, _ ...logging.Field)       { l.add("ERROR", msg) }
+func (l *recLogger) Debug(msg string, _ ...logging.Field)       { l.add("DEBUG", msg) }
+func (l *recLogger) WithFields(...logging.Field) logging.Logger { return l }
+func (l *recLogger) LogAPIRequest(logging.APIRequestLog)        {}
+func (l *recLogger) LogAPIResponse(logging.APIResponseLog)      {}
+func (l *recLogger) Close() error                               { return nil }
+func (l *recLogger) find(level, sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, x := range l.lines {
+		if strings.HasPrefix(x, level+" ") && strings.Contains(x, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// Final cleanup (review round 9, items 4, 6, 7): warnings are logged at
+// WARN level; "0 in a dependency cycle" is not printed; a case ID defined
+// in two (non-peer) bank files is reported naming both files.
+func TestOrchRun_LoadWarnings(t *testing.T) {
+	dir := t.TempDir()
+	b1 := "version: \"1.0\"\nname: one\ntest_cases:\n  - id: DUP-1\n    name: a\n    platforms: [desktop]\n    steps:\n" +
+		"      - name: h\n        action: \"http: GET /x\"\n"
+	b2 := "version: \"1.0\"\nname: two\ntest_cases:\n  - id: DUP-1\n    name: b\n    platforms: [desktop]\n    steps:\n" +
+		"      - name: s\n        action: \"shell: true\"\n"
+	p1, p2 := filepath.Join(dir, "one.yaml"), filepath.Join(dir, "two.yaml")
+	if err := os.WriteFile(p1, []byte(b1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p2, []byte(b2), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lg := &recLogger{}
+	cfg := &config.Config{Banks: []string{p1, p2}, Platforms: []config.Platform{config.PlatformDesktop},
+		OutputDir: t.TempDir(), Speed: config.SpeedFast, ReportFormat: config.ReportMarkdown,
+		Timeout: time.Minute, StepTimeout: 10 * time.Second}
+	if _, err := New(cfg, WithLogger(lg)).Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !lg.find("WARN", "expects a 2xx by default") || lg.find("INFO", "WARNING:") {
+		t.Errorf("default-2xx warning not at WARN level: %v", lg.lines)
+	}
+	if !lg.find("WARN", "DUP-1") || !lg.find("WARN", "one.yaml") || !lg.find("WARN", "two.yaml") {
+		t.Errorf("duplicate case ID across bank files not reported with both files: %v", lg.lines)
+	}
+	if lg.find("INFO", "0 in a dependency cycle") {
+		t.Errorf("'0 in a dependency cycle' printed: %v", lg.lines)
+	}
+}
+
+// Final cleanup (review round 9, item 8): a command that EXITED normally is
+// scored on its own outcome even when the run's context ended meanwhile.
+func TestShellStep_NormalExitAfterCancelIsJudged(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "escaped.pid")
+	t.Cleanup(func() {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 1 {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	d := &definitionChallenge{def: &challenge.Definition{ID: "NX", Name: "nx"}, cfg: &challenge.Config{Timeout: 30 * time.Second}}
+	for exit, want := range map[string]string{"0": challenge.StatusPassed, "3": challenge.StatusFailed} {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(300*time.Millisecond, cancel)
+		// sh exits at once (normally); a detached child keeps the output
+		// pipe open until the cancellation + WaitDelay release it.
+		step := testbank.TestStep{Action: "shell: setsid sh -c 'echo $$ > " + pidFile + "; exec sleep 3' & exit " + exit}
+		r := d.executeDesktopShellSteps(ctx, time.Now(), []testbank.TestStep{step})
+		cancel()
+		if r.Status != want {
+			t.Errorf("exit %s with the run's context ended after it: %s, want %s", exit, r.Status, want)
+		}
 	}
 }

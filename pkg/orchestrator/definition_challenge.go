@@ -511,9 +511,12 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 			exitCode = cmd.ProcessState.ExitCode()
 		}
 		cancel()
-		if ctx.Err() != nil && allPassed {
+		exitedNormally := cmd.ProcessState != nil && cmd.ProcessState.Exited()
+		if ctx.Err() != nil && allPassed && !exitedNormally {
 			// The RUN was cancelled / timed out while this command ran (not
-			// the step's own timeout): its outcome is unknown — the case is
+			// the step's own timeout) and the command did not exit on its
+			// own (killed / never started — a command that EXITED normally is
+			// scored on its own outcome below): its outcome is unknown — the case is
 			// not executed, never a failure of its own.
 			now := time.Now()
 			recorded = append(recorded,

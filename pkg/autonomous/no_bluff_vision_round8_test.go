@@ -297,3 +297,45 @@ func TestNoBluffVision_R9_InabilityScanScope(t *testing.T) {
 	ste, _ = newSTE(&fakeVision{verify: "VERIFIED: no\nACTUAL: The screenshot shows a login form"}, noisePNG(t, 1), noisePNG(t, 2))
 	requireCaseVerdict(t, runCase(t, ste, gated(nil)), CaseVerdictFailed, "definite NO with an ordinary description")
 }
+
+// Final cleanup (review round 9, item 9): actualText strips the label by a
+// case-insensitive PREFIX check — no byte index taken from an upper-cased
+// copy (ɐ→Ɐ grows, ı→I shrinks).
+func TestNoBluffVision_R10_ActualTextRunes(t *testing.T) {
+	for in, want := range map[string]string{
+		"ACTUAL: I cannot see the image": " I cannot see the image",
+		"actual: settings":               " settings",
+		"ɐɐ ACTUAL: x":                   "ɐɐ ACTUAL: x",
+		"ıııı ACTUAL: I cannot see":      "ıııı ACTUAL: I cannot see",
+		"ACTUAL: ɐɐɐ ııı":                " ɐɐɐ ııı",
+	} {
+		if got := actualText(in); got != want {
+			t.Errorf("actualText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Final cleanup (review round 9, item 5): the structured phase prints each
+// `_skip` default-2xx row (one line each), like `helixqa run`.
+func TestNoBluffVision_R10_DefaultStatusLines(t *testing.T) {
+	lines := defaultStatusLines("b", []testbank.TestCase{{ID: "C", Steps: []testbank.TestStep{
+		{Name: "a", Action: "http: GET /a"}, {Name: "k", Action: "http: GET /k", Skip: true}, {Name: "l", Action: "http: GET /l", Skip: true}}}})
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "WARNING:") ||
+		!strings.Contains(lines[1], `"k"`) || !strings.Contains(lines[2], `"l"`) {
+		t.Fatalf("lines %q", lines)
+	}
+}
+
+// Pins the documented behaviour (review round 9, items 1 + 3): quoted app
+// text carrying a first-person subject is BLOCKED (fail-safe); "the image
+// of the settings screen" is the documented recall cost (not detected).
+func TestNoBluffVision_R10_DocumentedScanEdges(t *testing.T) {
+	for _, a := range []string{`A chat bubble reads "I cannot see the image"`, "The bot message says: I can't see the image you sent"} {
+		ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes\nACTUAL: " + a}, noisePNG(t, 1), noisePNG(t, 2))
+		requireBlocked(t, run(ste, gated(nil)), a)
+	}
+	ste, _ := newSTE(&fakeVision{verify: "VERIFIED: yes\nACTUAL: I cannot see the image of the settings screen"}, noisePNG(t, 1), noisePNG(t, 2))
+	if r := run(ste, gated(nil)); !r.Passed {
+		t.Fatalf("documented recall cost changed: %q", r.Actual)
+	}
+}
