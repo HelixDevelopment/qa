@@ -42,7 +42,7 @@ command -v python3 >/dev/null 2>&1 || { echo "UNDETERMINED: python3 not on PATH"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nbv-mutation.XXXXXX")" || exit 2
 trap 'rm -rf "${WORK}"' EXIT
 
-GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic|TestCLIExit|TestAutonomousExitCode|TestShellStep_|TestShellExec_|TestDependencyOrder_'
+GATE='TestNoBluffVision|TestVisionFields|TestVisionEndpoint|TestDescribeVisionEndpoint|TestCaseHasUnrunAssertingStep_VisionGated|TestPipelineResult_|TestScoreVisionProvider_Endpoint|TestDesktopShellCase_|TestFrameDiff_|TestVisionFindings_|TestOrchRun_|TestBankRunnerExit_|TestOtherProviders_|TestProviders_|TestAdaptiveVisionVia_|TestGoogle_|TestRunExitCode|TestGuardPanic|TestCLIExit|TestAutonomousExitCode|TestShellStep_|TestShellExec_|TestDependencyOrder_|TestDefaultStatusHTTPSteps_'
 PKGS=(./pkg/autonomous/ ./pkg/llm/ ./pkg/testbank/ ./pkg/orchestrator/ ./cmd/helixqa/ ./pkg/shellexec/)
 
 echo "== control (unmutated tree)"
@@ -281,7 +281,7 @@ M = [
  ("Z12-structured-order-ignores-dependencies", A+"structured_executor.go", A, [("order, cyclic := testbank.DependencyOrder(keys, deps)", "order, cyclic := keys, []string(nil)")]),
  ("Z13-structured-cycle-not-blocked", A+"structured_executor.go", A, [("for _, k := range cyclic {\n\t\tste.blockCaseUnrun(", "for _, k := range cyclic[:0] {\n\t\tste.blockCaseUnrun(")]),
  ("Z14-actual-scanned-on-no", A+"structured_executor.go", A, [('case saidYes && suspectActual(actual) != "":', 'case len(answers) == 1 && suspectActual(actual) != "":')]),
- ("Z15-actual-scan-uses-refusal-pattern", A+"structured_executor.go", A, [("case inabilityRe.MatchString(testbank.VisionTokenKey(text)):", "case modelStatementRe.MatchString(testbank.VisionTokenKey(text)) || inabilityRe.MatchString(testbank.VisionTokenKey(text)):")]),
+ ("Z15-actual-scan-uses-refusal-pattern", A+"structured_executor.go", A, [("case saysCannotSeeImage(text):", "case modelStatementRe.MatchString(testbank.VisionTokenKey(text)) || saysCannotSeeImage(text):")]),
  ("Z16-verdict-scan-any-case", A+"structured_executor.go", A, [("regexp.MustCompile(`\\bVERIFIED\\s*:\\s*(?i:yes|no)\\b`)", "regexp.MustCompile(`(?i)\\bverified\\s*:\\s*(yes|no)\\b`)")]),
  ("Z17-empty-expected-asked", A+"vision_gate.go", A, [("case strings.TrimSpace(step.Expected) == \"\":\n\t\t// No expected state", "case false:\n\t\t// No expected state")]),
  ("Z18-gated-blank-expected-asked", A+"vision_gate.go", A, [("if strings.TrimSpace(step.Expected) == \"\" {\n\t\t\t\t// A \"yes\" to an empty question", "if false {\n\t\t\t\t// A \"yes\" to an empty question")]),
@@ -294,6 +294,14 @@ M = [
  ("Z25-adb-state-any-line", A+"executor_factory.go", A, [("if l := strings.TrimSpace(lines[i]); adbStates[l] {", 'if l := strings.TrimSpace(lines[i]); l != "" {')]),
  ("Z26-playwright-any-verb-observes", A+"structured_executor.go", A, [('return verb == "assertvisible" || verb == "waitfor"', 'return verb != ""')]),
  ("Z27-host-step-failure-reprobed", A+"structured_executor.go", A, [("} else if executor != nil && !isHostOnlyStep(step) {", "} else if executor != nil {")]),
+ # ── review round 8 (fix round 9) ──
+ ("Q01-interruption-marker-substring", O+"definition_challenge.go", O, [('if strings.HasPrefix(a, definitionWrapperSkipSentinel+" "+interruptedMarker) {', "if strings.Contains(a, interruptedMarker) {")]),
+ ("Q03-skip-sentinel-substring", O+"definition_challenge.go", O, [("if strings.HasPrefix(action, definitionWrapperSkipSentinel) {\n\t\t\tr.Status = challenge.StatusSkipped", "if strings.Contains(action, definitionWrapperSkipSentinel) {\n\t\t\tr.Status = challenge.StatusSkipped")]),
+ ("Q04-default-2xx-list-mixes-skip", T+"schema.go", O, [("if st.Skip {\n\t\t\t\tskipped = append(skipped, row)", "if false {\n\t\t\t\tskipped = append(skipped, row)")]),
+ ("Q05-inability-without-subject", A+"structured_executor.go", A, [("`(?:^|(?:^| )(?:as an ai )?(?:i|i m|i am|we|we re|we are) )`", "`(?:^| )`")]),
+ ("Q06-app-image-not-excluded", A+"structured_executor.go", A, [('if !strings.HasPrefix(k[m[1]:], "of ") {', 'if !strings.HasPrefix(k[m[1]:], "of ") || true {')]),
+ ("Q07-attached-image-unknown", A+"structured_executor.go", A, [("`(?:(?:attached|provided|uploaded|given|shared) )?(?:images?|screenshots?|pictures?|attachments?)(?: |$)`", "`(?:images?|screenshots?|pictures?|attachments?)(?: |$)`")]),
+ ("Q08-no-with-inability-refuted", A+"structured_executor.go", A, [("case saidNo && saysCannotSeeImage(actualText(actual)):", "case false:")]),
  ("X45-main-without-guard-panic", C+"main.go", C, [("if code := guardPanic(realMainFn); code != 0 {", "if code := func() int { realMainFn(); return 0 }(); code != 0 {")]),
 ]
 os.makedirs(work, exist_ok=True)

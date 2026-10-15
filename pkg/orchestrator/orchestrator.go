@@ -374,18 +374,20 @@ func (o *Orchestrator) runPlatform(
 			cr, err := platformRunner.Run(
 				ctx, def.ID, cfg,
 			)
-			keptFailure := false
 			if ctx.Err() != nil {
 				// What the wrapper itself concluded (the runner replaces it
 				// with "timed out" when the run's deadline passed): a step
 				// that FAILED before the cancellation keeps its verdict.
 				if w := wrappers[def.ID]; w != nil {
 					if lr := w.lastResult(); lr != nil && lr.Status == challenge.StatusFailed {
-						cr, err, keptFailure = lr, nil, true
+						// (Its recorded step OUTPUT never reads as an
+						// interruption: hasInterruptedMarker matches only the
+						// wrapper's own entry.)
+						cr, err = lr, nil
 					}
 				}
 			}
-			if ctx.Err() != nil && !keptFailure && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {
+			if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {
 				// The run was cancelled / timed out while this challenge
 				// ran and it reports an error / timeout: its outcome is
 				// unknown — not a failure. Record it as not executed and
