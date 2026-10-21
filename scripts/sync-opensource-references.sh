@@ -19,7 +19,11 @@
 #     modifications.
 #   - Exit status: 0 = every manifest tool processed; 3 = at least one row was
 #     NOT-FOUND, NOT-A-CHECKOUT, ERROR or PULL-FAILED (output table says which).
-#   - Never runs git in a resolved dir that is not its own checkout.
+#   - Never runs git in a resolved dir that is not its own checkout (NOT-A-CHECKOUT),
+#     whose origin differs from the manifest url (WRONG-REPO, ssh/https forms
+#     normalised), or that is/contains the consumer root or helix_qa (WRONG-REPO).
+#   - Table: MANIFEST_PIN (manifest sha), CHECKOUT_HEAD, REMOTE_HEAD; DRIFT is
+#     appended to STATE when CHECKOUT_HEAD != MANIFEST_PIN.
 #   - Logs pinned SHA vs. remote HEAD so a human can inspect the diff
 #     before committing a SHA bump.
 
@@ -37,8 +41,24 @@ fi
 
 export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
 
-printf '%-45s %-45s %-45s %s\n' "SUBMODULE" "PINNED_SHA" "REMOTE_HEAD" "STATE"
-printf '%s\n' "$(printf '=%.0s' {1..160})"
+row() { printf '%-22s %-42s %-42s %-42s %s\n' "$@"; }
+row "SUBMODULE" "MANIFEST_PIN" "CHECKOUT_HEAD" "REMOTE_HEAD" "STATE"
+printf '%s\n' "$(printf '=%.0s' {1..170})"
+
+# Normalise a git URL so ssh/https/scp forms of the same host/path compare
+# equal: lowercase, strip scheme, userinfo, port, trailing / and .git.
+norm_url() {
+  local u
+  u=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
+  if [[ "$u" == *://* ]]; then
+    u="${u#*://}"
+    u=$(printf '%s' "$u" | sed -E 's#^[^/@]*@##; s#^([^/:]+):[0-9]+/#\1/#')
+  elif [[ "$u" == *@*:* ]]; then
+    u=$(printf '%s' "$u" | sed -E 's#^[^@]*@##; s#:#/#')
+  fi
+  u="${u%/}"; u="${u%.git}"
+  printf '%s' "$u"
+}
 
 # shellcheck source=resolve_tool.sh
 source "$ROOT_DIR/scripts/resolve_tool.sh"
@@ -49,29 +69,54 @@ MANIFEST="${HELIXQA_MANIFEST:-$ROOT_DIR/docs/flat-tools-manifest.tsv}"
 [[ -r "$MANIFEST" ]] || { echo "manifest not readable: $MANIFEST" >&2; exit 2; }
 
 RC=0
+ROOT_REAL=$(cd "$ROOT_DIR" && pwd -P)
 LEGACY_IN_CONSUMER=()
 CONSUMER=0
 if [[ -n "${HELIXQA_TOOLS_DIR:-}" || "$(basename "$(dirname "$ROOT_DIR")")" == "submodules" ]]; then
   CONSUMER=1
 fi
 
-while IFS=$'\t' read -r old_path _new _url _sha <&3; do
+while IFS=$'\t' read -r old_path _new url sha <&3; do
   [[ "$old_path" == "old_path" || -z "$old_path" ]] && continue
   name=$(basename "$old_path")
   tier_line=$(helixqa_resolve_tool_tier "$name" "$ROOT_DIR" 2>/dev/null) || {
-    printf '%-45s %-45s %-45s %s\n' "$name" "-" "-" "NOT-FOUND"
+    row "$name" "${sha:--}" "-" "-" "NOT-FOUND"
     RC=3
     continue
   }
   tier="${tier_line%%$'\t'*}"
   resolved="${tier_line#*$'\t'}"
   [[ "$tier" == "legacy" && $CONSUMER -eq 1 ]] && LEGACY_IN_CONSUMER+=("$name")
-  cd "$resolved"
+  cd "$resolved" || {
+    row "$name" "${sha:--}" "-" "-" "ERROR"
+    RC=3
+    cd "$ROOT_DIR"
+    continue
+  }
+  real=$(pwd -P)
+
+  # Never act on the consumer root, helix_qa itself, or any dir containing
+  # them (e.g. a symlink to the consumer root).
+  if [[ "$real" == "$ROOT_REAL" || "$ROOT_REAL" == "$real"/* ]]; then
+    row "$name" "${sha:--}" "-" "-" "WRONG-REPO"
+    RC=3
+    cd "$ROOT_DIR"
+    continue
+  fi
 
   # The resolved dir must be its OWN git checkout: otherwise git would
   # walk up and act on the enclosing (consumer) repository.
-  if [[ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]]; then
-    printf '%-45s %-45s %-45s %s\n' "$name" "-" "-" "NOT-A-CHECKOUT"
+  if [[ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$real" ]]; then
+    row "$name" "${sha:--}" "-" "-" "NOT-A-CHECKOUT"
+    RC=3
+    cd "$ROOT_DIR"
+    continue
+  fi
+
+  # ...and THE expected tool: origin must match the manifest URL.
+  origin=$(git remote get-url origin 2>/dev/null || echo "")
+  if [[ -z "$origin" || -z "$url" || "$(norm_url "$origin")" != "$(norm_url "$url")" ]]; then
+    row "$name" "${sha:--}" "-" "-" "WRONG-REPO"
     RC=3
     cd "$ROOT_DIR"
     continue
@@ -79,7 +124,7 @@ while IFS=$'\t' read -r old_path _new _url _sha <&3; do
 
   # Guard against dirty working tree.
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
-    printf '%-45s %-45s %-45s %s\n' "$name" "DIRTY" "-" "SKIP"
+    row "$name" "${sha:--}" "DIRTY" "-" "SKIP"
     cd "$ROOT_DIR"
     continue
   fi
@@ -92,7 +137,7 @@ while IFS=$'\t' read -r old_path _new _url _sha <&3; do
   fi
 
   git fetch --quiet origin "$remote_branch" 2>/dev/null || {
-    printf '%-45s %-45s %-45s %s\n' "$name" "$pinned" "fetch-failed" "ERROR"
+    row "$name" "${sha:--}" "$pinned" "fetch-failed" "ERROR"
     RC=3
     cd "$ROOT_DIR"
     continue
@@ -116,7 +161,11 @@ while IFS=$'\t' read -r old_path _new _url _sha <&3; do
     fi
   fi
 
-  printf '%-45s %-45s %-45s %s\n' "$name" "$pinned" "$remote_tip" "$state"
+  pinned=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+  if [[ -n "$sha" && "$pinned" != "$sha"* ]]; then
+    state="$state DRIFT"
+  fi
+  row "$name" "${sha:--}" "$pinned" "$remote_tip" "$state"
   cd "$ROOT_DIR"
 done 3< "$MANIFEST"
 

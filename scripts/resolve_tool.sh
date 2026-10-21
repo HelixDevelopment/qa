@@ -14,7 +14,6 @@
 # module's own name (helix_qa / helixqa) are rejected.
 # helixqa_resolve_tool_tier prints "<tier>\t<path>" (tier: env|flat|legacy);
 # CLI: resolve_tool.sh [--tier] <name> [module_root].
-# Names containing '/', '\' or '..' (or empty) are rejected.
 # Exits 1 with the tried paths on stderr when none exists.
 # Source this file, or run it: scripts/resolve_tool.sh ui-tars [module_root]
 

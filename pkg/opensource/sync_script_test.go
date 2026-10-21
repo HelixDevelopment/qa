@@ -52,9 +52,9 @@ func TestSyncScript_OnlyTouchesManifestTools(t *testing.T) {
 		}
 		os.WriteFile(filepath.Join(hq, "scripts", f), b, 0o755)
 	}
-	os.WriteFile(filepath.Join(hq, "docs", "flat-tools-manifest.tsv"),
-		[]byte("old_path\tnew_name\turl\tpinned_sha\ntools/opensource/scrcpy\tscrcpy\tu\tabc\n"), 0o644)
 	bares := t.TempDir()
+	os.WriteFile(filepath.Join(hq, "docs", "flat-tools-manifest.tsv"),
+		[]byte("old_path\tnew_name\turl\tpinned_sha\ntools/opensource/scrcpy\tscrcpy\t"+filepath.Join(bares, "scrcpy.git")+"\tabc\n"), 0o644)
 	repoWithOrigin(t, filepath.Join(proj, "submodules", "auth"), filepath.Join(bares, "auth.git"))
 	repoWithOrigin(t, filepath.Join(proj, "submodules", "cache"), filepath.Join(bares, "cache.git"))
 	repoWithOrigin(t, filepath.Join(hq, "tools", "opensource", "scrcpy"), filepath.Join(bares, "scrcpy.git"))
@@ -132,7 +132,7 @@ func TestSyncScript_PullNeverTouchesEnclosingRepo(t *testing.T) {
 	git(t, seed, "push", "-q", "origin", "HEAD:main")
 
 	hq := filepath.Join(consumer, "submodules", "helix_qa")
-	installSync(t, hq, "tools/opensource/scrcpy\tscrcpy\tu\tabc\n")
+	installSync(t, hq, "tools/opensource/scrcpy\tscrcpy\tgit@example.org:x/scrcpy.git\tabc\n")
 	fill(t, filepath.Join(consumer, "submodules", "scrcpy")) // plain dir, not a checkout
 	before := head(t, consumer)
 
@@ -152,8 +152,9 @@ func TestSyncScript_ExitCodesAndLegacyWarning(t *testing.T) {
 	t.Setenv("HELIXQA_TOOLS_DIR", "")
 	proj := t.TempDir()
 	hq := filepath.Join(proj, "submodules", "helix_qa")
-	installSync(t, hq, "tools/opensource/scrcpy\tscrcpy\tu\tabc\ntools/opensource/ghost\tghost\tu\tdef\n")
-	repoWithOrigin(t, filepath.Join(hq, "tools", "opensource", "scrcpy"), filepath.Join(t.TempDir(), "s.git"))
+	sb := filepath.Join(t.TempDir(), "s.git")
+	installSync(t, hq, "tools/opensource/scrcpy\tscrcpy\t"+sb+"\tabc\ntools/opensource/ghost\tghost\tu\tdef\n")
+	repoWithOrigin(t, filepath.Join(hq, "tools", "opensource", "scrcpy"), sb)
 	out, code := runSync(t, hq, nil, "--fetch-only")
 	if code != 3 || !strings.Contains(out, "NOT-FOUND") {
 		t.Errorf("missing tool must exit 3 with NOT-FOUND, got %d\n%s", code, out)
@@ -162,10 +163,172 @@ func TestSyncScript_ExitCodesAndLegacyWarning(t *testing.T) {
 		t.Errorf("want legacy warning\n%s", out)
 	}
 	// all present, flat tier -> exit 0, no warning
-	installSync(t, hq, "tools/opensource/scrcpy\tscrcpy\tu\tabc\n")
-	repoWithOrigin(t, filepath.Join(proj, "submodules", "scrcpy"), filepath.Join(t.TempDir(), "f.git"))
+	fb := filepath.Join(t.TempDir(), "f.git")
+	installSync(t, hq, "tools/opensource/scrcpy\tscrcpy\t"+fb+"\tabc\n")
+	repoWithOrigin(t, filepath.Join(proj, "submodules", "scrcpy"), fb)
 	out, code = runSync(t, hq, nil, "--fetch-only")
 	if code != 0 || strings.Contains(out, "WARNING") {
 		t.Errorf("clean flat run must exit 0 w/o warning, got %d\n%s", code, out)
+	}
+}
+
+// behindConsumer builds a consumer clone that is BEHIND its origin (a
+// pull would fast-forward it) with helix_qa installed inside.
+func behindConsumer(t *testing.T, manifestRows string) (consumer, hq, bares string) {
+	t.Helper()
+	bares = t.TempDir()
+	bare := filepath.Join(bares, "consumer.git")
+	seed := filepath.Join(bares, "seed")
+	repoWithOrigin(t, seed, bare)
+	consumer = filepath.Join(bares, "consumer")
+	git(t, bares, "clone", "-q", bare, consumer)
+	os.WriteFile(filepath.Join(seed, "g"), []byte("y"), 0o644)
+	git(t, seed, "add", "g")
+	git(t, seed, "commit", "-q", "-m", "second")
+	git(t, seed, "push", "-q", "origin", "HEAD:main")
+	hq = filepath.Join(consumer, "submodules", "helix_qa")
+	installSync(t, hq, manifestRows)
+	return
+}
+
+func TestSyncScript_PullNeverTouchesWrongRepo(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	toolURL := "git@github.com:Org/Allure2.git"
+	row := "tools/opensource/allure2\tallure2\t" + toolURL + "\tabc\n"
+
+	cases := map[string]func(consumer, hq, bares string){
+		"symlink-to-consumer-root": func(consumer, hq, bares string) {
+			mk(t, filepath.Join(hq, "tools", "opensource"))
+			os.Symlink(consumer, filepath.Join(hq, "tools", "opensource", "allure2"))
+		},
+		"symlink-to-helix_qa": func(consumer, hq, bares string) {
+			mk(t, filepath.Join(hq, "tools", "opensource"))
+			os.Symlink(hq, filepath.Join(hq, "tools", "opensource", "allure2"))
+		},
+		"first-party-submodule-name-collision": func(consumer, hq, bares string) {
+			// a first-party consumer submodule that happens to be named like the tool
+			fp := filepath.Join(consumer, "submodules", "allure2")
+			git(t, bares, "clone", "-q", filepath.Join(bares, "consumer.git"), fp)
+		},
+		"wrong-remote": func(consumer, hq, bares string) {
+			d := filepath.Join(hq, "tools", "opensource", "allure2")
+			repoWithOrigin(t, d, filepath.Join(bares, "other.git"))
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			consumer, hq, bares := behindConsumer(t, row)
+			setup(consumer, hq, bares)
+			before := head(t, consumer)
+			var fpBefore string
+			fp := filepath.Join(consumer, "submodules", "allure2")
+			if name == "first-party-submodule-name-collision" {
+				fpBefore = head(t, fp)
+				git(t, fp, "reset", "-q", "--hard", "HEAD~1")
+				fpBefore = head(t, fp)
+			}
+			out, code := runSync(t, hq, nil, "--pull")
+			if after := head(t, consumer); after != before {
+				t.Fatalf("consumer HEAD moved\n%s", out)
+			}
+			if fpBefore != "" && head(t, fp) != fpBefore {
+				t.Fatalf("first-party submodule moved\n%s", out)
+			}
+			if !strings.Contains(out, "WRONG-REPO") || code != 3 {
+				t.Errorf("want WRONG-REPO and exit 3, got %d\n%s", code, out)
+			}
+		})
+	}
+}
+
+func TestSyncScript_PullWorksForExpectedRemoteAndEquivalentURL(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	_, hq, bares := behindConsumer(t, "x\tx\tx\tx\n")
+	// tool whose origin is a local bare; manifest lists ssh-vs-plain equivalent forms
+	bare := filepath.Join(bares, "tool.git")
+	seed := filepath.Join(bares, "toolseed")
+	repoWithOrigin(t, seed, bare)
+	tool := filepath.Join(hq, "tools", "opensource", "allure2")
+	mk(t, filepath.Dir(tool))
+	git(t, bares, "clone", "-q", bare, tool)
+	os.WriteFile(filepath.Join(seed, "n"), []byte("n"), 0o644)
+	git(t, seed, "add", "n")
+	git(t, seed, "commit", "-q", "-m", "n")
+	git(t, seed, "push", "-q", "origin", "HEAD:main")
+	pin := strings.TrimSpace(head(t, tool))
+	installSync(t, hq, "tools/opensource/allure2\tallure2\t"+bare+"\t"+pin+"\n")
+	out, code := runSync(t, hq, nil, "--pull")
+	if code != 0 || !strings.Contains(out, "PULLED") {
+		t.Fatalf("want PULLED exit 0, got %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "MANIFEST_PIN") || strings.Contains(out, "WRONG-REPO") {
+		t.Errorf("header/WRONG-REPO\n%s", out)
+	}
+	// manifest pin is the OLD head, checkout moved -> DRIFT shown
+	if !strings.Contains(out, "DRIFT") {
+		t.Errorf("checkout HEAD moved away from manifest pin: want DRIFT\n%s", out)
+	}
+}
+
+func TestSyncScript_NoDriftWhenPinMatches(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	_, hq, bares := behindConsumer(t, "x\tx\tx\tx\n")
+	bare := filepath.Join(bares, "tool.git")
+	repoWithOrigin(t, filepath.Join(bares, "toolseed"), bare)
+	tool := filepath.Join(hq, "tools", "opensource", "allure2")
+	mk(t, filepath.Dir(tool))
+	git(t, bares, "clone", "-q", bare, tool)
+	installSync(t, hq, "tools/opensource/allure2\tallure2\t"+bare+"\t"+strings.TrimSpace(head(t, tool))+"\n")
+	out, code := runSync(t, hq, nil, "--fetch-only")
+	if code != 0 || strings.Contains(out, "DRIFT") {
+		t.Fatalf("want exit 0 and no DRIFT, got %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_UnreadableDirIsErrorRowNotAbort(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory modes SKIP-OK: #root-bypasses-perms")
+	}
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	proj := t.TempDir()
+	hq := filepath.Join(proj, "submodules", "helix_qa")
+	bares := t.TempDir()
+	good := filepath.Join(bares, "good.git")
+	installSync(t, hq, "tools/opensource/locked\tlocked\tu\tabc\ntools/opensource/good\tgood\t"+good+"\tabc\n")
+	locked := filepath.Join(hq, "tools", "opensource", "locked")
+	fill(t, locked)
+	os.Chmod(locked, 0o644) // listable but not enterable
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	repoWithOrigin(t, filepath.Join(hq, "tools", "opensource", "good"), good)
+	out, code := runSync(t, hq, nil, "--fetch-only")
+	if code != 3 || !strings.Contains(out, "ERROR") || !strings.Contains(out, "good") {
+		t.Errorf("want ERROR row for locked, continue to good, exit 3; got %d\n%s", code, out)
+	}
+}
+
+// ssh/https/scp spellings of the same host/path must compare equal (no
+// WRONG-REPO); a different path must not.
+func TestSyncScript_URLNormalisation(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	cases := []struct {
+		origin, manifest string
+		wrong            bool
+	}{
+		{"https://GitHub.com/Org/Tool.git", "git@github.com:org/tool.git", false},
+		{"ssh://git@github.com:22/org/tool", "https://github.com/org/tool.git/", false},
+		{"git@github.com:org/tool.git", "git@github.com:org/other.git", true},
+		{"https://github.com/org/tool", "https://gitlab.com/org/tool", true},
+	}
+	for _, c := range cases {
+		proj := t.TempDir()
+		hq := filepath.Join(proj, "submodules", "helix_qa")
+		installSync(t, hq, "tools/opensource/tool\ttool\t"+c.manifest+"\tabc\n")
+		d := filepath.Join(hq, "tools", "opensource", "tool")
+		repoWithOrigin(t, d, filepath.Join(t.TempDir(), "t.git"))
+		git(t, d, "remote", "set-url", "origin", c.origin)
+		out, _ := runSync(t, hq, nil, "--fetch-only")
+		if got := strings.Contains(out, "WRONG-REPO"); got != c.wrong {
+			t.Errorf("origin=%q manifest=%q wrong=%v want %v\n%s", c.origin, c.manifest, got, c.wrong, out)
+		}
 	}
 }
