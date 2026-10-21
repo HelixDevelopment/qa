@@ -272,7 +272,7 @@
 
 ## Appendix A: Integrated Open-Source Tools
 
-22 tools available as submodules:
+26 open-source tools (plus 1 test app, `rest-demo`, per `docs/flat-tools-manifest.tsv`) available as submodules:
 scrcpy, appium, midscene, allure2, leakcanary, docker-android,
 ui-tars, moondream, mem0, chroma, perfetto, shortest, stagehand,
 testdriverai, kiwi-tcms, unstructured, marker, docling,

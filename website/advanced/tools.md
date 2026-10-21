@@ -1,6 +1,6 @@
 # Open-Source Tools
 
-HelixQA integrates 22 open-source tools as git submodules. They are vendored flat in the consumer project at `<root>/submodules/<snake_name>/` (list and pinned SHAs: `docs/flat-tools-manifest.tsv`); the legacy `tools/opensource/<name>` location is still honoured as a fallback. Each tool addresses a specific aspect of QA automation — device recording, vision-driven interaction, memory leak detection, test reporting, and more.
+HelixQA integrates 26 open-source tools (plus 1 test app, `rest-demo`, per `docs/flat-tools-manifest.tsv`) as git submodules. They are vendored flat in the consumer project at `<root>/submodules/<snake_name>/` (list and pinned SHAs: `docs/flat-tools-manifest.tsv`); the legacy `tools/opensource/<name>` location is still honoured as a fallback. Each tool addresses a specific aspect of QA automation — device recording, vision-driven interaction, memory leak detection, test reporting, and more.
 
 ## Tool Index
 

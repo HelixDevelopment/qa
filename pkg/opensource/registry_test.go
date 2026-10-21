@@ -27,7 +27,11 @@ func loadToolsOrSkip(t *testing.T, repoRoot string) []Tool {
 		}
 	}
 	tools = oss
-	switch ToolsVerdict(repoRoot, tools) {
+	rep := ToolsReport(repoRoot, tools)
+	for _, w := range rep.Warnings {
+		t.Log(w)
+	}
+	switch rep.Verdict {
 	case VerdictFail:
 		_, missing := ResolveAll(repoRoot, tools)
 		t.Fatalf("consumer layout: tools missing (add at <root>/submodules/<snake_name>, see docs/flat-tools-manifest.tsv): %v", missing)

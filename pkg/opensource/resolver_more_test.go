@@ -240,3 +240,73 @@ func TestToolsVerdict(t *testing.T) {
 		t.Errorf("standalone partial: %s", v)
 	}
 }
+
+func TestResolveToolTier(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	root := filepath.Join(b, "submodules", "helix_qa")
+	fill(t, filepath.Join(root, "tools", "opensource", "ui-tars"))
+	p, tier, err := ResolveToolTier(root, "ui-tars")
+	if err != nil || tier != TierLegacy || p != filepath.Join(root, "tools", "opensource", "ui-tars") {
+		t.Fatalf("legacy: %q %q %v", p, tier, err)
+	}
+	flat := filepath.Join(b, "submodules", "ui_tars")
+	fill(t, flat)
+	p, tier, _ = ResolveToolTier(root, "ui-tars")
+	if tier != TierFlat || p != flat {
+		t.Fatalf("flat must win when populated: %q %q", p, tier)
+	}
+	env := filepath.Join(b, "env")
+	fill(t, filepath.Join(env, "ui_tars"))
+	t.Setenv("HELIXQA_TOOLS_DIR", env)
+	if _, tier, _ = ResolveToolTier(root, "ui-tars"); tier != TierEnv {
+		t.Fatalf("env tier: %q", tier)
+	}
+}
+
+func TestToolsReport_WarnsOnLegacyInConsumerLayout(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	root := filepath.Join(b, "submodules", "helix_qa")
+	fill(t, filepath.Join(root, "tools", "opensource", "a"))
+	fill(t, filepath.Join(b, "submodules", "bb"))
+	tools := []Tool{{Name: "a", NewName: "a"}, {Name: "bb", NewName: "bb"}}
+	r := ToolsReport(root, tools)
+	if r.Verdict != VerdictOK || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "legacy tools/opensource resolution in consumer layout") || !strings.Contains(r.Warnings[0], "a") {
+		t.Fatalf("%+v", r)
+	}
+	if r.Tiers["bb"] != TierFlat || r.Tiers["a"] != TierLegacy {
+		t.Fatalf("tiers %+v", r.Tiers)
+	}
+	// standalone: legacy is the normal tier, no warning
+	sa := filepath.Join(b, "x", "helix_qa")
+	fill(t, filepath.Join(sa, "tools", "opensource", "a"))
+	if r := ToolsReport(sa, tools[:1]); len(r.Warnings) != 0 {
+		t.Fatalf("standalone must not warn: %+v", r)
+	}
+}
+
+func TestValidName_DotsAndOwnName(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	root := filepath.Join(t.TempDir(), "submodules", "helix_qa")
+	for _, n := range []string{".", ".hidden", "helix_qa", "helix-qa", "helixqa", "HelixQA"} {
+		if _, err := ResolveTool(root, n); err == nil || !strings.Contains(err.Error(), "invalid tool name") {
+			t.Errorf("%q must be rejected, got %v", n, err)
+		}
+	}
+}
+
+func TestShellRejectsInvalidNames(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available SKIP-OK: #bash-optional")
+	}
+	script, _ := filepath.Abs("../../scripts/resolve_tool.sh")
+	root := filepath.Join(t.TempDir(), "submodules", "helix_qa")
+	mk(t, root)
+	for _, n := range []string{"/", "a/b", "a\\b", "..", ".", "", ".hidden", "helix_qa", "helix-qa", "helixqa"} {
+		out, err := exec.Command("bash", script, n, root).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "invalid tool name") {
+			t.Errorf("shell must reject %q (err=%v out=%q)", n, err, out)
+		}
+	}
+}

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sync script never runs git in a resolved dir that is not its own checkout (`NOT-A-CHECKOUT`), exits 3 when any row is NOT-FOUND/NOT-A-CHECKOUT/ERROR/PULL-FAILED, and warns on legacy `tools/opensource` resolution in a consumer layout. `ResolveToolTier`/`ToolsReport` expose the tier and warnings; names starting with `.` or equal to the module name are rejected; `ToolsRoot` deprecated.
 - `scripts/sync-opensource-references.sh` iterates `docs/flat-tools-manifest.tsv` instead of globbing the tools directory, so it can never fetch/pull a consumer project's first-party submodules.
 - `pkg/opensource` audit resolves each manifest tool (`AuditTools`); in a consumer layout a missing tools tree fails instead of skipping.
 

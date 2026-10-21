@@ -17,6 +17,9 @@
 #     identity via GIT_SSH_COMMAND="ssh -o BatchMode=yes".
 #   - Refuses to touch any submodule whose working tree has local
 #     modifications.
+#   - Exit status: 0 = every manifest tool processed; 3 = at least one row was
+#     NOT-FOUND, NOT-A-CHECKOUT, ERROR or PULL-FAILED (output table says which).
+#   - Never runs git in a resolved dir that is not its own checkout.
 #   - Logs pinned SHA vs. remote HEAD so a human can inspect the diff
 #     before committing a SHA bump.
 
@@ -45,14 +48,34 @@ source "$ROOT_DIR/scripts/resolve_tool.sh"
 MANIFEST="${HELIXQA_MANIFEST:-$ROOT_DIR/docs/flat-tools-manifest.tsv}"
 [[ -r "$MANIFEST" ]] || { echo "manifest not readable: $MANIFEST" >&2; exit 2; }
 
+RC=0
+LEGACY_IN_CONSUMER=()
+CONSUMER=0
+if [[ -n "${HELIXQA_TOOLS_DIR:-}" || "$(basename "$(dirname "$ROOT_DIR")")" == "submodules" ]]; then
+  CONSUMER=1
+fi
+
 while IFS=$'\t' read -r old_path _new _url _sha <&3; do
   [[ "$old_path" == "old_path" || -z "$old_path" ]] && continue
   name=$(basename "$old_path")
-  resolved=$(helixqa_resolve_tool "$name" "$ROOT_DIR" 2>/dev/null) || {
+  tier_line=$(helixqa_resolve_tool_tier "$name" "$ROOT_DIR" 2>/dev/null) || {
     printf '%-45s %-45s %-45s %s\n' "$name" "-" "-" "NOT-FOUND"
+    RC=3
     continue
   }
+  tier="${tier_line%%$'\t'*}"
+  resolved="${tier_line#*$'\t'}"
+  [[ "$tier" == "legacy" && $CONSUMER -eq 1 ]] && LEGACY_IN_CONSUMER+=("$name")
   cd "$resolved"
+
+  # The resolved dir must be its OWN git checkout: otherwise git would
+  # walk up and act on the enclosing (consumer) repository.
+  if [[ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]]; then
+    printf '%-45s %-45s %-45s %s\n' "$name" "-" "-" "NOT-A-CHECKOUT"
+    RC=3
+    cd "$ROOT_DIR"
+    continue
+  fi
 
   # Guard against dirty working tree.
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
@@ -70,6 +93,7 @@ while IFS=$'\t' read -r old_path _new _url _sha <&3; do
 
   git fetch --quiet origin "$remote_branch" 2>/dev/null || {
     printf '%-45s %-45s %-45s %s\n' "$name" "$pinned" "fetch-failed" "ERROR"
+    RC=3
     cd "$ROOT_DIR"
     continue
   }
@@ -85,6 +109,7 @@ while IFS=$'\t' read -r old_path _new _url _sha <&3; do
     git checkout --quiet "$remote_branch" 2>/dev/null || true
     git pull --quiet --ff-only origin "$remote_branch" 2>/dev/null || {
       state="PULL-FAILED"
+      RC=3
     }
     if [[ "$state" != "PULL-FAILED" ]]; then
       state="PULLED"
@@ -95,6 +120,12 @@ while IFS=$'\t' read -r old_path _new _url _sha <&3; do
   cd "$ROOT_DIR"
 done 3< "$MANIFEST"
 
+if [[ ${#LEGACY_IN_CONSUMER[@]} -gt 0 ]]; then
+  echo
+  echo "WARNING: legacy tools/opensource resolution in consumer layout: ${LEGACY_IN_CONSUMER[*]}"
+  echo "         (non-fatal fallback; add them flat at <root>/submodules/<snake_name>, see docs/flat-tools-manifest.tsv)"
+fi
+
 echo
 echo "NEXT STEPS:"
 echo "  - If any submodule is BEHIND, review its upstream changelog."
@@ -102,3 +133,5 @@ echo "  - Re-run the OpenClawing2 analysis vs. the new tip before"
 echo "    bumping docs/opensource-references.md."
 echo "  - Update the Pinned SHA column in opensource-references.md,"
 echo "    commit the submodule bump, push to every HelixQA remote."
+
+exit "$RC"
