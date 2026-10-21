@@ -121,10 +121,10 @@ future reviewer can compare behaviour.
 
 ## Sync script
 
-Run `scripts/sync-opensource-references.sh` to fetch + pull every
-OSS submodule to the tip of its tracked branch. The script also
-prints the pinned-vs-current SHA diff so operators can decide
-whether to bump a submodule SHA in this doc.
+Run `scripts/sync-opensource-references.sh` for a **read-only** report of
+every manifest tool (tier, manifest pin, checked-out HEAD, DRIFT). It never
+fetches or changes anything; to move a pin use the parent project's
+`git submodule update`, then update the SHA in this doc.
 
 ---
 

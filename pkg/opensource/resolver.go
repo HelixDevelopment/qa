@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -29,8 +30,8 @@ func usable(p string) bool {
 
 // ValidName rejects names that could escape the tools directory.
 func ValidName(name string) error {
-	if name == "" || name == "." || strings.HasPrefix(name, ".") || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
-		return fmt.Errorf("opensource: invalid tool name %q (must be non-empty, not start with '.', no '/', '\\' or '..')", name)
+	if name == "" || name == "." || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "-") || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+		return fmt.Errorf("opensource: invalid tool name %q (must be non-empty, not start with '.' or '-', no '/', '\\' or '..')", name)
 	}
 	return nil
 }
@@ -148,7 +149,18 @@ type Tool struct {
 	SHA     string
 }
 
-// LoadManifest parses the 4-column TSV manifest (header skipped).
+const manifestHeader = "old_path\tnew_name\turl\tpinned_sha"
+
+var (
+	reSHA     = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+	reNewName = regexp.MustCompile(`^[a-z0-9_]+$`)
+)
+
+// LoadManifest parses and strictly validates the 4-column TSV manifest:
+// exact header, no empty column, 40-hex SHA (lower-cased on load),
+// new_name == the snake name derived from the tool name, valid tool name,
+// no duplicate old_path or new_name. CRLF and a missing final newline are
+// accepted.
 func LoadManifest(path string) ([]Tool, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -156,12 +168,16 @@ func LoadManifest(path string) ([]Tool, error) {
 	}
 	defer f.Close()
 	var out []Tool
+	seenPath, seenName := map[string]bool{}, map[string]bool{}
 	sc := bufio.NewScanner(f)
-	first := true
+	n := 0
 	for sc.Scan() {
+		n++
 		line := strings.TrimRight(sc.Text(), "\r")
-		if first {
-			first = false
+		if n == 1 {
+			if line != manifestHeader {
+				return nil, fmt.Errorf("opensource: manifest %s: bad header %q", path, line)
+			}
 			continue
 		}
 		if strings.TrimSpace(line) == "" {
@@ -169,11 +185,36 @@ func LoadManifest(path string) ([]Tool, error) {
 		}
 		c := strings.Split(line, "\t")
 		if len(c) != 4 {
-			return nil, fmt.Errorf("opensource: manifest %s: bad row %q", path, line)
+			return nil, fmt.Errorf("opensource: manifest %s:%d: want 4 columns, got %d", path, n, len(c))
 		}
-		out = append(out, Tool{Name: filepath.Base(c[0]), OldPath: c[0], NewName: c[1], URL: c[2], SHA: c[3]})
+		for i, v := range c {
+			if v == "" {
+				return nil, fmt.Errorf("opensource: manifest %s:%d: empty column %d", path, n, i+1)
+			}
+		}
+		name := filepath.Base(c[0])
+		if err := ValidName(name); err != nil {
+			return nil, fmt.Errorf("opensource: manifest %s:%d: %w", path, n, err)
+		}
+		if !reNewName.MatchString(c[1]) || c[1] != NewName(name) {
+			return nil, fmt.Errorf("opensource: manifest %s:%d: new_name %q must be %q", path, n, c[1], NewName(name))
+		}
+		if !reSHA.MatchString(c[3]) {
+			return nil, fmt.Errorf("opensource: manifest %s:%d: pinned_sha %q is not 40 hex", path, n, c[3])
+		}
+		if seenPath[c[0]] || seenName[c[1]] {
+			return nil, fmt.Errorf("opensource: manifest %s:%d: duplicate row %q / %q", path, n, c[0], c[1])
+		}
+		seenPath[c[0]], seenName[c[1]] = true, true
+		out = append(out, Tool{Name: name, OldPath: c[0], NewName: c[1], URL: c[2], SHA: strings.ToLower(c[3])})
 	}
-	return out, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("opensource: manifest %s: empty", path)
+	}
+	return out, nil
 }
 
 // ResolveAll resolves every tool; found maps legacy Name to its dir,

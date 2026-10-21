@@ -52,12 +52,12 @@ test_cases:
     platforms: [api]
     tags: [openclawing2, phase1, sync]
     steps:
-      - name: "Run scripts/sync-opensource-references.sh (default diff mode)"
+      - name: "Run scripts/sync-opensource-references.sh (read-only report)"
         action: "scripts/sync-opensource-references.sh"
-        expected: "Emits a table with SUBMODULE / PINNED_SHA / REMOTE_HEAD / STATE columns without checking out anything"
-      - name: "Verify --fetch-only honours the safety contract"
-        action: "scripts/sync-opensource-references.sh --fetch-only"
-        expected: "Fetches but never checks out; exit code 0"
+        expected: "Emits a read-only table with SUBMODULE / TIER / MANIFEST_PIN / CHECKOUT_HEAD / STATE / PATH columns; fetches, checks out and writes nothing"
+      - name: "Verify the script is read-only and rejects the removed --pull / --fetch-only flags"
+        action: "scripts/sync-opensource-references.sh --pull"
+        expected: "Exit code 2 (unknown argument); no repository is modified"
     expected_result: "Operators can dry-run the sync safely before committing a SHA bump"
 
   - id: OC-REF-004

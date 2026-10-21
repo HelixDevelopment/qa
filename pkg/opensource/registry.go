@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -72,15 +73,22 @@ func Audit(scannedRoot, referencesDoc, licencesDoc string) (AuditResult, error) 
 		name := e.Name()
 		res.Submodules = append(res.Submodules, name)
 
-		marker := "tools/opensource/" + name
-		if !strings.Contains(refText, marker) {
+		if !DocMentions(refText, name) {
 			res.MissingFromReferences = append(res.MissingFromReferences, name)
 		}
-		if !strings.Contains(licText, marker) {
+		if !DocMentions(licText, name) {
 			res.MissingFromLicences = append(res.MissingFromLicences, name)
 		}
 	}
 	return res, nil
+}
+
+// DocMentions reports whether doc names "tools/opensource/<name>" as a
+// whole token: the name must not continue with [A-Za-z0-9_-] or with
+// ".<alnum>", so "ui-tars" does not match "ui-tars-desktop" or "ui-tars.md".
+func DocMentions(doc, name string) bool {
+	re := regexp.MustCompile(regexp.QuoteMeta("tools/opensource/"+name) + `(?:$|[^A-Za-z0-9_.\-]|\.(?:$|[^A-Za-z0-9]))`)
+	return re.MatchString(doc)
 }
 
 // AuditTools is the layout-independent audit: each manifest tool is
@@ -104,11 +112,10 @@ func AuditTools(moduleRoot, referencesDoc, licencesDoc string, tools []Tool) (Au
 			continue
 		}
 		res.Submodules = append(res.Submodules, t.Name)
-		marker := "tools/opensource/" + t.Name
-		if !strings.Contains(string(refData), marker) {
+		if !DocMentions(string(refData), t.Name) {
 			res.MissingFromReferences = append(res.MissingFromReferences, t.Name)
 		}
-		if !strings.Contains(string(licData), marker) {
+		if !DocMentions(string(licData), t.Name) {
 			res.MissingFromLicences = append(res.MissingFromLicences, t.Name)
 		}
 	}

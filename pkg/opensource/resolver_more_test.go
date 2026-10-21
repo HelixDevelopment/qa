@@ -106,8 +106,8 @@ func TestLoadManifestAndResolveAll(t *testing.T) {
 	dir := t.TempDir()
 	mf := filepath.Join(dir, "m.tsv")
 	os.WriteFile(mf, []byte("old_path\tnew_name\turl\tpinned_sha\n"+
-		"tools/opensource/ui-tars\tui_tars\tgit@x:y/z.git\tabc\n"+
-		"tools/opensource/scrcpy\tscrcpy\tgit@x:y/s.git\tdef\n"), 0o644)
+		"tools/opensource/ui-tars\tui_tars\tgit@x:y/z.git\t"+strings.Repeat("a", 40)+"\n"+
+		"tools/opensource/scrcpy\tscrcpy\tgit@x:y/s.git\t"+strings.Repeat("B", 40)+"\n"), 0o644)
 	tools, err := LoadManifest(mf)
 	if err != nil || len(tools) != 2 || tools[0].Name != "ui-tars" || tools[0].NewName != "ui_tars" {
 		t.Fatalf("manifest: %v %+v", err, tools)
@@ -308,5 +308,83 @@ func TestShellRejectsInvalidNames(t *testing.T) {
 		if err == nil || !strings.Contains(string(out), "invalid tool name") {
 			t.Errorf("shell must reject %q (err=%v out=%q)", n, err, out)
 		}
+	}
+}
+
+func TestLoadManifest_Validation(t *testing.T) {
+	h := "old_path\tnew_name\turl\tpinned_sha\n"
+	sha := strings.Repeat("a", 40)
+	row := func(p, n, u, s string) string { return p + "\t" + n + "\t" + u + "\t" + s + "\n" }
+	bad := map[string]string{
+		"bad-header":        "old\tnew\turl\tsha\n" + row("tools/opensource/a", "a", "u", sha),
+		"empty-url":         h + row("tools/opensource/a", "a", "", sha),
+		"empty-new-name":    h + row("tools/opensource/a", "", "u", sha),
+		"empty-sha":         h + row("tools/opensource/a", "a", "u", ""),
+		"short-sha":         h + row("tools/opensource/a", "a", "u", "abc"),
+		"non-hex-sha":       h + row("tools/opensource/a", "a", "u", strings.Repeat("g", 40)),
+		"new-name-mismatch": h + row("tools/opensource/ui-tars", "tars", "u", sha),
+		"new-name-dashes":   h + row("tools/opensource/ui-tars", "ui-tars", "u", sha),
+		"dash-leading-name": h + row("tools/opensource/-rf", "_rf", "u", sha),
+		"duplicate-row":     h + row("tools/opensource/a", "a", "u", sha) + row("tools/opensource/a", "a", "u", sha),
+		"duplicate-newname": h + row("tools/opensource/a-b", "a_b", "u", sha) + row("tools/x/a_b", "a_b", "u", sha),
+		"extra-column":      h + "tools/opensource/a\ta\tu\t" + sha + "\textra\n",
+		"empty-file":        "",
+	}
+	for name, content := range bad {
+		f := filepath.Join(t.TempDir(), "m.tsv")
+		os.WriteFile(f, []byte(content), 0o644)
+		if _, err := LoadManifest(f); err == nil {
+			t.Errorf("%s: want error", name)
+		}
+	}
+	ok := map[string]string{
+		"crlf-no-final-newline": strings.ReplaceAll(h+row("tools/opensource/ui-tars", "ui_tars", "u", strings.ToUpper(sha)), "\n", "\r\n"),
+		"uppercase-sha":         h + row("tools/opensource/a", "a", "u", strings.ToUpper(sha)),
+	}
+	for name, content := range ok {
+		f := filepath.Join(t.TempDir(), "m.tsv")
+		os.WriteFile(f, []byte(strings.TrimRight(content, "\r\n")), 0o644)
+		tools, err := LoadManifest(f)
+		if err != nil || len(tools) != 1 || tools[0].SHA != sha {
+			t.Errorf("%s: %v %+v (sha must be lowercased)", name, err, tools)
+		}
+	}
+}
+
+func TestRealManifestIsValid(t *testing.T) {
+	tools, err := LoadManifest("../../docs/flat-tools-manifest.tsv")
+	if err != nil || len(tools) != 27 {
+		t.Fatalf("real manifest: %v (%d rows)", err, len(tools))
+	}
+}
+
+func TestAuditTools_DelimiterBoundedMatch(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	base := t.TempDir()
+	root := filepath.Join(base, "submodules", "helix_qa")
+	mk(t, root)
+	fill(t, filepath.Join(base, "submodules", "ui_tars"))
+	tools := []Tool{{Name: "ui-tars", NewName: "ui_tars"}}
+	ref := filepath.Join(base, "ref.md")
+	lic := filepath.Join(base, "lic.md")
+	// only the longer sibling is documented: ui-tars must be MISSING
+	os.WriteFile(ref, []byte("| `tools/opensource/ui-tars-desktop` | x |"), 0o644)
+	os.WriteFile(lic, []byte("tools/opensource/ui-tars-desktop"), 0o644)
+	res, _ := AuditTools(root, ref, lic, tools)
+	if len(res.MissingFromReferences) != 1 || len(res.MissingFromLicences) != 1 {
+		t.Fatalf("prefix collision must not satisfy the audit: %+v", res)
+	}
+	for _, doc := range []string{"`tools/opensource/ui-tars`", "tools/opensource/ui-tars.", "see tools/opensource/ui-tars, and", "tools/opensource/ui-tars", "| tools/opensource/ui-tars |", "(tools/opensource/ui-tars/)"} {
+		os.WriteFile(ref, []byte(doc), 0o644)
+		os.WriteFile(lic, []byte(doc), 0o644)
+		res, _ = AuditTools(root, ref, lic, tools)
+		if !res.OK() {
+			t.Errorf("doc %q should satisfy the audit: %+v", doc, res)
+		}
+	}
+	os.WriteFile(ref, []byte("tools/opensource/ui-tars.md tools/opensource/ui-tars_x"), 0o644)
+	os.WriteFile(lic, []byte("tools/opensource/ui-tars"), 0o644)
+	if res, _ = AuditTools(root, ref, lic, tools); len(res.MissingFromReferences) != 1 {
+		t.Errorf("file-extension / underscore continuation is not the tool: %+v", res)
 	}
 }

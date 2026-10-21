@@ -10,7 +10,7 @@
 #      is set it is authoritative: a miss is a hard error (no fall-through).
 #   2. <parent>/<snake_name> when module_root sits in a dir named "submodules"
 #   3. <module_root>/tools/opensource/<name>, then /<snake_name> (legacy)
-# Names that are empty, start with ".", contain '/', '\' or '..', or equal the
+# Names that are empty, start with "." or "-", contain '/', '\' or '..', or equal the
 # module's own name (helix_qa / helixqa) are rejected.
 # helixqa_resolve_tool_tier prints "<tier>\t<path>" (tier: env|flat|legacy);
 # CLI: resolve_tool.sh [--tier] <name> [module_root].
@@ -28,7 +28,7 @@ helixqa_resolve_tool() {
 helixqa_resolve_tool_tier() {
   local name="${1:-}"
   local root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-  if [[ -z "$name" || "$name" == .* || "$name" == */* || "$name" == *\\* || "$name" == *..* ]]; then
+  if [[ -z "$name" || "$name" == .* || "$name" == -* || "$name" == */* || "$name" == *\\* || "$name" == *..* ]]; then
     printf 'helixqa_resolve_tool: invalid tool name %q\n' "$name" >&2
     return 1
   fi
