@@ -561,3 +561,14 @@ func TestToolsReport_NestedLegacyWordingForNonOpensourcePaths(t *testing.T) {
 		t.Errorf("non-tools/opensource row needs its own wording: %q", r.Warnings[1])
 	}
 }
+
+func TestNormURL_PortOverflowRejected(t *testing.T) {
+	for _, p := range []string{"18446744073709552059", "4294967739", "9223372036854776251", "000000443x", "65536", "0", "100000"} {
+		if got := NormURL("https://github.com:" + p + "/x/foo"); got != "" {
+			t.Errorf("port %s must be rejected, got %q", p, got)
+		}
+	}
+	if NormURL("https://github.com:00443/x/foo") != "github.com/x/foo" || NormURL("https://h:65535/x/foo") != "h:65535/x/foo" {
+		t.Error("valid ports must normalise")
+	}
+}

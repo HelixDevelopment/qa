@@ -614,6 +614,11 @@ func TestSyncScript_URLNormalisation(t *testing.T) {
 		{"ssh://git@h:0022/o/t", "git@h:o/t", false},
 		{"https://GitHub.com./o/t", "https://github.com/o/t", false},
 		{"https://h:70000/o/t", "https://h:70000/o/t", true},
+		// 64/32-bit wrap-around must not turn into the default port
+		{"https://github.com/x/foo", "https://github.com:18446744073709552059/x/foo", true}, // 2^64+443
+		{"https://github.com/x/foo", "https://github.com:4294967739/x/foo", true},           // 2^32+443
+		{"https://github.com/x/foo", "https://github.com:9223372036854776251/x/foo", true},  // 2^63+443
+		{"https://github.com:18446744073709552059/x/foo", "https://github.com:18446744073709552059/x/foo", true},
 		{"git@github.com:org/tool.git", "git@github.com:org/other.git", true},
 		{"https://github.com/org/tool", "https://gitlab.com/org/tool", true},
 		{"https://github.com/Org/Tool", "https://github.com/org/tool", true},
@@ -904,5 +909,65 @@ func TestSyncScript_NestedLegacyWarningWording(t *testing.T) {
 	}
 	if !strings.Contains(out, "legacy nested resolution") || !strings.Contains(out, "rest-demo") {
 		t.Errorf("rest-demo needs the nested-resolution wording\n%s", out)
+	}
+}
+
+func TestSyncScript_DangerousDirectionInsteadOfIntoManifestURL(t *testing.T) {
+	manifestURL := "https://example.test/o/tool"
+	evilOrigin := "https://example.test/evil/tool"
+	rewrite := "[url \"" + manifestURL + "\"]\n\tinsteadOf = " + evilOrigin + "\n"
+	cases := map[string]func(t *testing.T, f toolFx){
+		"local-scope": func(t *testing.T, f toolFx) {
+			git(t, f.tool, "config", "url."+manifestURL+".insteadOf", evilOrigin)
+		},
+		"worktree-scope": func(t *testing.T, f toolFx) {
+			git(t, f.tool, "config", "extensions.worktreeConfig", "true")
+			os.WriteFile(filepath.Join(f.tool, ".git", "config.worktree"), []byte(rewrite), 0o644)
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newToolFx(t)
+			git(t, f.tool, "remote", "set-url", "origin", evilOrigin)
+			installSync(t, f.hq, mheader+mrow("allure2", manifestURL, head(t, f.tool)))
+			setup(t, f)
+			// sanity: git itself resolves the evil origin INTO the manifest url
+			out0, _ := exec.Command("git", "-C", f.tool, "ls-remote", "--get-url", "origin").Output()
+			if strings.TrimSpace(string(out0)) != manifestURL {
+				t.Fatalf("fixture must make the effective url equal the manifest url, got %q", out0)
+			}
+			out, code := runSync(t, f.hq, nil)
+			if !strings.Contains(out, "WRONG-REPO") || code != 3 {
+				t.Errorf("want WRONG-REPO exit 3, got %d\n%s", code, out)
+			}
+		})
+	}
+}
+
+// extensions.* is honoured by git only from the repository's own config.
+func TestSyncScript_GlobalWorktreeConfigExtensionIsHarmless(t *testing.T) {
+	f := newToolFx(t)
+	f.install(t, head(t, f.tool))
+	home := t.TempDir()
+	os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[extensions]\n\tworktreeConfig = true\n"), 0o644)
+	out, code := runSync(t, f.hq, []string{"HOME=" + home, "XDG_CONFIG_HOME=" + home})
+	if code != 0 || strings.Contains(out, "WRONG-REPO") {
+		t.Errorf("global extensions.worktreeConfig must not poison a clean tool: %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_RequiresGitWithShowScope(t *testing.T) {
+	f := newToolFx(t)
+	f.install(t, head(t, f.tool))
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available SKIP-OK: #git-optional")
+	}
+	dir := t.TempDir()
+	wrapper := "#!/bin/sh\ncase \"$*\" in *--show-scope*) echo 'error: unknown option `show-scope'\"'\"'' >&2; exit 129;; esac\nexec " + real + " \"$@\"\n"
+	os.WriteFile(filepath.Join(dir, "git"), []byte(wrapper), 0o755)
+	out, code := runSync(t, f.hq, []string{"PATH=" + dir + ":" + os.Getenv("PATH")})
+	if code != 2 || !strings.Contains(out, "git >= 2.26 required") {
+		t.Errorf("want exit 2 with 'git >= 2.26 required', got %d\n%s", code, out)
 	}
 }

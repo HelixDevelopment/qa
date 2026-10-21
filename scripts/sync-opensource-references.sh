@@ -38,7 +38,8 @@
 #     remote.origin.url and it comes from the local scope; any url.*.insteadOf
 #     / pushInsteadOf from the local, worktree or command scope is WRONG-REPO
 #     (only the user's own global/system rewrites are honoured);
-#     extensions.worktreeConfig being enabled is WRONG-REPO too; and the
+#     extensions.worktreeConfig enabled in the repo's OWN config (git ignores
+#     extensions.* elsewhere) is WRONG-REPO too; and the
 #     EFFECTIVE origin url (`git ls-remote --get-url
 #     origin`, which applies the user's own insteadOf) equals the manifest url
 #     after normalisation (https / ssh / scp only; host case-insensitive, path
@@ -97,6 +98,15 @@ if [[ -n "${HELIXQA_TOOLS_DIR:-}" ]]; then
   fi
 fi
 
+# `git config --show-scope` (git >= 2.26) is required for the scope checks:
+# exit status 1 = supported (key not found); anything else = unsupported.
+probe_rc=0
+git config --show-scope --get-all helixqa.probe.never >/dev/null 2>&1 || probe_rc=$?
+if [[ "$probe_rc" -ne 1 && "$probe_rc" -ne 0 ]]; then
+  echo "git >= 2.26 required (git config --show-scope is not supported)" >&2
+  exit 2
+fi
+
 # Every git call is hardened and confined to one directory.
 g() { local d="$1"; shift; git -C "$d" -c core.fsmonitor=false -c core.hooksPath=/dev/null -c protocol.ext.allow=never "$@"; }
 
@@ -117,7 +127,11 @@ norm_url() {
     scheme="${BASH_REMATCH[1]}"; host="${BASH_REMATCH[3]}"
     port="${BASH_REMATCH[5]}"; path="${BASH_REMATCH[6]}"
     if [[ -n "$port" ]]; then
-      port=$((10#$port))
+      # strip leading zeros and bound the digit count BEFORE any arithmetic
+      # (10#... wraps at 64 bits: 2^64+443 would become 443)
+      local p="${port#"${port%%[!0]*}"}"
+      [[ -n "$p" && ${#p} -le 5 ]] || return 0
+      port=$((10#$p))
       (( port >= 1 && port <= 65535 )) || return 0
     fi
     [[ "$scheme" == https && "$port" == 443 ]] && port=""
@@ -245,7 +259,7 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   # insteadOf rewrites, effective url (user-level insteadOf applied) must
   # equal the manifest url.
   # All scopes, includes followed. Entries are "<scope><TAB><value>".
-  wt=$(g "$real" config --includes --bool --get extensions.worktreeConfig 2>/dev/null || true)
+  wt=$(g "$real" config --local --bool --get extensions.worktreeConfig 2>/dev/null || true)
   url_entries=$(g "$real" config --includes --show-scope --get-all remote.origin.url 2>/dev/null || true)
   nvals=$(printf '%s' "$url_entries" | awk 'NF' | wc -l | tr -d ' ')
   nlocal=$(printf '%s\n' "$url_entries" | awk -F'\t' '$1=="local"' | wc -l | tr -d ' ')
