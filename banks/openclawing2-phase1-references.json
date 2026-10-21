@@ -26,7 +26,7 @@
       ],
       "steps": [
         {
-          "name": "Run pkg/opensource.Audit against tools/opensource",
+          "name": "Run pkg/opensource.Audit against the resolved tools root (opensource.ToolsRoot: $HELIXQA_TOOLS_DIR or legacy tools/opensource)",
           "action": "go test ./pkg/opensource/... -run TestAudit_P1_T9_EverySubmoduleDocumented",
           "expected": "Every submodule name appears in both docs/opensource-references.md and docs/licences-inventory.md"
         },
@@ -56,7 +56,7 @@
         {
           "name": "Grep HelixQA Go sources for Skyvern identifiers",
           "action": "grep -rn 'SkyvernAgent\\|skyvern_action_' --include='*.go' pkg cmd",
-          "expected": "zero matches \u2014 Skyvern code is quarantined to tools/opensource/skyvern/ only"
+          "expected": "zero matches \u2014 Skyvern code is quarantined to its resolved tool checkout (scripts/resolve_tool.sh skyvern) only"
         },
         {
           "name": "Grep for Skyvern imports",
@@ -109,7 +109,7 @@
       "steps": [
         {
           "name": "For each OpenClawing2 submodule, compare git rev-parse HEAD to the Pinned SHA column",
-          "action": "for m in browser-use skyvern stagehand ui-tars ui-tars-desktop anthropic-quickstarts; do (cd tools/opensource/$m && git rev-parse HEAD); done",
+          "action": "for m in browser-use skyvern stagehand ui-tars ui-tars-desktop anthropic-quickstarts; do (cd \"$(scripts/resolve_tool.sh $m)\" && git rev-parse HEAD); done",
           "expected": "Each SHA equals the value documented in docs/opensource-references.md"
         }
       ],

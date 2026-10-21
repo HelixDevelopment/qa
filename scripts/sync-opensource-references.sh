@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Milos Vasic
 # SPDX-License-Identifier: Apache-2.0
 #
-# Fetch + pull every OSS reference submodule under tools/opensource/
+# Fetch + pull every OSS reference checkout (resolved via HELIXQA_TOOLS_DIR,
+# sibling <root>/submodules/<snake_name>, or legacy tools/opensource/)
 # and print a diff of pinned SHA vs. upstream tip so operators can
 # decide whether to bump docs/opensource-references.md.
 #
@@ -36,9 +37,21 @@ export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes}"
 printf '%-45s %-45s %-45s %s\n' "SUBMODULE" "PINNED_SHA" "REMOTE_HEAD" "STATE"
 printf '%s\n' "$(printf '=%.0s' {1..160})"
 
-for dir in tools/opensource/*/; do
+# shellcheck source=resolve_tool.sh
+source "$ROOT_DIR/scripts/resolve_tool.sh"
+TOOLS_ROOT="${HELIXQA_TOOLS_DIR:-}"
+if [[ -z "$TOOLS_ROOT" ]]; then
+  if [[ "$(basename "$(dirname "$ROOT_DIR")")" == "submodules" ]]; then
+    TOOLS_ROOT="$(dirname "$ROOT_DIR")"
+  else
+    TOOLS_ROOT="$ROOT_DIR/tools/opensource"
+  fi
+fi
+for dir in "$TOOLS_ROOT"/*/; do
   name=$(basename "$dir")
-  cd "$ROOT_DIR/$dir"
+  [[ "$dir" == "$ROOT_DIR/" ]] && continue
+  resolved=$(helixqa_resolve_tool "$name" "$ROOT_DIR" 2>/dev/null) || continue
+  cd "$resolved"
 
   # Guard against dirty working tree.
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then

@@ -16,7 +16,7 @@ import (
 )
 
 // P4 ports from browser-use's error-recovery stack
-// (tools/opensource/browser-use/browser_use/agent/service.py).
+// (<tools-dir>/browser-use/browser_use/agent/service.py).
 // Three pluggable components:
 //
 //   - ExpBackoffWithJitter: caps + randomises retry delays.
@@ -214,7 +214,7 @@ func fingerprintActions(actions []nexus.Action) uint64 {
 
 // SelfHealer re-invokes the LLM with an explicit "previous attempt
 // failed" context when a step's Execute phase reports an error.
-// Stagehand inspired (tools/opensource/stagehand/lib/StagehandPage.ts).
+// Stagehand inspired (<tools-dir>/stagehand/lib/StagehandPage.ts).
 type SelfHealer struct {
 	MaxAttempts int       // default 3
 	Client      LLMClient // required

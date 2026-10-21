@@ -17,7 +17,7 @@ import (
 // submodule the moment the PR lands.
 func TestAudit_P1_T9_EverySubmoduleDocumented(t *testing.T) {
 	repoRoot := findRepoRoot(t)
-	openSourceDir := filepath.Join(repoRoot, "tools", "opensource")
+	openSourceDir := ToolsRoot(repoRoot)
 	referencesDoc := filepath.Join(repoRoot, "docs", "opensource-references.md")
 	licencesDoc := filepath.Join(repoRoot, "docs", "licences-inventory.md")
 
@@ -97,7 +97,7 @@ func TestAudit_MissingSubmoduleSurfaces(t *testing.T) {
 // in the quarterly refresh queue.
 func TestLocateLicenceFile_OpenClawing2Set(t *testing.T) {
 	repoRoot := findRepoRoot(t)
-	openSourceDir := filepath.Join(repoRoot, "tools", "opensource")
+	openSourceDir := ToolsRoot(repoRoot)
 	if _, err := os.Stat(openSourceDir); os.IsNotExist(err) {
 		t.Skipf("tools/opensource/ not present SKIP-OK: #opensource-vendor-tree-optional")
 	}
@@ -133,7 +133,7 @@ func TestLocateLicenceFile_OpenClawing2Set(t *testing.T) {
 func TestLocateLicenceFile_PreExistingInfo(t *testing.T) {
 	// bluff-scan: nil-only-ok (registry helper — pre-existing info file must be located without error)
 	repoRoot := findRepoRoot(t)
-	openSourceDir := filepath.Join(repoRoot, "tools", "opensource")
+	openSourceDir := ToolsRoot(repoRoot)
 	if _, err := os.Stat(openSourceDir); os.IsNotExist(err) {
 		t.Skipf("tools/opensource/ not present SKIP-OK: #opensource-vendor-tree-optional")
 	}

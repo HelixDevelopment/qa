@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package opensource exposes a small, well-tested helper that walks
-// tools/opensource/ and asserts every vendored submodule has a
-// matching row in docs/opensource-references.md + a licence entry in
+// the tools root (see ToolsRoot/ResolveTool: $HELIXQA_TOOLS_DIR, flat
+// <root>/submodules/<snake_name>, legacy tools/opensource/) and asserts every
+// vendored submodule has a matching row in docs/opensource-references.md + a licence entry in
 // docs/licences-inventory.md. This package is the enforcement point
 // behind OpenClawing2 Phase 1's P1.T9 / P1.T10 regression tests.
 //

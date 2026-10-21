@@ -3,8 +3,11 @@
 
 // Package agent implements HelixQA's agent-step state machine,
 // ported as a pattern from browser-use's Agent.step() loop (see
-// tools/opensource/browser-use/browser_use/agent/service.py).
+// <tools-dir>/browser-use/browser_use/agent/service.py).
 //
+// (<tools-dir> = a tool checkout resolved by opensource.ResolveTool:
+// $HELIXQA_TOOLS_DIR, <root>/submodules/<snake_name>, or legacy
+// tools/opensource/.)
 // The loop is deliberately four explicit phases instead of one
 // monolithic Step() so every transition is observable and testable:
 //

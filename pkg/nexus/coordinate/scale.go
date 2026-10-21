@@ -3,10 +3,10 @@
 
 // Package coordinate implements the coordinate-scaling algorithm
 // ported from Anthropic's computer-use-demo reference
-// (tools/opensource/anthropic-quickstarts/computer-use-demo/
+// (<tools-dir>/anthropic-quickstarts/computer-use-demo/
 // computer_use_demo/tools/computer.py::scale_coordinates) and the
 // UI-TARS action space
-// (tools/opensource/ui-tars/docs/action_space.md).
+// (<tools-dir>/ui-tars/docs/action_space.md).
 //
 // The algorithm takes a model-produced (x, y) pair expressed in a
 // canonical display resolution and maps it onto the real screen.
