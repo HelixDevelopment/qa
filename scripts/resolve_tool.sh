@@ -22,10 +22,11 @@
 
 _helixqa_populated() { [[ -d "$1" ]] && [[ -n "$(ls -A "$1" 2>/dev/null)" ]]; }
 
-# helixqa_valid_old_path <name> <old_path>: clean relative path ending in name.
+# helixqa_valid_old_path <name> <old_path>: clean relative path containing a
+# "/" and ending in name.
 helixqa_valid_old_path() {
   local name="$1" p="$2"
-  [[ -n "$p" && "$p" != /* && "$p" != *//* && "$p" != ./* && "$p" != */./* \
+  [[ -n "$p" && "$p" == */* && "$p" != /* && "$p" != *//* && "$p" != ./* && "$p" != */./* \
      && "$p" != */. && "$p" != .. && "$p" != ../* && "$p" != */../* && "$p" != */ \
      && "$(basename -- "$p")" == "$name" ]]
 }

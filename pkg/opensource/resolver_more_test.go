@@ -236,7 +236,7 @@ func TestToolsVerdict(t *testing.T) {
 		t.Errorf("standalone none: %s", v)
 	}
 	fill(t, filepath.Join(sa, "tools", "opensource", "a"))
-	if v := ToolsVerdict(sa, tools); v != VerdictOK {
+	if v := ToolsVerdict(sa, tools); v != VerdictFail {
 		t.Errorf("standalone partial: %s", v)
 	}
 }
@@ -337,6 +337,8 @@ func TestLoadManifest_Validation(t *testing.T) {
 		"url-local-path":    h + row("tools/opensource/a", "a", "/srv/x.git", sha),
 		"old-path-dotdot":   h + row("tools/../x/a", "a", "git@h.test:o/t.git", sha),
 		"old-path-abs":      h + row("/tools/a", "a", "git@h.test:o/t.git", sha),
+		"old-path-no-slash": h + row("a", "a", "git@h.test:o/t.git", sha),
+		"url-port-too-big":  h + row("tools/opensource/a", "a", "https://h.test:70000/o/t", sha),
 	}
 	for name, content := range bad {
 		f := filepath.Join(t.TempDir(), "m.tsv")
@@ -416,6 +418,14 @@ func TestNormURL(t *testing.T) {
 		{"github.com:Org/tool.git", "git@github.com:Org/tool.git"},
 		{"ssh://git@host:2222/o/t.git", "ssh://host:2222/o/t"},
 		{"https://host:443/o/t", "https://host/o/t"},
+		// ssh-config aliases / single-label hosts are ALLOWED (documented), '_' in hosts too
+		{"git@my_host:o/t.git", "ssh://my_host/o/t"},
+		{"git@box:o/t", "ssh://git@BOX:22/o/t.git"},
+		// leading zeros in ports and a trailing dot on the host are normalised
+		{"https://h:0443/o/t", "https://h/o/t"},
+		{"ssh://git@h:0022/o/t", "git@h:o/t"},
+		{"ssh://git@h:02222/o/t", "ssh://h:2222/o/t"},
+		{"https://GitHub.com./o/t", "https://github.com/o/t"},
 	}
 	for _, p := range eq {
 		if a, b := NormURL(p[0]), NormURL(p[1]); a == "" || a != b {
@@ -433,7 +443,7 @@ func TestNormURL(t *testing.T) {
 			t.Errorf("%q must differ from %q", p[0], p[1])
 		}
 	}
-	for _, bad := range []string{"", "git://h/o/t", "http://h/o/t", "file:///x", "/srv/x.git", "ext::sh -c id", "fd::7", "ext::ssh://x/y", "foo:::bar", "a b:c/d", "host:", "-oProxyCommand=x:path", ":x", "h:/"} {
+	for _, bad := range []string{"", "git://h/o/t", "http://h/o/t", "file:///x", "/srv/x.git", "ext::sh -c id", "fd::7", "ext::ssh://x/y", "foo:::bar", "a b:c/d", "host:", "-oProxyCommand=x:path", ":x", "h:/", "https://h:70000/o/t", "https://h:0/o/t", "https://./o/t", "ssh://h:99999/o/t"} {
 		if got := NormURL(bad); got != "" {
 			t.Errorf("%q must be rejected, got %q", bad, got)
 		}
@@ -460,7 +470,7 @@ func TestResolveToolAt_OutsideToolsOpensource(t *testing.T) {
 	if p, tier, _ = ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo"); p != flat || tier != TierFlat {
 		t.Errorf("flat must win: %q %q", p, tier)
 	}
-	for _, bad := range []string{"../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other", "", "tools//..//rest-demo"} {
+	for _, bad := range []string{"../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other", "", "tools//..//rest-demo", "rest-demo"} {
 		if _, _, err := ResolveToolAt(root, "rest-demo", bad); err == nil {
 			t.Errorf("old_path %q must be rejected", bad)
 		}
@@ -497,7 +507,7 @@ func TestShellResolverParity_OldPath(t *testing.T) {
 	b := t.TempDir()
 	root := filepath.Join(b, "submodules", "helix_qa")
 	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
-	for _, old := range []string{"tools/test-apps/rest-demo", "../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other"} {
+	for _, old := range []string{"tools/test-apps/rest-demo", "../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other", "rest-demo"} {
 		gp, gt, gerr := ResolveToolAt(root, "rest-demo", old)
 		out, err := exec.Command("bash", script, "--tier", "rest-demo", root, old).Output()
 		line := strings.TrimSpace(string(out))
@@ -512,5 +522,42 @@ func TestShellResolverParity_OldPath(t *testing.T) {
 	out, _ := exec.Command("bash", script, "rest-demo", root, "tools/test-apps/rest-demo").Output()
 	if strings.TrimSpace(string(out)) != gp {
 		t.Errorf("flat parity: go=%q shell=%q", gp, out)
+	}
+}
+
+func TestToolsReport_PartialStandaloneFailsLikeTheScript(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	sa := filepath.Join(b, "x", "helix_qa")
+	mk(t, sa)
+	tools := []Tool{{Name: "a", NewName: "a"}, {Name: "b", NewName: "b"}}
+	if v := ToolsVerdict(sa, tools); v != VerdictSkip {
+		t.Errorf("standalone none: %s", v)
+	}
+	fill(t, filepath.Join(sa, "tools", "opensource", "a"))
+	if v := ToolsVerdict(sa, tools); v != VerdictFail {
+		t.Errorf("standalone partial must FAIL (script exits 3): %s", v)
+	}
+	fill(t, filepath.Join(sa, "tools", "opensource", "b"))
+	if v := ToolsVerdict(sa, tools); v != VerdictOK {
+		t.Errorf("standalone complete: %s", v)
+	}
+}
+
+func TestToolsReport_NestedLegacyWordingForNonOpensourcePaths(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	root := filepath.Join(b, "submodules", "helix_qa")
+	fill(t, filepath.Join(root, "tools", "opensource", "a"))
+	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
+	r := ToolsReport(root, []Tool{{Name: "a", NewName: "a"}, {Name: "rest-demo", NewName: "rest_demo", OldPath: "tools/test-apps/rest-demo"}})
+	if len(r.Warnings) != 2 {
+		t.Fatalf("%+v", r.Warnings)
+	}
+	if !strings.Contains(r.Warnings[0], LegacyWarning) || strings.Contains(r.Warnings[0], "rest-demo") {
+		t.Errorf("tools/opensource warning must list only tools/opensource rows: %q", r.Warnings[0])
+	}
+	if !strings.Contains(r.Warnings[1], "legacy nested resolution") || !strings.Contains(r.Warnings[1], "rest-demo") {
+		t.Errorf("non-tools/opensource row needs its own wording: %q", r.Warnings[1])
 	}
 }

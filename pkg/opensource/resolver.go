@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -97,10 +98,10 @@ func DefaultOldPath(name string) string { return "tools/opensource/" + name }
 // validOldPath checks a manifest old_path: relative, clean, no "..", and its
 // base name equals the tool name.
 func validOldPath(oldPath, name string) error {
-	if oldPath == "" || filepath.IsAbs(oldPath) || filepath.Clean(oldPath) != oldPath ||
+	if oldPath == "" || !strings.Contains(oldPath, "/") || filepath.IsAbs(oldPath) || filepath.Clean(oldPath) != oldPath ||
 		oldPath == ".." || strings.HasPrefix(oldPath, "../") || strings.Contains(oldPath, "/../") ||
 		filepath.Base(oldPath) != name {
-		return fmt.Errorf("opensource: invalid old_path %q for tool %q (must be a clean relative path ending in the tool name)", oldPath, name)
+		return fmt.Errorf("opensource: invalid old_path %q for tool %q (must be a clean relative path containing a slash and ending in the tool name)", oldPath, name)
 	}
 	return nil
 }
@@ -294,38 +295,46 @@ type Report struct {
 	Warnings []string        // non-fatal, e.g. legacy resolution in consumer layout
 }
 
-// ToolsReport applies the audit presence rule: in a consumer layout
-// (IsConsumerLayout) every tool must resolve, else FAIL; in a standalone
-// checkout it SKIPs only when no tool resolves at all, otherwise OK.
+// ToolsReport applies the audit presence rule (identical to the exit status
+// of scripts/sync-opensource-references.sh): every tool must resolve, else
+// FAIL; the one exception is a standalone checkout (not IsConsumerLayout)
+// where NO tool resolves at all, which SKIPs.
 // In a consumer layout, tools that only resolve via the legacy nested
 // tier yield a non-fatal warning (the owner chose fallback so consumers
 // keep working).
 func ToolsReport(moduleRoot string, tools []Tool) Report {
 	r := Report{Tiers: map[string]Tier{}}
-	var missing []string
-	var legacy []string
+	missing := 0
+	var legacy, nested []string
 	for _, t := range tools {
 		_, tier, err := ResolveEntry(moduleRoot, t)
 		if err != nil {
-			missing = append(missing, t.Name)
+			missing++
 			continue
 		}
 		r.Tiers[t.Name] = tier
 		if tier == TierLegacy {
-			legacy = append(legacy, t.Name)
+			if filepath.Dir(t.oldPath()) == "tools/opensource" {
+				legacy = append(legacy, t.Name)
+			} else {
+				nested = append(nested, t.Name)
+			}
 		}
 	}
 	consumer := IsConsumerLayout(moduleRoot)
 	switch {
-	case consumer && (len(r.Tiers) == 0 || len(missing) > 0):
-		r.Verdict = VerdictFail
-	case len(r.Tiers) == 0:
+	case len(r.Tiers) == 0 && !consumer:
 		r.Verdict = VerdictSkip
+	case len(r.Tiers) == 0 || missing > 0:
+		r.Verdict = VerdictFail // consumer layout, or a partial standalone checkout
 	default:
 		r.Verdict = VerdictOK
 	}
 	if consumer && len(legacy) > 0 {
 		r.Warnings = append(r.Warnings, fmt.Sprintf("%s: %s", LegacyWarning, strings.Join(legacy, ", ")))
+	}
+	if consumer && len(nested) > 0 {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("WARNING: legacy nested resolution (old_path outside tools/opensource) in consumer layout: %s", strings.Join(nested, ", ")))
 	}
 	return r
 }
@@ -336,27 +345,38 @@ func ToolsVerdict(moduleRoot string, tools []Tool) string {
 }
 
 var (
-	reURL     = regexp.MustCompile(`^(https|ssh)://(?:[^/@\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::([0-9]+))?/(\S+)$`)
-	reSCP     = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(\S+)$`)
+	reURL     = regexp.MustCompile(`^(https|ssh)://(?:[^/@\s]+@)?([A-Za-z0-9][A-Za-z0-9._-]*)(?::([0-9]+))?/(\S+)$`)
+	reSCP     = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9][A-Za-z0-9._-]*):(\S+)$`)
 	reForeign = regexp.MustCompile(`^[A-Za-z0-9+.-]*::`)
 )
 
 // NormURL normalises a git remote URL to "host[:port]/path", or returns ""
 // when the form is not accepted. Only https://, ssh:// and scp-style
-// ([user@]host:path) are accepted; host is lower-cased, userinfo and the
-// default ports (https 443, ssh 22) are dropped, the path is case-sensitive
-// and loses a trailing "/" and ".git". git://, http://, file://, ext::,
-// fd:: (any "transport::address"), local paths and whitespace are rejected.
+// ([user@]host:path) are accepted. Host is lower-cased, a trailing "." is
+// dropped, host characters are [A-Za-z0-9._-] (so '_' ssh aliases and
+// single-label hosts such as "box" ARE allowed), userinfo is ignored, the
+// port is normalised (leading zeros removed, 1-65535 only) and the default
+// ports (https 443, ssh 22) are dropped. The path is case-sensitive and
+// loses a trailing "/" and ".git". git://, http://, file://, ext::, fd::
+// (any "transport::address"), local paths and whitespace are rejected.
 // scripts/sync-opensource-references.sh implements the same rules.
 func NormURL(u string) string {
 	if u == "" || reForeign.MatchString(u) || strings.ContainsAny(u, " \t\r\n") {
 		return ""
 	}
-	var host, port, path string
+	var host, path string
+	port := 0
 	if m := reURL.FindStringSubmatch(u); m != nil {
-		host, port, path = m[2], m[3], m[4]
-		if (m[1] == "https" && port == "443") || (m[1] == "ssh" && port == "22") {
-			port = ""
+		host, path = m[2], m[4]
+		if m[3] != "" {
+			n, err := strconv.Atoi(strings.TrimLeft(m[3], "0"))
+			if err != nil || n < 1 || n > 65535 {
+				return ""
+			}
+			port = n
+		}
+		if (m[1] == "https" && port == 443) || (m[1] == "ssh" && port == 22) {
+			port = 0
 		}
 	} else if !strings.Contains(u, "://") {
 		m := reSCP.FindStringSubmatch(u)
@@ -367,13 +387,14 @@ func NormURL(u string) string {
 	} else {
 		return ""
 	}
+	host = strings.TrimSuffix(host, ".")
 	path = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(path, "/"), ".git"), "/")
-	if path == "" {
+	if host == "" || path == "" {
 		return ""
 	}
 	out := strings.ToLower(host)
-	if port != "" {
-		out += ":" + port
+	if port != 0 {
+		out += ":" + strconv.Itoa(port)
 	}
 	return out + "/" + path
 }

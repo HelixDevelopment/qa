@@ -608,6 +608,12 @@ func TestSyncScript_URLNormalisation(t *testing.T) {
 		{"ssh://git@github.com/o/t", "https://user@github.com/o/t", false},
 		{"ssh://git@host:2222/o/t.git", "ssh://host:2222/o/t", false},
 		{"https://host:443/o/t", "https://host/o/t", false},
+		{"git@my_host:o/t.git", "ssh://my_host/o/t", false},
+		{"git@box:o/t", "ssh://git@BOX:22/o/t.git", false},
+		{"https://h:0443/o/t", "https://h/o/t", false},
+		{"ssh://git@h:0022/o/t", "git@h:o/t", false},
+		{"https://GitHub.com./o/t", "https://github.com/o/t", false},
+		{"https://h:70000/o/t", "https://h:70000/o/t", true},
 		{"git@github.com:org/tool.git", "git@github.com:org/other.git", true},
 		{"https://github.com/org/tool", "https://gitlab.com/org/tool", true},
 		{"https://github.com/Org/Tool", "https://github.com/org/tool", true},
@@ -806,5 +812,97 @@ func TestSyncScript_AllowedGitSubcommandsPinned(t *testing.T) {
 		if regexp.MustCompile(`\bg "[^"]*"\s+` + bad + `\b`).MatchString(src) {
 			t.Errorf("forbidden subcommand %s", bad)
 		}
+	}
+}
+
+// git config scopes: system, global, local, worktree, command.
+//
+//	system   - same code path as global (user's own; not creatable in a test)
+//	global   - user insteadOf is ALLOWED (TestSyncScript_EffectiveURLAppliesGlobalInsteadOf)
+//	local    - tool-local insteadOf / pushInsteadOf / 2nd origin => WRONG-REPO (existing tests)
+//	worktree - .git/config.worktree: insteadOf / 2nd origin / the extension itself => WRONG-REPO
+//	command  - GIT_CONFIG_COUNT/KEY/VALUE and -c: env is scrubbed so they have no effect
+func TestSyncScript_WorktreeScopeConfigIsWrongRepo(t *testing.T) {
+	cases := map[string]string{
+		"worktree-insteadOf":     "[url \"https://example.test/evil/\"]\n\tinsteadOf = https://example.test/\n",
+		"worktree-pushInsteadOf": "[url \"https://example.test/evil/\"]\n\tpushInsteadOf = https://example.test/\n",
+		"worktree-second-origin": "[remote \"origin\"]\n\turl = https://example.test/o/other\n",
+		"extension-only":         "",
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newToolFx(t)
+			f.install(t, head(t, f.tool))
+			git(t, f.tool, "config", "extensions.worktreeConfig", "true")
+			os.WriteFile(filepath.Join(f.tool, ".git", "config.worktree"), []byte(content), 0o644)
+			before := snap(t, f.tool)
+			out, code := runSync(t, f.hq, nil)
+			if !strings.Contains(out, "WRONG-REPO") || code != 3 {
+				t.Errorf("want WRONG-REPO exit 3, got %d\n%s", code, out)
+			}
+			sameSnap(t, name, before, snap(t, f.tool))
+		})
+	}
+}
+
+func TestSyncScript_CommandScopeConfigFromEnvHasNoEffect(t *testing.T) {
+	f := newToolFx(t)
+	f.install(t, head(t, f.tool))
+	out, code := runSync(t, f.hq, []string{
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=url.https://example.test/evil/.insteadOf",
+		"GIT_CONFIG_VALUE_0=https://example.test/", "GIT_CONFIG_PARAMETERS='url.https://x/.insteadof=https://example.test/'",
+	})
+	if code != 0 || strings.Contains(out, "WRONG-REPO") {
+		t.Errorf("env command-scope config must be scrubbed: %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_ExportedShellFunctionsAreNotHonoured(t *testing.T) {
+	f := newToolFx(t)
+	f.install(t, head(t, f.tool))
+	marker := filepath.Join(t.TempDir(), "marker")
+	body := "() {  touch " + marker + "; command git \"$@\"; }"
+	var env []string
+	for _, fn := range []string{"git", "cd", "pwd", "head", "tail", "awk", "tr", "basename", "dirname", "sed", "wc", "grep", "source", "compgen"} {
+		env = append(env, "BASH_FUNC_"+fn+"%%="+body)
+	}
+	out, code := runSync(t, f.hq, env)
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("an exported function hijacked the script\n%s", out)
+	}
+	if code != 0 {
+		t.Errorf("exit %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_OldPathWithoutSlashIsInvalidRow(t *testing.T) {
+	f := newToolFx(t)
+	installSync(t, f.hq, mheader+"allure2\tallure2\t"+fakeURL(f.bare)+"\t"+head(t, f.tool)+"\n")
+	out, code := runSync(t, f.hq, nil)
+	if code != 3 || !strings.Contains(out, "INVALID-ROW") || strings.Contains(out, "WRONG-REPO") {
+		t.Errorf("old_path without '/' must be INVALID-ROW, got %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_NestedLegacyWarningWording(t *testing.T) {
+	needGit(t)
+	proj := t.TempDir()
+	hq := filepath.Join(proj, "submodules", "helix_qa")
+	b := t.TempDir()
+	a := filepath.Join(hq, "tools", "opensource", "scrcpy")
+	r := filepath.Join(hq, "tools", "test-apps", "rest-demo")
+	repoWithOrigin(t, a, filepath.Join(b, "a.git"))
+	repoWithOrigin(t, r, filepath.Join(b, "r.git"))
+	installSync(t, hq, mheader+mrow("scrcpy", fakeURL(filepath.Join(b, "a.git")), head(t, a))+
+		"tools/test-apps/rest-demo\trest_demo\t"+fakeURL(filepath.Join(b, "r.git"))+"\t"+head(t, r)+"\n")
+	out, code := runSync(t, hq, nil)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if !strings.Contains(out, "WARNING: legacy tools/opensource resolution in consumer layout: scrcpy\n") {
+		t.Errorf("tools/opensource warning must list only scrcpy\n%s", out)
+	}
+	if !strings.Contains(out, "legacy nested resolution") || !strings.Contains(out, "rest-demo") {
+		t.Errorf("rest-demo needs the nested-resolution wording\n%s", out)
 	}
 }

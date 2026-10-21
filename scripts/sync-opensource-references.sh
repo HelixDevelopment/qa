@@ -7,6 +7,9 @@
 # touches the network, and it writes nothing (no ref, HEAD, index, FETCH_HEAD).
 # To move a pin, use the parent project's `git submodule update`.
 #
+# Manifest rows: old_path must be a clean relative path containing a "/" and
+# ending in the tool name; url must be an accepted https/ssh/scp form (see
+# below) or the row is INVALID-ROW.
 # The resolver treats <root>/<old_path> from the manifest EXACTLY as the legacy
 # location (e.g. tools/test-apps/rest-demo); the sibling flat dir and
 # HELIXQA_TOOLS_DIR still take precedence.
@@ -31,12 +34,18 @@
 #     the expected parent for its tier, and is neither the consumer root /
 #     helix_qa nor an ancestor of them                    -> WRONG-REPO
 #   - the dir is its OWN git checkout                      -> NOT-A-CHECKOUT
-#   - exactly one remote.origin.url, no tool-local url.*.insteadOf /
-#     pushInsteadOf, and the EFFECTIVE origin url (`git ls-remote --get-url
+#   - git config is read in ALL scopes (--includes --show-scope): exactly one
+#     remote.origin.url and it comes from the local scope; any url.*.insteadOf
+#     / pushInsteadOf from the local, worktree or command scope is WRONG-REPO
+#     (only the user's own global/system rewrites are honoured);
+#     extensions.worktreeConfig being enabled is WRONG-REPO too; and the
+#     EFFECTIVE origin url (`git ls-remote --get-url
 #     origin`, which applies the user's own insteadOf) equals the manifest url
 #     after normalisation (https / ssh / scp only; host case-insensitive, path
-#     case-sensitive, userinfo ignored, default ports 22/443 ignored,
-#     non-default ports kept; git://, http://, file://, ext:: and local paths
+#     case-sensitive, userinfo ignored, a trailing dot on the host dropped,
+#     ports normalised (leading zeros removed, 1-65535) with default ports
+#     22/443 ignored and others kept; '_' and single-label hosts (ssh
+#     aliases such as "box") are allowed; git://, http://, file://, ext:: and local paths
 #     never match)                                         -> WRONG-REPO
 #   - manifest rows are validated (4 TAB columns, none empty, tool name
 #     [A-Za-z0-9_][A-Za-z0-9._-]*, new_name == the snake name derived from the
@@ -54,6 +63,17 @@
 # assertion failed.
 
 set -euo pipefail
+
+# Never honour inherited shell functions/aliases (exported `git`, `cd`, ...):
+# first drop every function/builtin name this script relies on, then any other
+# imported function. (Honest limit: an inherited function named `unset` or
+# `set` itself would run once before this line; a hostile environment that
+# can export functions can do much worse, e.g. PATH.)
+unset -f unset builtin command unalias compgen git cd pwd head tail awk tr \
+  basename dirname sed wc grep printf echo read source mapfile 2>/dev/null || true
+unalias -a 2>/dev/null || true
+for _f in $(compgen -A function); do unset -f "$_f" 2>/dev/null || true; done
+unset _f
 
 # Scrub EVERY exported GIT_* variable (GIT_DIR, GIT_TRACE*, GIT_SSH_COMMAND, ...).
 for _v in $(compgen -A export | grep '^GIT_' || true); do unset "$_v"; done
@@ -87,14 +107,19 @@ printf '%s\n' "$(printf '=%.0s' {1..170})"
 # Normalise a git URL to "host[:port]/path" or print nothing when the form is
 # not accepted (https://, ssh://, scp-style only). Same rules as Go NormURL.
 norm_url() {
+  local LC_ALL=C
   local u="$1" scheme="" host="" port="" path=""
-  local re_url='^(https|ssh)://([^/@[:space:]]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]+))?/([^[:space:]]+)$'
-  local re_scp='^([A-Za-z0-9._-]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):([^[:space:]]+)$'
+  local re_url='^(https|ssh)://([^/@[:space:]]+@)?([A-Za-z0-9][A-Za-z0-9._-]*)(:([0-9]+))?/([^[:space:]]+)$'
+  local re_scp='^([A-Za-z0-9._-]+@)?([A-Za-z0-9][A-Za-z0-9._-]*):([^[:space:]]+)$'
   local re_foreign='^[A-Za-z0-9+.-]*::'
   [[ -z "$u" || "$u" =~ $re_foreign || "$u" =~ [[:space:]] ]] && return 0
   if [[ "$u" =~ $re_url ]]; then
     scheme="${BASH_REMATCH[1]}"; host="${BASH_REMATCH[3]}"
     port="${BASH_REMATCH[5]}"; path="${BASH_REMATCH[6]}"
+    if [[ -n "$port" ]]; then
+      port=$((10#$port))
+      (( port >= 1 && port <= 65535 )) || return 0
+    fi
     [[ "$scheme" == https && "$port" == 443 ]] && port=""
     [[ "$scheme" == ssh && "$port" == 22 ]] && port=""
   elif [[ "$u" != *://* && "$u" =~ $re_scp ]]; then
@@ -104,9 +129,10 @@ norm_url() {
   else
     return 0
   fi
+  host="${host%.}"
   host=$(printf '%s' "$host" | tr 'A-Z' 'a-z')
   path="${path%/}"; path="${path%.git}"; path="${path%/}"
-  [[ -z "$path" ]] && return 0
+  [[ -z "$host" || -z "$path" ]] && return 0
   printf '%s%s/%s' "$host" "${port:+:$port}" "$path"
 }
 
@@ -135,6 +161,7 @@ NONNF=0
 RESOLVED=0
 PROCESSED=0
 LEGACY_IN_CONSUMER=()
+NESTED_IN_CONSUMER=()
 CONSUMER=0
 if [[ -n "${HELIXQA_TOOLS_DIR:-}" || "$(basename "$(dirname "$ROOT_DIR")")" == "submodules" ]]; then
   CONSUMER=1
@@ -178,7 +205,13 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   tier="${tier_line%%$'\t'*}"
   resolved="${tier_line#*$'\t'}"
   RESOLVED=$((RESOLVED + 1))
-  [[ "$tier" == "legacy" && $CONSUMER -eq 1 ]] && LEGACY_IN_CONSUMER+=("$name")
+  if [[ "$tier" == "legacy" && $CONSUMER -eq 1 ]]; then
+    if [[ "$(dirname -- "$old_path")" == "tools/opensource" ]]; then
+      LEGACY_IN_CONSUMER+=("$name")
+    else
+      NESTED_IN_CONSUMER+=("$name")
+    fi
+  fi
 
   real=$(cd "$resolved" 2>/dev/null && pwd -P) || {
     fail_row "$name" "$tier" "$sha" "-" "ERROR" "$resolved"
@@ -191,6 +224,9 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
     *) expected_parent="$ROOT_DIR/$(dirname -- "$old_path")" ;;
   esac
 
+  # (The "under the expected parent" clause below is defence in depth: with
+  # real == resolved the resolver already builds <expected_parent>/<name>, so
+  # no fixture can reach it alone; it is kept for resolver regressions.)
   # No symlink component anywhere, sits under the expected parent, and is
   # neither the consumer/helix_qa root nor an ancestor of it.
   if [[ "$real" != "$resolved" || "$real" != "$expected_parent"/* \
@@ -208,10 +244,16 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   # ...and THE expected tool. Exactly one origin url, no tool-local
   # insteadOf rewrites, effective url (user-level insteadOf applied) must
   # equal the manifest url.
-  nvals=$(g "$real" config --local --includes --get-all remote.origin.url 2>/dev/null | wc -l | tr -d ' ' || true)
-  rewrites=$(g "$real" config --local --includes --get-regexp '^url\..*\.(insteadof|pushinsteadof)$' 2>/dev/null | wc -l | tr -d ' ' || true)
+  # All scopes, includes followed. Entries are "<scope><TAB><value>".
+  wt=$(g "$real" config --includes --bool --get extensions.worktreeConfig 2>/dev/null || true)
+  url_entries=$(g "$real" config --includes --show-scope --get-all remote.origin.url 2>/dev/null || true)
+  nvals=$(printf '%s' "$url_entries" | awk 'NF' | wc -l | tr -d ' ')
+  nlocal=$(printf '%s\n' "$url_entries" | awk -F'\t' '$1=="local"' | wc -l | tr -d ' ')
+  # insteadOf rewrites: only the user's own global/system scope is allowed.
+  rewrites=$(g "$real" config --includes --show-scope --get-regexp '^url\..*\.(insteadof|pushinsteadof)$' 2>/dev/null \
+    | awk -F'\t' '$1!="global" && $1!="system"' | wc -l | tr -d ' ' || true)
   origin=""
-  if [[ "$nvals" == "1" && "$rewrites" == "0" ]]; then
+  if [[ "$wt" != "true" && "$nvals" == "1" && "$nlocal" == "1" && "$rewrites" == "0" ]]; then
     origin=$(g "$real" ls-remote --get-url origin 2>/dev/null || true)
   fi
   n_origin=$(norm_url "$origin")
@@ -247,6 +289,11 @@ if [[ ${#LEGACY_IN_CONSUMER[@]} -gt 0 ]]; then
   echo
   echo "WARNING: legacy tools/opensource resolution in consumer layout: ${LEGACY_IN_CONSUMER[*]}"
   echo "         (non-fatal fallback; add them flat at <root>/submodules/<snake_name>, see docs/flat-tools-manifest.tsv)"
+fi
+
+if [[ ${#NESTED_IN_CONSUMER[@]} -gt 0 ]]; then
+  echo
+  echo "WARNING: legacy nested resolution (old_path outside tools/opensource) in consumer layout: ${NESTED_IN_CONSUMER[*]}"
 fi
 
 echo
