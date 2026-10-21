@@ -7,6 +7,15 @@
 # touches the network, and it writes nothing (no ref, HEAD, index, FETCH_HEAD).
 # To move a pin, use the parent project's `git submodule update`.
 #
+# The resolver treats <root>/<old_path> from the manifest EXACTLY as the legacy
+# location (e.g. tools/test-apps/rest-demo); the sibling flat dir and
+# HELIXQA_TOOLS_DIR still take precedence.
+#
+# SKIP policy (mirrors the Go audit): in a standalone checkout (not inside a
+# "submodules" dir and no HELIXQA_TOOLS_DIR) where NO manifest tool resolves
+# the script prints SKIP and exits 0; in a consumer layout that is exit 3.
+# A header-only manifest (no data rows) is exit 2.
+#
 # Usage:
 #   scripts/sync-opensource-references.sh        # print the report
 #   (any argument other than -h/--help is rejected with exit 2)
@@ -46,12 +55,9 @@
 
 set -euo pipefail
 
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
-  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
-  GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM GIT_CONFIG \
-  GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS \
-  GIT_PREFIX GIT_EXEC_PATH GIT_REPLACE_REF_BASE GIT_SSH GIT_SSH_COMMAND \
-  GIT_EXTERNAL_DIFF GIT_ASKPASS 2>/dev/null || true
+# Scrub EVERY exported GIT_* variable (GIT_DIR, GIT_TRACE*, GIT_SSH_COMMAND, ...).
+for _v in $(compgen -A export | grep '^GIT_' || true); do unset "$_v"; done
+unset _v
 
 case "${1:-}" in
   "") ;;
@@ -79,11 +85,13 @@ row "SUBMODULE" "TIER" "MANIFEST_PIN" "CHECKOUT_HEAD" "STATE" "PATH"
 printf '%s\n' "$(printf '=%.0s' {1..170})"
 
 # Normalise a git URL to "host[:port]/path" or print nothing when the form is
-# not accepted (https://, ssh://, scp-style only).
+# not accepted (https://, ssh://, scp-style only). Same rules as Go NormURL.
 norm_url() {
   local u="$1" scheme="" host="" port="" path=""
-  local re_url='^(https|ssh)://([^/@]+@)?([^/:@]+)(:([0-9]+))?/(.+)$'
-  local re_scp='^([^/@:]+@)?([^/:@]+):(.+)$'
+  local re_url='^(https|ssh)://([^/@[:space:]]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(:([0-9]+))?/([^[:space:]]+)$'
+  local re_scp='^([A-Za-z0-9._-]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):([^[:space:]]+)$'
+  local re_foreign='^[A-Za-z0-9+.-]*::'
+  [[ -z "$u" || "$u" =~ $re_foreign || "$u" =~ [[:space:]] ]] && return 0
   if [[ "$u" =~ $re_url ]]; then
     scheme="${BASH_REMATCH[1]}"; host="${BASH_REMATCH[3]}"
     port="${BASH_REMATCH[5]}"; path="${BASH_REMATCH[6]}"
@@ -91,6 +99,7 @@ norm_url() {
     [[ "$scheme" == ssh && "$port" == 22 ]] && port=""
   elif [[ "$u" != *://* && "$u" =~ $re_scp ]]; then
     host="${BASH_REMATCH[2]}"; path="${BASH_REMATCH[3]}"
+    [[ "$path" == :* ]] && return 0
     path="${path#/}"
   else
     return 0
@@ -115,9 +124,15 @@ if [[ "$first_line" != "$HEADER" ]]; then
   echo "manifest header must be: old_path<TAB>new_name<TAB>url<TAB>pinned_sha" >&2
   exit 2
 fi
-EXPECTED_ROWS=$(tail -n +2 "$MANIFEST" | tr -d '\r' | awk 'length($0)>0' | wc -l | tr -d ' ')
+EXPECTED_ROWS=$(tail -n +2 "$MANIFEST" | tr -d '\r' | awk '$0 !~ /^[[:space:]]*$/' | wc -l | tr -d ' ')
+if [[ "$EXPECTED_ROWS" -eq 0 ]]; then
+  echo "manifest has no data rows" >&2
+  exit 2
+fi
 
 RC=0
+NONNF=0
+RESOLVED=0
 PROCESSED=0
 LEGACY_IN_CONSUMER=()
 CONSUMER=0
@@ -126,14 +141,14 @@ if [[ -n "${HELIXQA_TOOLS_DIR:-}" || "$(basename "$(dirname "$ROOT_DIR")")" == "
 fi
 
 # fail_row <name> <tier> <pin> <head> <state> [path]
-fail_row() { row "$1" "${2:--}" "${3:--}" "${4:--}" "$5" "${6:--}"; RC=3; }
+fail_row() { row "$1" "${2:--}" "${3:--}" "${4:--}" "$5" "${6:--}"; RC=3; [[ "$5" == "NOT-FOUND" ]] || NONNF=1; }
 
 lineno=0
 while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   lineno=$((lineno + 1))
   [[ $lineno -eq 1 ]] && continue
   line="${line%$'\r'}"
-  [[ -z "$line" ]] && continue
+  [[ -z "${line//[[:space:]]/}" ]] && continue
   PROCESSED=$((PROCESSED + 1))
 
   # Split on TAB without collapsing empty fields.
@@ -150,17 +165,19 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   if [[ -n "$extra" || -z "$old_path" || -z "$url" || -z "$sha" || -z "$new_name" \
         || ! "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ \
         || ! "$new_name" =~ ^[a-z0-9_]+$ || "$new_name" != "$snake" \
-        || ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+        || ! "$sha" =~ ^[0-9a-f]{40}$ || -z "$(norm_url "$url")" ]] \
+     || ! helixqa_valid_old_path "$name" "$old_path"; then
     fail_row "${name:-?}" "-" "-" "-" "INVALID-ROW"
     continue
   fi
 
-  tier_line=$(helixqa_resolve_tool_tier "$name" "$ROOT_DIR" 2>/dev/null) || {
+  tier_line=$(helixqa_resolve_tool_tier "$name" "$ROOT_DIR" "$old_path" 2>/dev/null) || {
     fail_row "$name" "-" "$sha" "-" "NOT-FOUND"
     continue
   }
   tier="${tier_line%%$'\t'*}"
   resolved="${tier_line#*$'\t'}"
+  RESOLVED=$((RESOLVED + 1))
   [[ "$tier" == "legacy" && $CONSUMER -eq 1 ]] && LEGACY_IN_CONSUMER+=("$name")
 
   real=$(cd "$resolved" 2>/dev/null && pwd -P) || {
@@ -171,7 +188,7 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   case "$tier" in
     env) expected_parent="${HELIXQA_TOOLS_DIR:-}" ;;
     flat) expected_parent="$(dirname "$ROOT_DIR")" ;;
-    *) expected_parent="$ROOT_DIR/tools/opensource" ;;
+    *) expected_parent="$ROOT_DIR/$(dirname -- "$old_path")" ;;
   esac
 
   # No symlink component anywhere, sits under the expected parent, and is
@@ -191,8 +208,8 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   # ...and THE expected tool. Exactly one origin url, no tool-local
   # insteadOf rewrites, effective url (user-level insteadOf applied) must
   # equal the manifest url.
-  nvals=$(g "$real" config --local --get-all remote.origin.url 2>/dev/null | wc -l | tr -d ' ' || true)
-  rewrites=$(g "$real" config --local --get-regexp '^url\..*\.(insteadof|pushinsteadof)$' 2>/dev/null | wc -l | tr -d ' ' || true)
+  nvals=$(g "$real" config --local --includes --get-all remote.origin.url 2>/dev/null | wc -l | tr -d ' ' || true)
+  rewrites=$(g "$real" config --local --includes --get-regexp '^url\..*\.(insteadof|pushinsteadof)$' 2>/dev/null | wc -l | tr -d ' ' || true)
   origin=""
   if [[ "$nvals" == "1" && "$rewrites" == "0" ]]; then
     origin=$(g "$real" ls-remote --get-url origin 2>/dev/null || true)
@@ -213,6 +230,13 @@ while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   [[ "$head_sha" != "$sha" ]] && state="DRIFT"
   row "$name" "$tier" "$sha" "$head_sha" "$state" "$real"
 done 3< "$MANIFEST"
+
+SKIPPED=0
+if [[ $CONSUMER -eq 0 && $RESOLVED -eq 0 && $NONNF -eq 0 && $PROCESSED -gt 0 ]]; then
+  echo "SKIP: standalone checkout and no manifest tool is checked out (HELIXQA_TOOLS_DIR, sibling submodules/, tools/...)"
+  RC=0
+  SKIPPED=1
+fi
 
 if [[ "$PROCESSED" -ne "$EXPECTED_ROWS" ]]; then
   echo "ERROR: processed $PROCESSED rows but manifest has $EXPECTED_ROWS data rows" >&2

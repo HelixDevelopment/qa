@@ -85,22 +85,46 @@ func ResolveTool(moduleRoot, name string) (string, error) {
 	return p, err
 }
 
-// ResolveToolTier locates a tool and reports the tier that won. A
-// candidate only counts when it is a non-empty directory. Order:
+// ResolveToolTier locates a tool under the default legacy location
+// tools/opensource/<name>; see ResolveToolAt.
+func ResolveToolTier(moduleRoot, name string) (string, Tier, error) {
+	return ResolveToolAt(moduleRoot, name, "tools/opensource/"+name)
+}
+
+// DefaultOldPath is the legacy manifest path of a tool under tools/opensource.
+func DefaultOldPath(name string) string { return "tools/opensource/" + name }
+
+// validOldPath checks a manifest old_path: relative, clean, no "..", and its
+// base name equals the tool name.
+func validOldPath(oldPath, name string) error {
+	if oldPath == "" || filepath.IsAbs(oldPath) || filepath.Clean(oldPath) != oldPath ||
+		oldPath == ".." || strings.HasPrefix(oldPath, "../") || strings.Contains(oldPath, "/../") ||
+		filepath.Base(oldPath) != name {
+		return fmt.Errorf("opensource: invalid old_path %q for tool %q (must be a clean relative path ending in the tool name)", oldPath, name)
+	}
+	return nil
+}
+
+// ResolveToolAt locates a tool and reports the tier that won. A candidate
+// only counts when it is a non-empty directory. Order:
 //  1. $HELIXQA_TOOLS_DIR/<snake_name>, then /<name> (TierEnv). When the
 //     variable is set it is authoritative: a miss is a hard error.
 //  2. <parent>/<snake_name> when moduleRoot sits in a directory named
 //     "submodules" (TierFlat)
-//  3. <moduleRoot>/tools/opensource/<name>, then /<snake_name>
-//     (TierLegacy)
+//  3. <moduleRoot>/<oldPath> EXACTLY (TierLegacy); for tools under
+//     tools/opensource the snake_case spelling is also tried.
 //
-// Invalid names (see ValidName) and the module's own name are rejected.
-func ResolveToolTier(moduleRoot, name string) (string, Tier, error) {
+// Invalid names (see ValidName), invalid oldPath and the module's own name
+// are rejected.
+func ResolveToolAt(moduleRoot, name, oldPath string) (string, Tier, error) {
 	if err := ValidName(name); err != nil {
 		return "", "", err
 	}
 	if ownName(moduleRoot, name) {
 		return "", "", fmt.Errorf("opensource: invalid tool name %q (is the module's own name)", name)
+	}
+	if err := validOldPath(oldPath, name); err != nil {
+		return "", "", err
 	}
 	snake := NewName(name)
 	var tried []string
@@ -123,14 +147,17 @@ func ResolveToolTier(moduleRoot, name string) (string, Tier, error) {
 			return p, TierFlat, nil
 		}
 	}
-	legacy := filepath.Join(moduleRoot, "tools", "opensource")
-	for _, n := range uniq(name, snake) {
-		if p, ok := try(filepath.Join(legacy, n)); ok {
+	cands := []string{filepath.Join(moduleRoot, oldPath)}
+	if filepath.Dir(oldPath) == "tools/opensource" && snake != name {
+		cands = append(cands, filepath.Join(moduleRoot, "tools", "opensource", snake))
+	}
+	for _, c := range cands {
+		if p, ok := try(c); ok {
 			return p, TierLegacy, nil
 		}
 	}
-	return "", "", fmt.Errorf("opensource: tool %q (flat name %q) not found; tried %s; set %s or add it at <root>/submodules/%s or tools/opensource/%s",
-		name, snake, strings.Join(tried, ", "), EnvToolsDir, snake, name)
+	return "", "", fmt.Errorf("opensource: tool %q (flat name %q) not found; tried %s; set %s or add it at <root>/submodules/%s or %s",
+		name, snake, strings.Join(tried, ", "), EnvToolsDir, snake, oldPath)
 }
 
 func uniq(a, b string) []string {
@@ -155,6 +182,18 @@ var (
 	reSHA     = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 	reNewName = regexp.MustCompile(`^[a-z0-9_]+$`)
 )
+
+func (t Tool) oldPath() string {
+	if t.OldPath == "" {
+		return DefaultOldPath(t.Name)
+	}
+	return t.OldPath
+}
+
+// ResolveEntry resolves one manifest tool (honouring its old_path).
+func ResolveEntry(moduleRoot string, t Tool) (string, Tier, error) {
+	return ResolveToolAt(moduleRoot, t.Name, t.oldPath())
+}
 
 // LoadManifest parses and strictly validates the 4-column TSV manifest:
 // exact header, no empty column, 40-hex SHA (lower-cased on load),
@@ -199,6 +238,12 @@ func LoadManifest(path string) ([]Tool, error) {
 		if !reNewName.MatchString(c[1]) || c[1] != NewName(name) {
 			return nil, fmt.Errorf("opensource: manifest %s:%d: new_name %q must be %q", path, n, c[1], NewName(name))
 		}
+		if err := validOldPath(c[0], name); err != nil {
+			return nil, fmt.Errorf("opensource: manifest %s:%d: %w", path, n, err)
+		}
+		if NormURL(c[2]) == "" {
+			return nil, fmt.Errorf("opensource: manifest %s:%d: url %q is not an accepted https/ssh/scp form", path, n, c[2])
+		}
 		if !reSHA.MatchString(c[3]) {
 			return nil, fmt.Errorf("opensource: manifest %s:%d: pinned_sha %q is not 40 hex", path, n, c[3])
 		}
@@ -211,8 +256,8 @@ func LoadManifest(path string) ([]Tool, error) {
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	if n == 0 {
-		return nil, fmt.Errorf("opensource: manifest %s: empty", path)
+	if n == 0 || len(out) == 0 {
+		return nil, fmt.Errorf("opensource: manifest %s: no data rows", path)
 	}
 	return out, nil
 }
@@ -222,7 +267,7 @@ func LoadManifest(path string) ([]Tool, error) {
 func ResolveAll(moduleRoot string, tools []Tool) (found map[string]string, missing []string) {
 	found = map[string]string{}
 	for _, t := range tools {
-		if p, err := ResolveTool(moduleRoot, t.Name); err == nil {
+		if p, _, err := ResolveEntry(moduleRoot, t); err == nil {
 			found[t.Name] = p
 		} else {
 			missing = append(missing, t.Name)
@@ -260,7 +305,7 @@ func ToolsReport(moduleRoot string, tools []Tool) Report {
 	var missing []string
 	var legacy []string
 	for _, t := range tools {
-		_, tier, err := ResolveToolTier(moduleRoot, t.Name)
+		_, tier, err := ResolveEntry(moduleRoot, t)
 		if err != nil {
 			missing = append(missing, t.Name)
 			continue
@@ -288,4 +333,47 @@ func ToolsReport(moduleRoot string, tools []Tool) Report {
 // ToolsVerdict returns only ToolsReport's verdict.
 func ToolsVerdict(moduleRoot string, tools []Tool) string {
 	return ToolsReport(moduleRoot, tools).Verdict
+}
+
+var (
+	reURL     = regexp.MustCompile(`^(https|ssh)://(?:[^/@\s]+@)?([A-Za-z0-9][A-Za-z0-9.-]*)(?::([0-9]+))?/(\S+)$`)
+	reSCP     = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9][A-Za-z0-9.-]*):(\S+)$`)
+	reForeign = regexp.MustCompile(`^[A-Za-z0-9+.-]*::`)
+)
+
+// NormURL normalises a git remote URL to "host[:port]/path", or returns ""
+// when the form is not accepted. Only https://, ssh:// and scp-style
+// ([user@]host:path) are accepted; host is lower-cased, userinfo and the
+// default ports (https 443, ssh 22) are dropped, the path is case-sensitive
+// and loses a trailing "/" and ".git". git://, http://, file://, ext::,
+// fd:: (any "transport::address"), local paths and whitespace are rejected.
+// scripts/sync-opensource-references.sh implements the same rules.
+func NormURL(u string) string {
+	if u == "" || reForeign.MatchString(u) || strings.ContainsAny(u, " \t\r\n") {
+		return ""
+	}
+	var host, port, path string
+	if m := reURL.FindStringSubmatch(u); m != nil {
+		host, port, path = m[2], m[3], m[4]
+		if (m[1] == "https" && port == "443") || (m[1] == "ssh" && port == "22") {
+			port = ""
+		}
+	} else if !strings.Contains(u, "://") {
+		m := reSCP.FindStringSubmatch(u)
+		if m == nil || strings.HasPrefix(m[2], ":") {
+			return ""
+		}
+		host, path = m[1], strings.TrimPrefix(m[2], "/")
+	} else {
+		return ""
+	}
+	path = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(path, "/"), ".git"), "/")
+	if path == "" {
+		return ""
+	}
+	out := strings.ToLower(host)
+	if port != "" {
+		out += ":" + port
+	}
+	return out + "/" + path
 }

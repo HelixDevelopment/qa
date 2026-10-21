@@ -329,6 +329,14 @@ func TestLoadManifest_Validation(t *testing.T) {
 		"duplicate-newname": h + row("tools/opensource/a-b", "a_b", "u", sha) + row("tools/x/a_b", "a_b", "u", sha),
 		"extra-column":      h + "tools/opensource/a\ta\tu\t" + sha + "\textra\n",
 		"empty-file":        "",
+		"header-only":       h,
+		"url-ext":           h + row("tools/opensource/a", "a", "ext::sh -c id", sha),
+		"url-fd":            h + row("tools/opensource/a", "a", "fd::7", sha),
+		"url-git-scheme":    h + row("tools/opensource/a", "a", "git://h.test/o/t.git", sha),
+		"url-http":          h + row("tools/opensource/a", "a", "http://h.test/o/t.git", sha),
+		"url-local-path":    h + row("tools/opensource/a", "a", "/srv/x.git", sha),
+		"old-path-dotdot":   h + row("tools/../x/a", "a", "git@h.test:o/t.git", sha),
+		"old-path-abs":      h + row("/tools/a", "a", "git@h.test:o/t.git", sha),
 	}
 	for name, content := range bad {
 		f := filepath.Join(t.TempDir(), "m.tsv")
@@ -338,8 +346,8 @@ func TestLoadManifest_Validation(t *testing.T) {
 		}
 	}
 	ok := map[string]string{
-		"crlf-no-final-newline": strings.ReplaceAll(h+row("tools/opensource/ui-tars", "ui_tars", "u", strings.ToUpper(sha)), "\n", "\r\n"),
-		"uppercase-sha":         h + row("tools/opensource/a", "a", "u", strings.ToUpper(sha)),
+		"crlf-no-final-newline": strings.ReplaceAll(h+row("tools/opensource/ui-tars", "ui_tars", "git@h.test:o/t.git", strings.ToUpper(sha)), "\n", "\r\n"),
+		"uppercase-sha":         h + row("tools/opensource/a", "a", "git@h.test:o/t.git", strings.ToUpper(sha)),
 	}
 	for name, content := range ok {
 		f := filepath.Join(t.TempDir(), "m.tsv")
@@ -386,5 +394,123 @@ func TestAuditTools_DelimiterBoundedMatch(t *testing.T) {
 	os.WriteFile(lic, []byte("tools/opensource/ui-tars"), 0o644)
 	if res, _ = AuditTools(root, ref, lic, tools); len(res.MissingFromReferences) != 1 {
 		t.Errorf("file-extension / underscore continuation is not the tool: %+v", res)
+	}
+}
+
+func TestLoadManifest_WhitespaceOnlyLinesIgnored(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	c := "old_path\tnew_name\turl\tpinned_sha\n  \n\t\t\ntools/opensource/a\ta\tgit@h.test:o/t.git\t" + sha + "\n \t \n"
+	f := filepath.Join(t.TempDir(), "m.tsv")
+	os.WriteFile(f, []byte(c), 0o644)
+	tools, err := LoadManifest(f)
+	if err != nil || len(tools) != 1 {
+		t.Fatalf("%v %+v", err, tools)
+	}
+}
+
+// NormURL must agree with the shell norm_url (same accepted forms).
+func TestNormURL(t *testing.T) {
+	eq := [][2]string{
+		{"https://GitHub.com/Org/Tool.git", "git@github.com:Org/Tool.git"},
+		{"ssh://git@github.com:22/Org/tool", "https://github.com/Org/tool.git/"},
+		{"github.com:Org/tool.git", "git@github.com:Org/tool.git"},
+		{"ssh://git@host:2222/o/t.git", "ssh://host:2222/o/t"},
+		{"https://host:443/o/t", "https://host/o/t"},
+	}
+	for _, p := range eq {
+		if a, b := NormURL(p[0]), NormURL(p[1]); a == "" || a != b {
+			t.Errorf("%q vs %q: %q %q", p[0], p[1], a, b)
+		}
+	}
+	ne := [][2]string{
+		{"https://github.com/Org/Tool", "https://github.com/org/tool"},
+		{"ssh://git@host:2222/o/t", "ssh://git@host:2223/o/t"},
+		{"ssh://git@host:2222/o/t", "ssh://git@host/o/t"},
+		{"https://host:8443/o/t", "https://host/o/t"},
+	}
+	for _, p := range ne {
+		if NormURL(p[0]) == NormURL(p[1]) {
+			t.Errorf("%q must differ from %q", p[0], p[1])
+		}
+	}
+	for _, bad := range []string{"", "git://h/o/t", "http://h/o/t", "file:///x", "/srv/x.git", "ext::sh -c id", "fd::7", "ext::ssh://x/y", "foo:::bar", "a b:c/d", "host:", "-oProxyCommand=x:path", ":x", "h:/"} {
+		if got := NormURL(bad); got != "" {
+			t.Errorf("%q must be rejected, got %q", bad, got)
+		}
+	}
+}
+
+func TestResolveToolAt_OutsideToolsOpensource(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	root := filepath.Join(b, "submodules", "helix_qa")
+	want := filepath.Join(root, "tools", "test-apps", "rest-demo")
+	fill(t, want)
+	p, tier, err := ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo")
+	if err != nil || p != want || tier != TierLegacy {
+		t.Fatalf("%q %q %v", p, tier, err)
+	}
+	// plain name API cannot see it (not under tools/opensource)
+	if _, err := ResolveTool(root, "rest-demo"); err == nil {
+		t.Error("ResolveTool must only know tools/opensource")
+	}
+	// flat still wins
+	flat := filepath.Join(b, "submodules", "rest_demo")
+	fill(t, flat)
+	if p, tier, _ = ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo"); p != flat || tier != TierFlat {
+		t.Errorf("flat must win: %q %q", p, tier)
+	}
+	for _, bad := range []string{"../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other", "", "tools//..//rest-demo"} {
+		if _, _, err := ResolveToolAt(root, "rest-demo", bad); err == nil {
+			t.Errorf("old_path %q must be rejected", bad)
+		}
+	}
+}
+
+func TestAuditTools_NonOpensourceRowResolvedButNotDocKeyed(t *testing.T) {
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	root := filepath.Join(b, "submodules", "helix_qa")
+	mk(t, root)
+	ref := filepath.Join(b, "ref.md")
+	lic := filepath.Join(b, "lic.md")
+	os.WriteFile(ref, []byte("x"), 0o644)
+	os.WriteFile(lic, []byte("x"), 0o644)
+	tools := []Tool{{Name: "rest-demo", NewName: "rest_demo", OldPath: "tools/test-apps/rest-demo"}}
+	res, _ := AuditTools(root, ref, lic, tools)
+	if len(res.MissingTools) != 1 {
+		t.Fatalf("absent test app must be a missing tool: %+v", res)
+	}
+	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
+	res, _ = AuditTools(root, ref, lic, tools)
+	if !res.OK() || len(res.Submodules) != 1 {
+		t.Fatalf("test app resolves; docs are keyed tools/opensource/<name> only so no doc entry is required: %+v", res)
+	}
+}
+
+func TestShellResolverParity_OldPath(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available SKIP-OK: #bash-optional")
+	}
+	script, _ := filepath.Abs("../../scripts/resolve_tool.sh")
+	t.Setenv("HELIXQA_TOOLS_DIR", "")
+	b := t.TempDir()
+	root := filepath.Join(b, "submodules", "helix_qa")
+	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
+	for _, old := range []string{"tools/test-apps/rest-demo", "../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other"} {
+		gp, gt, gerr := ResolveToolAt(root, "rest-demo", old)
+		out, err := exec.Command("bash", script, "--tier", "rest-demo", root, old).Output()
+		line := strings.TrimSpace(string(out))
+		want := string(gt) + "\t" + gp
+		if (gerr == nil) != (err == nil) || (gerr == nil && line != want) {
+			t.Errorf("old=%q go=(%q,%q,%v) shell=(%q,%v)", old, gp, gt, gerr, line, err)
+		}
+	}
+	// after flat appears both prefer flat
+	fill(t, filepath.Join(b, "submodules", "rest_demo"))
+	gp, _, _ := ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo")
+	out, _ := exec.Command("bash", script, "rest-demo", root, "tools/test-apps/rest-demo").Output()
+	if strings.TrimSpace(string(out)) != gp {
+		t.Errorf("flat parity: go=%q shell=%q", gp, out)
 	}
 }

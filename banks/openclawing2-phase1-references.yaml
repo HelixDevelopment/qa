@@ -46,7 +46,7 @@ test_cases:
     expected_result: "AGPL code remains reference-only; HelixQA's Apache-2.0 posture preserved"
 
   - id: OC-REF-003
-    name: "Sync script reports pinned-vs-remote diff without mutating state"
+    name: "Sync script reports manifest pin vs checkout (read-only, no network)"
     category: functional
     priority: high
     platforms: [api]
@@ -58,7 +58,7 @@ test_cases:
       - name: "Verify the script is read-only and rejects the removed --pull / --fetch-only flags"
         action: "scripts/sync-opensource-references.sh --pull"
         expected: "Exit code 2 (unknown argument); no repository is modified"
-    expected_result: "Operators can dry-run the sync safely before committing a SHA bump"
+    expected_result: "Operators can see pin-vs-checkout drift read-only before committing a SHA bump"
 
   - id: OC-REF-004
     name: "Pinned SHAs in opensource-references.md match the on-disk submodule state"

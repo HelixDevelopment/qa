@@ -107,11 +107,17 @@ func AuditTools(moduleRoot, referencesDoc, licencesDoc string, tools []Tool) (Au
 		return res, fmt.Errorf("opensource audit: read %s: %w", licencesDoc, err)
 	}
 	for _, t := range tools {
-		if _, err := ResolveTool(moduleRoot, t.Name); err != nil {
+		if _, _, err := ResolveEntry(moduleRoot, t); err != nil {
 			res.MissingTools = append(res.MissingTools, t.Name)
 			continue
 		}
 		res.Submodules = append(res.Submodules, t.Name)
+		// Docs are keyed "tools/opensource/<name>"; rows outside
+		// tools/opensource (e.g. the tools/test-apps test app) must resolve
+		// but have no doc key to check.
+		if filepath.Dir(t.oldPath()) != "tools/opensource" {
+			continue
+		}
 		if !DocMentions(string(refData), t.Name) {
 			res.MissingFromReferences = append(res.MissingFromReferences, t.Name)
 		}

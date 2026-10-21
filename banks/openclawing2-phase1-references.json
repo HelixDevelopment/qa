@@ -68,7 +68,7 @@
     },
     {
       "id": "OC-REF-003",
-      "name": "Sync script reports pinned-vs-remote diff without mutating state",
+      "name": "Sync script reports manifest pin vs checkout (read-only, no network)",
       "category": "functional",
       "priority": "high",
       "platforms": [
@@ -91,7 +91,7 @@
           "expected": "Exit code 2 (unknown argument); no repository is modified"
         }
       ],
-      "expected_result": "Operators can dry-run the sync safely before committing a SHA bump"
+      "expected_result": "Operators can see pin-vs-checkout drift read-only before committing a SHA bump"
     },
     {
       "id": "OC-REF-004",

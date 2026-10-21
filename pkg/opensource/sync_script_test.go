@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -33,9 +34,8 @@ func cleanGitEnv() []string {
 	return env
 }
 
-// fakeURL is the https URL a fixture advertises as origin; git is told
-// (insteadOf) to fetch from the local bare repo, so the script sees a
-// normal https URL while no network is touched.
+// fakeURL is the https URL a fixture advertises as origin. The script is
+// read-only and never contacts a remote, so the URL need not be reachable.
 func fakeURL(bare string) string { return "https://example.test" + bare }
 
 // useOrigin points origin at the fake https URL (no insteadOf: the script
@@ -628,8 +628,183 @@ func TestSyncScript_URLNormalisation(t *testing.T) {
 		git(t, d, "remote", "set-url", "origin", c.origin)
 		installSync(t, hq, mheader+mrow("tool", c.manifest, head(t, d)))
 		out, _ := runSync(t, hq, nil)
-		if got := strings.Contains(out, "WRONG-REPO"); got != c.wrong {
+		if got := strings.Contains(out, "WRONG-REPO") || strings.Contains(out, "INVALID-ROW"); got != c.wrong {
 			t.Errorf("#%d origin=%q manifest=%q wrong=%v want %v\n%s", i, c.origin, c.manifest, got, c.wrong, out)
+		}
+	}
+}
+
+func TestSyncScript_NonOpensourceRowResolvesAndIsOk(t *testing.T) {
+	needGit(t)
+	proj := t.TempDir()
+	hq := filepath.Join(proj, "submodules", "helix_qa")
+	bare := filepath.Join(t.TempDir(), "r.git")
+	tool := filepath.Join(hq, "tools", "test-apps", "rest-demo")
+	repoWithOrigin(t, tool, bare)
+	installSync(t, hq, mheader+"tools/test-apps/rest-demo\trest_demo\t"+fakeURL(bare)+"\t"+head(t, tool)+"\n")
+	out, code := runSync(t, hq, nil)
+	r := rowFor(out, "rest-demo")
+	if code != 0 || !strings.Contains(r, "legacy") || !strings.Contains(r, " ok") || strings.Contains(out, "NOT-FOUND") {
+		t.Errorf("rest-demo outside tools/opensource must be ok (exit %d)\n%s", code, out)
+	}
+	// a symlinked tools/test-apps is still rejected
+	os.RemoveAll(filepath.Join(hq, "tools"))
+	outside := filepath.Join(t.TempDir(), "test-apps")
+	cloneTool(t, bare, filepath.Join(outside, "rest-demo"))
+	mk(t, filepath.Join(hq, "tools"))
+	os.Symlink(outside, filepath.Join(hq, "tools", "test-apps"))
+	out, code = runSync(t, hq, nil)
+	if !strings.Contains(out, "WRONG-REPO") || code != 3 {
+		t.Errorf("symlinked parent must be WRONG-REPO exit 3, got %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_StandaloneNoToolsSkipsConsumerFails(t *testing.T) {
+	needGit(t)
+	// standalone: not in a submodules dir, nothing resolves -> SKIP, exit 0
+	sa := filepath.Join(t.TempDir(), "standalone", "helix_qa")
+	installSync(t, sa, mheader+mrow("scrcpy", "git@h.test:o/s.git", pin0))
+	out, code := runSync(t, sa, nil)
+	if code != 0 || !strings.Contains(out, "SKIP") {
+		t.Errorf("standalone with no tools: want SKIP exit 0, got %d\n%s", code, out)
+	}
+	// standalone with one resolved and one missing: partial -> exit 3
+	bare := filepath.Join(t.TempDir(), "t.git")
+	tool := filepath.Join(sa, "tools", "opensource", "scrcpy")
+	repoWithOrigin(t, tool, bare)
+	installSync(t, sa, mheader+mrow("scrcpy", fakeURL(bare), head(t, tool))+mrow("ghost", "git@h.test:o/g.git", pin0))
+	out, code = runSync(t, sa, nil)
+	if code != 3 || strings.Contains(out, "SKIP") {
+		t.Errorf("standalone partial: want exit 3 no SKIP, got %d\n%s", code, out)
+	}
+	// a bad row in a standalone checkout never hides behind SKIP
+	sb := filepath.Join(t.TempDir(), "standalone", "helix_qa")
+	installSync(t, sb, mheader+mrow("scrcpy", "git@h.test:o/s.git", "abc"))
+	if _, code = runSync(t, sb, nil); code != 3 {
+		t.Errorf("INVALID-ROW must still fail standalone, got %d", code)
+	}
+	// consumer layout with nothing resolved: exit 3
+	proj := t.TempDir()
+	hq := filepath.Join(proj, "submodules", "helix_qa")
+	installSync(t, hq, mheader+mrow("scrcpy", "git@h.test:o/s.git", pin0))
+	out, code = runSync(t, hq, nil)
+	if code != 3 || strings.Contains(out, "SKIP") {
+		t.Errorf("consumer layout with no tools: want exit 3, got %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_HeaderOnlyManifestExits2(t *testing.T) {
+	f := newToolFx(t)
+	installSync(t, f.hq, mheader)
+	if out, code := runSync(t, f.hq, nil); code != 2 {
+		t.Errorf("header-only: want exit 2, got %d\n%s", code, out)
+	}
+	installSync(t, f.hq, mheader+"  \n\t\n")
+	if out, code := runSync(t, f.hq, nil); code != 2 {
+		t.Errorf("header + whitespace-only: want exit 2, got %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_WhitespaceOnlyLinesNotCounted(t *testing.T) {
+	f := newToolFx(t)
+	installSync(t, f.hq, mheader+"   \n\t\t\n"+mrow("allure2", fakeURL(f.bare), head(t, f.tool))+" \t \n")
+	out, code := runSync(t, f.hq, nil)
+	if code != 0 || !strings.Contains(out, "rows=1 processed=1") {
+		t.Errorf("whitespace-only lines are blank: got %d\n%s", code, out)
+	}
+}
+
+func TestSyncScript_ExtAndFdTransportsRejectedEvenWhenEqual(t *testing.T) {
+	needGit(t)
+	for _, u := range []string{"ext::sh -c 'touch /tmp/x'", "fd::7", "ext::ssh://h/o/t", "foo:::bar", "-oProxyCommand=x:p"} {
+		f := newToolFx(t)
+		git(t, f.tool, "config", "remote.origin.url", u)
+		installSync(t, f.hq, mheader+mrow("allure2", u, head(t, f.tool)))
+		out, code := runSync(t, f.hq, nil)
+		if code != 3 || !(strings.Contains(out, "WRONG-REPO") || strings.Contains(out, "INVALID-ROW")) {
+			t.Errorf("%q: want rejected exit 3, got %d\n%s", u, code, out)
+		}
+	}
+}
+
+func TestSyncScript_IncludeInjectedConfigIsWrongRepo(t *testing.T) {
+	cases := map[string]string{
+		"include-insteadOf":     "[url \"https://example.test/evil/\"]\n\tinsteadOf = https://example.test/\n",
+		"include-second-origin": "[remote \"origin\"]\n\turl = https://example.test/o/other\n",
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newToolFx(t)
+			f.install(t, head(t, f.tool))
+			inc := filepath.Join(f.tool, ".git", "extra.cfg")
+			os.WriteFile(inc, []byte(extra), 0o644)
+			git(t, f.tool, "config", "include.path", inc)
+			before := snap(t, f.tool)
+			out, code := runSync(t, f.hq, nil)
+			if !strings.Contains(out, "WRONG-REPO") || code != 3 {
+				t.Errorf("want WRONG-REPO exit 3, got %d\n%s", code, out)
+			}
+			sameSnap(t, name, before, snap(t, f.tool))
+		})
+	}
+}
+
+func TestSyncScript_AllGitEnvScrubbedIncludingTrace(t *testing.T) {
+	f := newToolFx(t)
+	f.install(t, head(t, f.tool))
+	dir := filepath.Join(f.tool, ".git")
+	env := []string{
+		"GIT_TRACE=" + filepath.Join(dir, "t1"),
+		"GIT_TRACE2=" + filepath.Join(dir, "t2"),
+		"GIT_TRACE2_EVENT=" + filepath.Join(dir, "t3"),
+		"GIT_TRACE_PACKET=" + filepath.Join(dir, "t4"),
+		"GIT_TRACE_SETUP=" + filepath.Join(dir, "t5"),
+	}
+	out, code := runSync(t, f.hq, env)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	for _, n := range []string{"t1", "t2", "t3", "t4", "t5"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
+			t.Errorf("GIT_TRACE* file %s written: not scrubbed", n)
+		}
+	}
+}
+
+// N1: the script may only run these git subcommands.
+func TestSyncScript_AllowedGitSubcommandsPinned(t *testing.T) {
+	b, err := os.ReadFile("../../scripts/sync-opensource-references.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	allowed := map[string]bool{"rev-parse": true, "config": true, "ls-remote": true}
+	re := regexp.MustCompile(`\bg "\$[a-z_]+"\s+([a-z-]+)(\s+[^\n|)]*)?`)
+	m := re.FindAllStringSubmatch(src, -1)
+	if len(m) < 4 {
+		t.Fatalf("expected several g calls, found %d", len(m))
+	}
+	for _, x := range m {
+		if !allowed[x[1]] {
+			t.Errorf("disallowed git subcommand %q in %q", x[1], x[0])
+		}
+		if x[1] == "ls-remote" && !strings.Contains(x[0], "--get-url") {
+			t.Errorf("ls-remote must only be used with --get-url: %q", x[0])
+		}
+	}
+	// no direct git invocation other than inside the g() wrapper
+	for i, l := range strings.Split(src, "\n") {
+		t2 := strings.TrimSpace(l)
+		if strings.HasPrefix(t2, "#") || strings.HasPrefix(t2, "g()") || strings.HasPrefix(t2, "echo ") || strings.HasPrefix(t2, "printf ") {
+			continue
+		}
+		if regexp.MustCompile(`(^|[^A-Za-z_-])git (-C|fetch|pull|checkout|merge|status|push|clone|reset|gc|remote|submodule)`).MatchString(l) {
+			t.Errorf("line %d invokes git directly: %q", i+1, l)
+		}
+	}
+	for _, bad := range []string{"fetch", "pull", "checkout", "merge", "status", "clone", "reset"} {
+		if regexp.MustCompile(`\bg "[^"]*"\s+` + bad + `\b`).MatchString(src) {
+			t.Errorf("forbidden subcommand %s", bad)
 		}
 	}
 }

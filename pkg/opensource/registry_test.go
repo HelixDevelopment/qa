@@ -20,13 +20,9 @@ func loadToolsOrSkip(t *testing.T, repoRoot string) []Tool {
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
-	var oss []Tool
-	for _, tl := range tools {
-		if strings.HasPrefix(tl.OldPath, "tools/opensource/") {
-			oss = append(oss, tl)
-		}
-	}
-	tools = oss
+	// All manifest rows are resolved (including tools/test-apps/rest-demo) so
+	// the Go policy and scripts/sync-opensource-references.sh agree; only the
+	// doc-key check is limited to tools/opensource rows (see AuditTools).
 	rep := ToolsReport(repoRoot, tools)
 	for _, w := range rep.Warnings {
 		t.Log(w)
