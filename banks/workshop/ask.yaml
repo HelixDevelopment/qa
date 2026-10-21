@@ -178,7 +178,7 @@ metadata:
 
 test_cases:
   - id: WK-ASK-001
-    name: "GET /api/ask/status (authenticated) reflects the live ollama-provider-enabled state"
+    name: "GET /api/ask/status (authenticated) reflects the DECIDED state: answering OFF, no provider, with a plain-English reason"
     category: functional
     priority: critical
     platforms: [web]
@@ -187,14 +187,26 @@ test_cases:
         action: "http: GET /api/ask/status"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"provider\": \"ollama\","
-        expected: "200 OK, real capability fields reflecting the live ollama-provider deployment (enabled=true, suspended=false, calibrated=true, verifier_kind=lexical, question_verifier_kind=question-focus+llm, estimated_seconds measured and non-null, no reason object at all since the provider is healthy -- all confirmed live and individually pinned by the steps below). UPDATED 2026-10-01: the operator re-enabled answering (WORKSHOP_ANSWER_PROVIDER=ollama, WORKSHOP_QUESTION_VERIFY=llm, workshop/platform/.env, dated 2026-09-30) after it had been off since 2026-09-25; the server was rebuilt and restarted and this bank case was rewritten against the live, re-confirmed response rather than left asserting the superseded no_provider state. See WK-DIAG-004 in diagnostics-status.yaml for the matching ollama.configured/reachable update, and WK-ASK-003/WK-ASK-006 below for the matching POST /api/ask updates."
-      - name: "enabled is true (Provider.Health() genuinely succeeds with ollama configured and reachable)"
+        expect_body_contains: "\"provider\": \"none\","
+        expected: "200 OK with provider=none. This is the operator decision 2026-09-25: answering OFF (measured: it fabricated 4.6% of unanswerable questions), restated 2026-10-08; platform/.env sets WORKSHOP_ANSWER_PROVIDER=none and WORKSHOP_QUESTION_VERIFY=none. If an operator turns answering ON this case MUST fail and be rewritten together with WK-ASK-003 and WK-ASK-006 -- it is a pin of the decided state, not a statement that OFF is permanent."
+      - name: "enabled is false (no provider is configured, so Provider.Health() cannot succeed)"
         action: "http: GET /api/ask/status"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"enabled\": true,"
-        expected: "UPDATED 2026-10-01: enabled reports provider health, not suspension -- confirmed true live against the re-enabled ollama provider (was false while provider=none)"
+        expect_body_contains: "\"enabled\": false,"
+        expected: "enabled=false while provider=none (positive control: the case fails if a provider is wired in)"
+      - name: "reason names the real closed-vocabulary code"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "\"code\": \"no_provider\","
+        expected: "reason.code=no_provider, the same code the 503 on POST /api/ask carries"
+      - name: "the reason message is plain English and says browsing and search are unaffected"
+        action: "http: GET /api/ask/status"
+        auth: "admin"
+        expect_status: 200
+        expect_body_contains: "Browsing and search are unaffected."
+        expected: "the human-readable message a reader sees; no raw code alone"
       - name: "suspended is false (no ingest lock held)"
         action: "http: GET /api/ask/status"
         auth: "admin"
@@ -213,27 +225,21 @@ test_cases:
         expect_status: 200
         expect_body_contains: "\"verifier_kind\": \"lexical\""
         expected: "the lexical fallback verifier is wired (no entailment model configured in this deployment)"
-      - name: "question_verifier_kind is the real, live L5 answer-against-question verifier name"
+      - name: "question_verifier_kind is null: no answer-against-question layer runs when answering is OFF"
         action: "http: GET /api/ask/status"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"question_verifier_kind\": \"question-focus+llm\","
-        expected: "UPDATED 2026-10-01: L5 is now genuinely wired against the re-enabled ollama provider (WORKSHOP_QUESTION_VERIFY=llm) -- confirmed live, was null while provider=none"
-      - name: "estimated_seconds is present and non-null now that real answers have been measured in this process (value itself not pinned -- it is a live median that moves with traffic, same pattern as the pid/chapters fields in this bank directory's own diagnostics-status.yaml)"
+        expect_body_contains: "\"question_verifier_kind\": null,"
+        expected: "L5 is not wired while WORKSHOP_QUESTION_VERIFY=none -- the status says so instead of naming a verifier that is not running"
+      - name: "model is null, estimated_seconds is null: nothing is generating"
         action: "http: GET /api/ask/status"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"estimated_seconds\":"
-        expected: "UPDATED 2026-10-01: confirmed live as a real measured number (8 at verification time) against the re-enabled ollama provider -- was null while provider=none; key presence is pinned here, not the exact value, since it is a live median"
-      - name: "model names the real configured generative model, confirming the provider is genuinely live, not merely marked enabled"
-        action: "http: GET /api/ask/status"
-        auth: "admin"
-        expect_status: 200
-        expect_body_contains: "\"model\": \"qwen2.5:3b-instruct-q4_K_M\","
-        expected: "UPDATED 2026-10-01: the live deployment's real generative model, confirmed byte-for-byte. The `reason` object this step used to pin (reason.code=no_provider) is no longer present at all in the response body once the provider is healthy and not suspended (confirmed live: the key is genuinely absent, not null) -- see WK-ASK-003 for the real decline-path reason code this deployment now produces instead"
+        expect_body_contains: "\"model\": null,"
+        expected: "no generative model is configured, confirmed live; the key is present with a null value, not absent"
     tags: [ask, status, functional, regression]
     estimated_duration: "5s"
-    expected_result: "UPDATED 2026-10-01: the real capability surface, confirmed live, reflects this deployment's actual ollama-provider-enabled state field-by-field -- no field guessed or assumed from the design doc's paraphrase. Was asserted against the no_provider state before the 2026-09-30 operator re-enable; see individual step notes for the exact before/after per field."
+    expected_result: "The capability surface reflects the DECIDED state field by field (answering OFF, no provider, plain-English reason). Rewritten 2026-10-08 from the 2026-10-01 answering-ON assertions, which encoded a state the operator decided against on 2026-09-25 (platform/.env had re-enabled it on 2026-09-30 and was set back to none on 2026-10-08 to match the 2026-09-25 decision). Every step still asserts a real field and fails if a provider is wired in."
 
   - id: WK-ASK-002
     name: "GET /api/ask/status unauthenticated is a genuine 401"
@@ -251,30 +257,38 @@ test_cases:
     expected_result: "No session means no answering status, not a leaked capability surface"
 
   - id: WK-ASK-003
-    name: "A well-formed, ungrounded question genuinely returns 200 declined{unsupported}, synchronously"
+    name: "A well-formed question with answering OFF is a determined 503 unavailable{no_provider}, never a silent decline or a fake answer"
     category: functional
     priority: critical
     platforms: [web]
     steps:
-      - name: "Ask a real, well-formed, in-limit question that the fixture corpus does not actually support, synchronously (?wait=1) -- reuses WK-ASK-001's already-cached admin-mode session -- 0 additional real logins"
+      - name: "Ask a real, well-formed, in-limit question synchronously (?wait=1) -- reuses WK-ASK-001's already-cached admin-mode session -- 0 additional real logins"
         action: "http: POST /api/ask?wait=1"
         auth: "admin"
         body:
           question: "what does the fixture say about spoke tension?"
-        expect_status: 200
-        expect_body_contains: "\"status\": \"declined\""
-        expected: "UPDATED 2026-10-01: the operator re-enabled answering (WORKSHOP_ANSWER_PROVIDER=ollama, WORKSHOP_QUESTION_VERIFY=llm) on 2026-09-30, the server was rebuilt and restarted, and this was confirmed live with a genuinely generated answer elsewhere. With a real provider now configured, Handler.ask no longer short-circuits at Provider.Health() (pkg/answer/http.go line 125), so this question is genuinely routed through retrieval+verification. This exact question was already chosen (pre-dating the re-enable) because the fixture corpus has no real spoke-tension content -- confirmed live, three separate runs this session (one via the async job/poll path, two more via ?wait=1), all three returning the identical declined/unsupported outcome in well under a second each time, so this is a deterministic, legitimately-declined question, not a flaky one. ?wait=1 blocks for the real synchronous result instead of returning the 202 job-accepted envelope (see WK-ASK-006 for that shape) -- well inside the 30s HTTP client timeout this harness uses."
-      - name: "reason is the real closed-vocabulary decline reason this question genuinely produces"
+        expect_status: 503
+        expect_body_contains: "\"status\": \"unavailable\""
+        expected: "503 with status=unavailable: with no provider the handler short-circuits at Provider.Health() (pkg/answer/http.go) before retrieval, so the reader gets a determined 'answering is off' and never a made-up decline or answer. The operator decision 2026-09-25: answering OFF (measured: it fabricated 4.6% of unanswerable questions), restated 2026-10-08; platform/.env sets WORKSHOP_ANSWER_PROVIDER=none and WORKSHOP_QUESTION_VERIFY=none."
+      - name: "reason is the real closed-vocabulary code and a plain-English message"
         action: "http: POST /api/ask?wait=1"
         auth: "admin"
         body:
           question: "what does the fixture say about spoke tension?"
-        expect_status: 200
-        expect_body_contains: "\"reason\": \"unsupported\""
-        expected: "UPDATED 2026-10-01: status is genuinely 'declined' with reason 'unsupported' (one of the six-member DeclineReasons() closed vocabulary, pkg/answer/outcome.go) -- the retrieved passages were examined and genuinely do not contain an answer to this question, confirmed live by the response's own message and retrieval-score fields. Never 'answered' (this question has no real support to answer from) and never the old 503 'unavailable' shape (that required provider=none, no longer this deployment's state)."
-    tags: [ask, functional, declined, regression]
-    estimated_duration: "10s"
-    expected_result: "UPDATED 2026-10-01: the real, live declined{unsupported} response shape is exactly as documented -- confirmed byte-for-byte against the rebuilt, re-enabled running server, not assumed from the design doc. Supersedes the pre-2026-09-30 503 unavailable{no_provider} assertion this case used to carry while answering was off."
+        expect_status: 503
+        expect_body_contains: "\"code\": \"no_provider\","
+        expected: "reason.code=no_provider"
+      - name: "the message tells the reader that browsing and search still work"
+        action: "http: POST /api/ask?wait=1"
+        auth: "admin"
+        body:
+          question: "what does the fixture say about spoke tension?"
+        expect_status: 503
+        expect_body_contains: "Browsing and search are unaffected."
+        expected: "plain-English message, not a bare status number"
+    tags: [ask, functional, unavailable, regression]
+    estimated_duration: "5s"
+    expected_result: "Answering OFF is reported as a determined 503 unavailable{no_provider} with a plain-English reason. Rewritten 2026-10-08 from the declined{unsupported} 200 assertions of 2026-10-01 (answering ON), which the operator decided against on 2026-09-25. If answering is turned back ON this case fails and the declined{unsupported} form (200, reason unsupported, one of the DeclineReasons() closed vocabulary) is the one to restore."
 
   - id: WK-ASK-004
     name: "An empty question returns 400 empty_query, distinct from the 503 no-provider path"
@@ -313,7 +327,7 @@ test_cases:
     expected_result: "An oversized question is rejected on its own terms, with the real, current MaxQuestionBytes limit, never silently truncated or conflated with provider unavailability"
 
   - id: WK-ASK-006
-    name: "GET /api/search and POST /api/ask are genuinely decoupled routes -- both independently reachable and real (FR-025)"
+    name: "GET /api/search and POST /api/ask are genuinely decoupled routes -- search serves while answering is OFF (FR-025)"
     category: functional
     priority: critical
     platforms: [web]
@@ -323,18 +337,18 @@ test_cases:
         auth: "admin"
         expect_status: 200
         expect_body_contains: "\"status\": \"ok\","
-        expected: "200, status=ok, real non-empty lexical results -- confirmed live. FR-025 is enforced at compile time by pkg/answer/http.go's Mount registering only /api/ask* while internal/api.Register registers /api/search with zero imports of pkg/answer (confirmed by reading Mount's own doc comment, lines 13-26) -- so neither route can take the other down with it, in either direction."
-      - name: "Ask genuinely accepts and starts a real async job in the very same window"
+        expected: "200, status=ok, real non-empty lexical results -- confirmed live. FR-025 is enforced at compile time by pkg/answer/http.go's Mount registering only /api/ask* while internal/api.Register registers /api/search with zero imports of pkg/answer, so neither route can take the other down."
+      - name: "Ask answers a determined 503 unavailable{no_provider} in the very same window"
         action: "http: POST /api/ask"
         auth: "admin"
         body:
           question: "what does the fixture say about spoke tension?"
-        expect_status: 202
-        expect_body_contains: "\"job_id\":"
-        expected: "UPDATED 2026-10-01: the operator re-enabled answering (WORKSHOP_ANSWER_PROVIDER=ollama) on 2026-09-30; this deployment no longer answers 503 unavailable for a well-formed question (see WK-ASK-003 for the former no_provider shape, now superseded, and the real declined{unsupported} shape this exact question genuinely produces on completion). This case now demonstrates the SAME FR-025 decoupling property from the other direction: search (the step above) and a genuinely accepted answering job both succeed independently, in the same window, neither blocking nor degrading the other -- confirmed live. The former mirror of G-HTTP-5's purpose-built closed-port-ollama S1+S2 pair (answering genuinely DOWN while search stays up) is still covered by that gate itself (platform/gates/verify-g-http-5-search-survives-answering-down.sh), which stands up its own throwaway server and is unaffected by this live deployment's provider setting; this live bank case can only honestly exercise the state the shared deployment is actually in."
+        expect_status: 503
+        expect_body_contains: "\"code\": \"no_provider\","
+        expected: "the answering leg is OFF (the operator decision 2026-09-25: answering OFF (measured: it fabricated 4.6% of unanswerable questions), restated 2026-10-08; platform/.env sets WORKSHOP_ANSWER_PROVIDER=none and WORKSHOP_QUESTION_VERIFY=none) while the search leg above is up: the decoupling property demonstrated from the direction G-HTTP-5 also covers (platform/gates/verify-g-http-5-search-survives-answering-down.sh stands up its own throwaway server for the closed-port variant)"
     tags: [ask, search, functional, regression, fr-025]
     estimated_duration: "5s"
-    expected_result: "UPDATED 2026-10-01: search and answering are genuinely decoupled routes -- confirmed live, not merely by reading the import graph. Supersedes the pre-2026-09-30 assertion that answering was down (503) while search was up; the decoupling property itself is now demonstrated with both legs genuinely up and independent."
+    expected_result: "Search and answering are decoupled: search is up (200 ok) while answering is OFF (503 no_provider), in the same window. Rewritten 2026-10-08 from the 2026-10-01 both-legs-up form (async job accepted, 202), which assumed answering ON."
 
   - id: WK-ASK-007
     name: "Unauthenticated POST /api/ask is a genuine 401"

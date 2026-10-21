@@ -135,6 +135,8 @@ func NewAdaptiveFromConfigs(
 			providers = append(providers, NewOllamaProvider(cfg))
 		case "astica":
 			providers = append(providers, NewAsticaProvider(cfg))
+		case ProviderVisionEndpoint:
+			providers = append(providers, NewOpenAIProvider(cfg))
 		case ProviderLlmctl:
 			providers = append(providers, NewLlmctlProvider(cfg))
 		default:

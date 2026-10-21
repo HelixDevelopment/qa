@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"digital.vasic.challenges/pkg/bank"
@@ -46,6 +47,28 @@ type Result struct {
 
 	// Duration is the total run time.
 	Duration time.Duration `json:"duration"`
+}
+
+// ExitCode is the process exit status for a bank run (`helixqa run`), on
+// the same three-valued contract as `helixqa autonomous`:
+//   - 1: any challenge failed (failed / error / timed out / stuck), or a
+//     crash or ANR was detected — a finding outranks could-not-determine;
+//   - 2: nothing failed, but not every challenge passed: nothing executed,
+//     or some/all challenges were SKIPPED (e.g. a case whose vision-gated
+//     step the bank runner cannot execute) — not a pass, not a failure;
+//   - 0: every challenge executed and passed, no crash, no ANR.
+func (r *Result) ExitCode() int {
+	q := r.Report
+	if q == nil {
+		return 2
+	}
+	if q.FailedChallenges > 0 || q.TotalCrashes > 0 || q.TotalANRs > 0 {
+		return 1
+	}
+	if q.TotalChallenges == 0 || q.PassedChallenges < q.TotalChallenges {
+		return 2
+	}
+	return 0
 }
 
 // Orchestrator is the main QA execution engine.
@@ -145,9 +168,20 @@ func (o *Orchestrator) Run(
 		return nil, fmt.Errorf("load banks: %w", err)
 	}
 
-	definitions := o.bank.All()
-	o.log("Loaded %d challenge definitions from %d sources",
-		len(definitions), len(o.bank.Sources()))
+	// The bank is a map: without an explicit order every run would execute
+	// the challenges in a different random order (and a timeout would cut
+	// a different one). Run them in dependency order (declared
+	// `dependencies:` first), ID as the tie-break — the same order the
+	// autonomous structured phase uses. Cases in a dependency cycle are not
+	// run; they are reported (SKIPPED, reason "dependency cycle").
+	definitions, cyclic := orderDefinitions(o.bank.All())
+	if len(cyclic) > 0 {
+		o.log("Loaded %d challenge definitions from %d sources (%d in a dependency cycle, not run)",
+			len(definitions)+len(cyclic), len(o.bank.Sources()), len(cyclic))
+	} else {
+		o.log("Loaded %d challenge definitions from %d sources",
+			len(definitions), len(o.bank.Sources()))
+	}
 
 	// 1.5. Load executable bank cases via pkg/testbank. The generic
 	// challenges/pkg/bank loader drops each case's `steps` array, so
@@ -167,11 +201,16 @@ func (o *Orchestrator) Run(
 	// 3. Run challenges for each platform.
 	platforms := o.config.ExpandedPlatforms()
 	var platformResults []*reporter.PlatformResult
+	// runErr is an error raised after execution began (cancellation): the
+	// platforms that already ran keep their verdicts in the report.
+	var runErr error
 
+platforms:
 	for _, platform := range platforms {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			runErr = ctx.Err()
+			break platforms
 		default:
 		}
 
@@ -181,15 +220,29 @@ func (o *Orchestrator) Run(
 		if err != nil {
 			o.logError("Platform %s failed: %v",
 				platform, err)
-			// Continue with other platforms.
-			pr = &reporter.PlatformResult{
-				Platform:  platform,
-				StartTime: time.Now(),
-				EndTime:   time.Now(),
+			if pr == nil {
+				pr = &reporter.PlatformResult{
+					Platform:  platform,
+					StartTime: time.Now(),
+					EndTime:   time.Now(),
+				}
+			}
+			if ctx.Err() != nil {
+				// Cancelled / timed out WHILE the platform ran: keep the
+				// challenges it already ran (a FAILED one still decides
+				// the exit code) and stop — the run is incomplete (runErr
+				// is set from ctx after the loop).
+				platformResults = append(platformResults, pr)
+				break platforms
 			}
 		}
 		platformResults = append(platformResults, pr)
 	}
+	if runErr == nil && ctx.Err() != nil {
+		// Cancelled during the LAST challenge: the run is still incomplete.
+		runErr = ctx.Err()
+	}
+	platformResults = completeRecords(platforms, platformResults, definitions, cyclic, runErr != nil)
 
 	// 4. Generate combined report.
 	rep := o.getReporter()
@@ -198,17 +251,18 @@ func (o *Orchestrator) Run(
 		return nil, fmt.Errorf("generate report: %w", err)
 	}
 
+	result.Report = qaReport
+	result.EndTime = time.Now()
+	result.Duration = result.EndTime.Sub(result.StartTime)
 	reportPath, err := rep.WriteReport(
 		qaReport, o.config.OutputDir,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("write report: %w", err)
+		// Cases already ran: return their verdicts WITH the error, so a
+		// FAILED case still decides the exit code (1 outranks the error).
+		return result, fmt.Errorf("write report: %w", err)
 	}
-
-	result.Report = qaReport
 	result.ReportPath = reportPath
-	result.EndTime = time.Now()
-	result.Duration = result.EndTime.Sub(result.StartTime)
 	// CONST-035 anti-bluff: a run with 0 executed challenges is NOT a
 	// success — it's a PASS-bluff (the absence-of-crash check passes
 	// trivially when no app was launched, but no actual behavior was
@@ -234,7 +288,7 @@ func (o *Orchestrator) Run(
 		reportPath,
 	)
 
-	return result, nil
+	return result, runErr
 }
 
 // runPlatform executes all challenges for a single platform.
@@ -279,11 +333,13 @@ func (o *Orchestrator) runPlatform(
 	// execution behaviour depends on the target platform; a single
 	// shared registry could not distinguish desktop from android.
 	platformRunner := o.runner
+	wrappers := map[challenge.ID]*definitionChallenge{}
 	if platformRunner == nil {
 		reg := newDefinitionRegistry()
 		for _, def := range definitions {
 			tc := o.executableCases[def.ID]
 			wrapper := newDefinitionChallengeForPlatform(def, tc, platform)
+			wrappers[def.ID] = wrapper
 			if err := reg.Register(wrapper); err != nil {
 				return nil, fmt.Errorf(
 					"register definition %s for platform %s: %w",
@@ -323,6 +379,43 @@ func (o *Orchestrator) runPlatform(
 			cr, err := platformRunner.Run(
 				ctx, def.ID, cfg,
 			)
+			if ctx.Err() != nil {
+				// What the wrapper itself concluded (the runner replaces it
+				// with "timed out" when the run's deadline passed): a step
+				// that FAILED before the cancellation keeps its verdict.
+				if w := wrappers[def.ID]; w != nil {
+					if lr := w.lastResult(); lr != nil && lr.Status == challenge.StatusFailed {
+						// (Its recorded step OUTPUT never reads as an
+						// interruption: hasInterruptedMarker matches only the
+						// wrapper's own entry.)
+						cr, err = lr, nil
+					}
+				}
+			}
+			if ctx.Err() != nil && (hasInterruptedMarker(cr) || interruptedOutcome(cr, err)) {
+				// The run was cancelled / timed out while this challenge
+				// ran and it reports an error / timeout: its outcome is
+				// unknown — not a failure. Record it as not executed and
+				// stop the platform. (A challenge that FAILED on its own
+				// before the cancellation keeps its verdict.)
+				why := "run cancelled / timed out"
+				if err != nil {
+					why = err.Error()
+				} else if cr != nil && cr.Error != "" {
+					why = cr.Error
+				}
+				pr.ChallengeResults = append(pr.ChallengeResults, &challenge.Result{
+					ChallengeID:   def.ID,
+					ChallengeName: def.Name,
+					Status:        challenge.StatusSkipped,
+					Error:         "interrupted: " + why,
+					StartTime:     time.Now(),
+					EndTime:       time.Now(),
+				})
+				pr.EndTime = time.Now()
+				pr.Duration = pr.EndTime.Sub(pr.StartTime)
+				return pr, ctx.Err()
+			}
 			if err != nil {
 				o.logError("Challenge %s failed: %v",
 					def.ID, err)
@@ -439,6 +532,7 @@ func (o *Orchestrator) runPlatform(
 // re-parse, so the map stays empty and every wrapper honestly skips.
 func (o *Orchestrator) loadExecutableCases() {
 	o.executableCases = make(map[challenge.ID]*testbank.TestCase)
+	origin := map[challenge.ID]string{}
 	for _, path := range o.config.Banks {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -471,8 +565,19 @@ func (o *Orchestrator) loadExecutableCases() {
 			}
 			for i := range bf.TestCases {
 				tc := bf.TestCases[i]
-				o.executableCases[challenge.ID(tc.ID)] = &tc
+				id := challenge.ID(tc.ID)
+				if prev, dup := origin[id]; dup && !bankPeers(prev, f) {
+					// Two bank files define the same case ID: the later one
+					// replaces the earlier in the run. Not an error (bank
+					// directories are loaded whole), but never silent. A
+					// YAML / JSON peer pair of one bank is the documented
+					// convention and is not reported.
+					o.logWarn("WARNING: case %s is defined in both %s and %s — the definition from %s replaces the other", id, prev, f, f)
+				}
+				origin[id] = f
+				o.executableCases[id] = &tc
 			}
+			warnDefaultStatusHTTPSteps(f, bf.TestCases, o.logWarn, o.log)
 		}
 	}
 }
@@ -564,6 +669,20 @@ func (o *Orchestrator) log(format string, args ...any) {
 	o.logger.Info(msg)
 }
 
+// logWarn writes a warning-level log message.
+func (o *Orchestrator) logWarn(format string, args ...any) {
+	if o.logger == nil {
+		return
+	}
+	o.logger.Warn(fmt.Sprintf(format, args...))
+}
+
+// bankPeers reports two paths of ONE bank in its YAML and JSON forms (same
+// directory and base name).
+func bankPeers(a, b string) bool {
+	return strings.TrimSuffix(a, filepath.Ext(a)) == strings.TrimSuffix(b, filepath.Ext(b))
+}
+
 // logError writes an error-level log message.
 func (o *Orchestrator) logError(format string, args ...any) {
 	if o.logger == nil {
@@ -571,4 +690,105 @@ func (o *Orchestrator) logError(format string, args ...any) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	o.logger.Error(msg)
+}
+
+// interruptedOutcome reports a challenge outcome that a cancellation /
+// timeout of the RUN produces rather than the app: a runner error, no
+// result, or an error / timed-out / stuck status.
+func interruptedOutcome(cr *challenge.Result, err error) bool {
+	if err != nil || cr == nil {
+		return true
+	}
+	switch cr.Status {
+	case challenge.StatusError, challenge.StatusTimedOut, challenge.StatusStuck:
+		return true
+	}
+	return false
+}
+
+// orderDefinitions returns the definitions in dependency order (ID as the
+// tie-break, see testbank.DependencyOrder) and, separately, those in or
+// behind a dependency cycle.
+func orderDefinitions(defs []*challenge.Definition) (ordered, cyclic []*challenge.Definition) {
+	byID := map[string]*challenge.Definition{}
+	ids := make([]string, 0, len(defs))
+	deps := map[string][]string{}
+	for _, d := range defs {
+		id := string(d.ID)
+		byID[id] = d
+		ids = append(ids, id)
+		for _, dep := range d.Dependencies {
+			deps[id] = append(deps[id], string(dep))
+		}
+	}
+	order, cyc := testbank.DependencyOrder(ids, deps)
+	for _, id := range order {
+		ordered = append(ordered, byID[id])
+	}
+	for _, id := range cyc {
+		cyclic = append(cyclic, byID[id])
+	}
+	return ordered, cyclic
+}
+
+// completeRecords makes the report name every challenge: those in a
+// dependency cycle (never run) and, when the run was cancelled / timed out,
+// those that never started — each SKIPPED with its reason, on every
+// platform.
+func completeRecords(platforms []config.Platform, prs []*reporter.PlatformResult,
+	ordered, cyclic []*challenge.Definition, cancelled bool) []*reporter.PlatformResult {
+	if len(cyclic) == 0 && !cancelled {
+		return prs
+	}
+	byPlatform := map[config.Platform]*reporter.PlatformResult{}
+	for _, pr := range prs {
+		byPlatform[pr.Platform] = pr
+	}
+	now := time.Now()
+	skip := func(d *challenge.Definition, why string) *challenge.Result {
+		return &challenge.Result{ChallengeID: d.ID, ChallengeName: d.Name, Status: challenge.StatusSkipped,
+			Error: why, StartTime: now, EndTime: now}
+	}
+	var cycleIDs []string
+	for _, d := range cyclic {
+		cycleIDs = append(cycleIDs, string(d.ID))
+	}
+	out := make([]*reporter.PlatformResult, 0, len(platforms))
+	for _, p := range platforms {
+		pr := byPlatform[p]
+		if pr == nil {
+			pr = &reporter.PlatformResult{Platform: p, StartTime: now, EndTime: now}
+		}
+		if cancelled {
+			seen := map[challenge.ID]bool{}
+			for _, cr := range pr.ChallengeResults {
+				seen[cr.ChallengeID] = true
+			}
+			for _, d := range ordered {
+				if !seen[d.ID] {
+					pr.ChallengeResults = append(pr.ChallengeResults,
+						skip(d, "not started: the run was cancelled / timed out before this challenge"))
+				}
+			}
+		}
+		for _, d := range cyclic {
+			pr.ChallengeResults = append(pr.ChallengeResults,
+				skip(d, "not run: dependency cycle among "+strings.Join(cycleIDs, ", ")))
+		}
+		out = append(out, pr)
+	}
+	return out
+}
+
+// warnDefaultStatusHTTPSteps prints, at load, the http: steps of a bank that
+// declare no expect_status and so expect a 2xx by default — executed steps
+// as a WARNING, `_skip`ped ones separately.
+func warnDefaultStatusHTTPSteps(file string, cases []testbank.TestCase, warnf, infof func(string, ...interface{})) {
+	active, skipped := testbank.DefaultStatusHTTPSteps(cases)
+	for _, row := range active {
+		warnf("WARNING: %s: http: step without expect_status expects a 2xx by default: %s", file, row)
+	}
+	for _, row := range skipped {
+		infof("note: %s: disabled (_skip) http: step without expect_status: %s", file, row)
+	}
 }

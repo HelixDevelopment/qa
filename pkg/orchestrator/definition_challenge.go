@@ -40,14 +40,15 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"digital.vasic.challenges/pkg/challenge"
 	"digital.vasic.challenges/pkg/registry"
 
 	"digital.vasic.helixqa/pkg/config"
+	"digital.vasic.helixqa/pkg/shellexec"
 	"digital.vasic.helixqa/pkg/testbank"
 	"digital.vasic.helixqa/pkg/validator"
 )
@@ -184,7 +185,7 @@ func promoteSkippedToPassed(
 	// observational (description / screenshot / sleep — where post-action
 	// crash-absence IS the intended signal) may be promoted; a case with a
 	// real asserting step stays honestly SKIPPED.
-	if caseHasUnrunAssertingStep(tc) {
+	if caseHasUnrunAssertingStep(tc, platform) {
 		return
 	}
 	if sr == nil || sr.Status != validator.StepPassed {
@@ -193,36 +194,55 @@ func promoteSkippedToPassed(
 	cr.Status = challenge.StatusPassed
 }
 
-// caseHasUnrunAssertingStep reports whether the test case carries any step
-// whose action genuinely asserts something the bank-runner path does NOT
-// execute (everything except the observational set description/screenshot/
-// sleep, and `shell:` which the bank runner DOES run — so a sentinel-SKIPPED
-// case never has shell steps anyway). If true, crash-absence is not evidence
-// the case passed and it must not be promoted. A nil/empty case is treated as
-// having no asserting step (nothing to run → safe to promote on the prior
-// guards).
-func caseHasUnrunAssertingStep(tc *testbank.TestCase) bool {
+// caseHasUnrunAssertingStep reports whether the test case carries, for the
+// given platform, any step whose assertion the bank-runner path does NOT
+// execute (see unrunAssertingSteps). If true, crash-absence is not evidence
+// the case passed and it must not be promoted.
+func caseHasUnrunAssertingStep(tc *testbank.TestCase, platform config.Platform) bool {
+	return len(unrunAssertingSteps(tc, platform)) > 0
+}
+
+// unrunAssertingSteps names every step of the case that asserts something
+// the bank runner never executes on this platform: a vision-gated step of
+// any action kind (vision_verify / recognize / forbid / golden /
+// expect_change), or a non-observational action other than `shell:` (http,
+// assert, tap, swipe, keypress, text, adb_shell, playback_check,
+// frame_diff, playwright). Observational steps (description / screenshot /
+// sleep without vision keys) and `shell:` steps (run by the bank runner)
+// are not listed. A step pinned to ANOTHER platform, or explicitly skipped
+// with `_skip`, is not this run's assertion and is not listed.
+// Each entry reads `step <index> "<name>" (<action kind>[, vision-gated])`.
+func unrunAssertingSteps(tc *testbank.TestCase, platform config.Platform) []string {
 	if tc == nil {
-		return false
+		return nil
 	}
+	var out []string
 	for i := range tc.Steps {
 		step := tc.Steps[i]
-		at, _ := step.ParseAction()
-		switch at {
-		case testbank.ActionTypeDescription,
-			testbank.ActionTypeScreenshot,
-			testbank.ActionTypeSleep,
-			testbank.ActionTypeShell:
-			// observational, or shell (run by the bank runner) — not a bluff
+		if step.Skip {
 			continue
-		default:
-			// http / assert / tap / swipe / keypress / text / adb_shell /
-			// playback_check / frame_diff / playwright — a real asserting
-			// action the bank runner never executed.
-			return true
 		}
+		if step.Platform != "" && step.Platform != platform {
+			continue
+		}
+		at, _ := step.ParseAction()
+		gated := step.IsVisionGated()
+		if !gated {
+			switch at {
+			case testbank.ActionTypeDescription,
+				testbank.ActionTypeScreenshot,
+				testbank.ActionTypeSleep,
+				testbank.ActionTypeShell:
+				continue
+			}
+		}
+		desc := fmt.Sprintf("step %d %q (%s", i, step.Name, at)
+		if gated {
+			desc += ", vision-gated"
+		}
+		out = append(out, desc+")")
 	}
-	return false
+	return out
 }
 
 // hasSkipSentinel reports whether the result carries the
@@ -268,6 +288,13 @@ type definitionChallenge struct {
 	// platform is the target platform this wrapper executes against.
 	// Set by the orchestrator per runPlatform iteration.
 	platform config.Platform
+
+	// last is the result Execute itself produced. The challenges runner
+	// replaces it with "timed out" when the run's deadline passed; the
+	// orchestrator reads it back so a step that FAILED before the
+	// cancellation keeps its verdict, and an interruption stays one.
+	lastMu sync.Mutex
+	last   *challenge.Result
 }
 
 // newDefinitionChallenge constructs a wrapper with no executable
@@ -389,16 +416,63 @@ func (d *definitionChallenge) executableShellSteps() []testbank.TestStep {
 // explicit reason (never a hollow PASS).
 func (d *definitionChallenge) Execute(ctx context.Context) (*challenge.Result, error) {
 	start := time.Now()
+	var res *challenge.Result
 
 	// Real execution path: desktop platform + executable shell steps.
 	if d.platform == config.PlatformDesktop {
 		if steps := d.executableShellSteps(); len(steps) > 0 {
-			return d.executeDesktopShellSteps(ctx, start, steps), nil
+			res = d.executeDesktopShellSteps(ctx, start, steps)
 		}
 	}
+	if res == nil {
+		// Honest-skip path: nothing this platform/wrapper can execute.
+		res = d.skippedResult(start)
+	}
+	d.lastMu.Lock()
+	d.last = snapshotResult(res)
+	d.lastMu.Unlock()
+	return res, nil
+}
 
-	// Honest-skip path: nothing this platform/wrapper can execute.
-	return d.skippedResult(start), nil
+// lastResult returns a copy of the result Execute last produced, or nil.
+func (d *definitionChallenge) lastResult() *challenge.Result {
+	d.lastMu.Lock()
+	defer d.lastMu.Unlock()
+	return snapshotResult(d.last)
+}
+
+// snapshotResult copies the verdict-bearing fields of r (Result holds a
+// mutex and must not be copied whole).
+func snapshotResult(r *challenge.Result) *challenge.Result {
+	if r == nil {
+		return nil
+	}
+	return &challenge.Result{
+		ChallengeID: r.ChallengeID, ChallengeName: r.ChallengeName, Status: r.Status, Error: r.Error,
+		StartTime: r.StartTime, EndTime: r.EndTime, Duration: r.Duration,
+		RecordedActions: append([]string(nil), r.RecordedActions...),
+		Assertions:      append([]challenge.AssertionResult(nil), r.Assertions...),
+	}
+}
+
+// interruptedMarker tags a result whose case the RUN's cancellation /
+// timeout cut short.
+const interruptedMarker = "interrupted-by-run-cancellation"
+
+// hasInterruptedMarker reports a result carrying the wrapper's OWN
+// interruption entry. Only an entry that STARTS with the skip sentinel and
+// the marker counts: recorded step output ("shell-step[i]: … output=…") is
+// data and can never be read as the verdict, whatever text it contains.
+func hasInterruptedMarker(r *challenge.Result) bool {
+	if r == nil {
+		return false
+	}
+	for _, a := range r.RecordedActions {
+		if strings.HasPrefix(a, definitionWrapperSkipSentinel+" "+interruptedMarker) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeDesktopShellSteps runs every `shell:` step of the bank case
@@ -428,13 +502,45 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 		}
 
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
-		cmd := exec.CommandContext(stepCtx, "sh", "-c", command)
+		// Own process group, killed whole on cancellation (no orphaned
+		// children), Wait bounded by shellexec.WaitDelay.
+		cmd := shellexec.Command(stepCtx, command)
 		output, runErr := cmd.CombinedOutput()
 		exitCode := 0
 		if cmd.ProcessState != nil {
 			exitCode = cmd.ProcessState.ExitCode()
 		}
 		cancel()
+		exitedNormally := cmd.ProcessState != nil && cmd.ProcessState.Exited()
+		if ctx.Err() != nil && allPassed && !exitedNormally {
+			// The RUN was cancelled / timed out while this command ran (not
+			// the step's own timeout) and the command did not exit on its
+			// own (killed / never started — a command that EXITED normally is
+			// scored on its own outcome below): its outcome is unknown — the case is
+			// not executed, never a failure of its own.
+			now := time.Now()
+			recorded = append(recorded,
+				fmt.Sprintf("shell-step[%d]: %s — interrupted by the run's cancellation / timeout (%v)", i, command, ctx.Err()),
+				definitionWrapperSkipSentinel+" "+interruptedMarker+": the run was cancelled / timed out while step "+fmt.Sprintf("%d", i)+
+					" ran — the case was not executed to the end and is not PASSED")
+			return &challenge.Result{
+				ChallengeID:     d.def.ID,
+				ChallengeName:   d.def.Name,
+				StartTime:       start,
+				EndTime:         now,
+				Duration:        now.Sub(start),
+				RecordedActions: recorded,
+				// The same evidence the honest-skip path carries, so the
+				// runner's anti-bluff gate does not turn the interruption
+				// into a failure.
+				Assertions: append(assertions, challenge.AssertionResult{
+					Type: "definition-loaded", Target: "definition.ID",
+					Expected: string(d.def.ID), Actual: string(d.def.ID), Passed: true,
+					Message: "bank-loaded definition bridged to Challenge interface; interrupted by the run's cancellation / timeout",
+				}),
+				Status: challenge.StatusSkipped,
+			}
+		}
 
 		recorded = append(recorded,
 			fmt.Sprintf("shell-step[%d]: %s", i, command))
@@ -442,26 +548,57 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 			fmt.Sprintf("shell-step[%d]: exit=%d output=%q",
 				i, exitCode, truncateForRecord(string(output))))
 
-		stepPassed := runErr == nil && exitCode == 0
+		// The verdict comes from the ONE shared function so this runner and
+		// the autonomous executor cannot disagree: no expect_exit means the
+		// command must exit 0; expect_exit N means exactly N; and
+		// expect_output_contains is read from the combined output. A command
+		// that never started (ProcessState nil) can satisfy nothing.
+		stepPassed, why := step.CheckShellOutcome(exitCode, string(output))
+		if cmd.ProcessState == nil {
+			stepPassed, why = false, fmt.Sprintf("command did not run: %v", runErr)
+		}
 		if !stepPassed {
 			allPassed = false
 			if firstFailure == "" {
 				firstFailure = fmt.Sprintf(
-					"step %d %q exited %d: %s",
-					i, command, exitCode,
+					"step %d %q: %s: %s",
+					i, command, why,
 					truncateForRecord(string(output)))
 			}
 		}
 
+		wantExitCode := 0
+		if step.ExpectExit != nil {
+			wantExitCode = *step.ExpectExit
+		}
+		wantExit := fmt.Sprintf("%d", wantExitCode)
+		exitOK := cmd.ProcessState != nil && exitCode == wantExitCode
+		exitAssertionType := "shell-exit-zero"
+		if step.ExpectExit != nil {
+			exitAssertionType = "shell-exit"
+		}
 		assertions = append(assertions, challenge.AssertionResult{
-			Type:     "shell-exit-zero",
+			Type:     exitAssertionType,
 			Target:   fmt.Sprintf("step[%d].exit_code", i),
-			Expected: "0",
+			Expected: wantExit,
 			Actual:   fmt.Sprintf("%d", exitCode),
-			Passed:   stepPassed,
+			Passed:   exitOK,
 			Message: fmt.Sprintf(
-				"desktop shell action %q exited %d", command, exitCode),
+				"desktop shell action %q exited %d (expected %s)", command, exitCode, wantExit),
 		})
+		if step.ExpectOutputContains != nil {
+			contains := *step.ExpectOutputContains != "" &&
+				strings.Contains(string(output), *step.ExpectOutputContains)
+			assertions = append(assertions, challenge.AssertionResult{
+				Type:     "shell-output-contains",
+				Target:   fmt.Sprintf("step[%d].output", i),
+				Expected: *step.ExpectOutputContains,
+				Actual:   truncateForRecord(string(output)),
+				Passed:   contains,
+				Message: fmt.Sprintf(
+					"desktop shell action %q output contains expected substring: %t", command, contains),
+			})
+		}
 	}
 
 	now := time.Now()
@@ -474,9 +611,21 @@ func (d *definitionChallenge) executeDesktopShellSteps(
 		RecordedActions: recorded,
 		Assertions:      assertions,
 	}
-	if allPassed {
+	switch {
+	case allPassed && caseHasUnrunAssertingStep(d.testCase, d.platform):
+		// The shell steps passed, but the case also asserts something this
+		// runner never executed (a vision-gated step, an http:/tap:/…
+		// action). The case was only partly run, so it is not PASSED: it
+		// is an honest SKIPPED that names what did not run, and
+		// promoteSkippedToPassed refuses to promote it for the same reason.
+		result.Status = challenge.StatusSkipped
+		result.RecordedActions = append(result.RecordedActions,
+			definitionWrapperSkipSentinel+" shell step(s) passed, but these asserting step(s) were not executed by "+
+				"the bank runner: "+strings.Join(unrunAssertingSteps(d.testCase, d.platform), "; ")+
+				" — the case is not PASSED")
+	case allPassed:
 		result.Status = challenge.StatusPassed
-	} else {
+	default:
 		result.Status = challenge.StatusFailed
 		result.Error = "desktop shell action failed: " + firstFailure
 	}

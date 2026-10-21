@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
@@ -146,11 +145,11 @@ func (p *ollamaProvider) doRequest(
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: send request: %w", err)
+		return nil, fmt.Errorf("ollama: send request: %w", scrubURLError(err))
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, tooBig, err := readCappedBody(httpResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: read response body: %w", err)
 	}
@@ -159,8 +158,11 @@ func (p *ollamaProvider) doRequest(
 		return nil, fmt.Errorf(
 			"ollama: API error %d: %s",
 			httpResp.StatusCode,
-			string(respBody),
+			errorBodyText(respBody),
 		)
+	}
+	if tooBig {
+		return nil, fmt.Errorf("ollama: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 
 	var apiResp ollamaChatResponse

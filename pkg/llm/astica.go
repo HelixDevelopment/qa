@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 )
@@ -157,11 +156,11 @@ func (p *asticaProvider) doRequest(
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("astica: send request: %w", err)
+		return nil, fmt.Errorf("astica: send request: %w", scrubURLError(err))
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, tooBig, err := readCappedBody(httpResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("astica: read response body: %w", err)
 	}
@@ -170,8 +169,11 @@ func (p *asticaProvider) doRequest(
 		return nil, fmt.Errorf(
 			"astica: API error %d: %s",
 			httpResp.StatusCode,
-			string(respBody),
+			errorBodyText(respBody, p.apiKey),
 		)
+	}
+	if tooBig {
+		return nil, fmt.Errorf("astica: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 
 	var apiResp asticaResponse
@@ -180,9 +182,11 @@ func (p *asticaProvider) doRequest(
 	}
 
 	if apiResp.Status != "success" {
+		// The status is server text: redact (and cap) it like any
+		// error body before it reaches an error.
 		return nil, fmt.Errorf(
 			"astica: API returned status %q",
-			apiResp.Status,
+			errorBodyText([]byte(apiResp.Status), p.apiKey),
 		)
 	}
 

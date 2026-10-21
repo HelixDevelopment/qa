@@ -46,6 +46,16 @@ import (
 const version = "0.2.0"
 
 func main() {
+	// An unrecovered panic must not exit 2 (that means "blocked"): it is
+	// mapped to exitCodePanic (70). Normal paths exit from inside realMain.
+	if code := guardPanic(realMainFn); code != 0 {
+		os.Exit(code)
+	}
+}
+
+var realMainFn = realMain
+
+func realMain() {
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -213,8 +223,16 @@ func cmdRun(args []string) {
 
 	result, err := orch.Run(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		// Nothing executed (a bank could not be loaded), or an error after
+		// execution (report write, cancellation). A FAILED case that already
+		// ran still exits 1; otherwise the run is incomplete — exit 2.
+		code := runExitCode(result, err)
+		fmt.Fprintf(os.Stderr, "error: %v (exit %d)\n", err, code)
+		if result != nil && result.Report != nil {
+			fmt.Fprintf(os.Stderr, "executed before the error: %d/%d challenges passed, %d failed\n",
+				result.Report.PassedChallenges, result.Report.TotalChallenges, result.Report.FailedChallenges)
+		}
+		os.Exit(runExitCode(result, err))
 	}
 
 	// Print summary. CONST-035 anti-bluff: a "PASSED" summary that
@@ -242,6 +260,11 @@ func cmdRun(args []string) {
 	case result.Success:
 		fmt.Printf(helixqaT(ctx, "helixqa_run_summary_passed_fmt",
 			"PASSED - All %d challenges passed, no crashes\n"), total)
+	case result.ExitCode() == 2:
+		fmt.Printf(helixqaT(ctx, "helixqa_run_summary_incomplete_fmt",
+			"INCOMPLETE - %d/%d challenges passed, %d not executed (skipped / blocked), none failed — exit 2\n"),
+			result.Report.PassedChallenges, total,
+			total-result.Report.PassedChallenges-result.Report.FailedChallenges)
 	default:
 		fmt.Printf(helixqaT(ctx, "helixqa_run_summary_failed_fmt",
 			"FAILED - %d/%d challenges failed or crashes detected\n"),
@@ -256,8 +279,10 @@ func cmdRun(args []string) {
 		fmt.Printf("Tickets: %s/tickets/\n", cfg.OutputDir)
 	}
 
-	if !result.Success {
-		os.Exit(1)
+	// Three-valued contract: 0 all passed, 1 a failure / crash / ANR,
+	// 2 nothing failed but not everything was executed (skipped/blocked).
+	if code := runExitCode(result, nil); code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -648,6 +673,24 @@ func cmdAutonomous(args []string) {
 		chatConfigs = append(chatConfigs, cfg)
 	}
 
+	// ── Operator-supplied OpenAI-compatible vision endpoint ──
+	// HELIX_VISION_ENDPOINT (+ optional HELIX_VISION_MODEL,
+	// HELIX_VISION_API_KEY) points at e.g. a local llama-server
+	// (llmctl `vision` on http://127.0.0.1:8082/v1). It joins the
+	// vision pool; the key is never printed.
+	vcfg, vok, verr := llm.VisionEndpointConfigFromEnvChecked(os.Getenv)
+	if verr != nil {
+		// Misconfigured eyes: refuse to start rather than run every
+		// vision-gated step BLOCKED. The error never echoes the URL.
+		fmt.Fprintf(os.Stderr, "error: %v\n", verr)
+		os.Exit(1)
+	}
+	if vok {
+		providerConfigs = append(providerConfigs, vcfg)
+		visionConfigs = append(visionConfigs, vcfg)
+		fmt.Printf("Vision endpoint:  %s\n", llm.DescribeVisionEndpoint(vcfg))
+	}
+
 	// ── Bridged CLI model discovery ──────────────────────────
 	// Discover CLI-based LLM tools (claude, qwen-coder,
 	// opencode) that can be used as providers with zero
@@ -946,18 +989,40 @@ func cmdAutonomous(args []string) {
 	fmt.Println()
 	result, err := pipeline.Run(context.Background())
 	if err != nil {
+		// The session could not start (its memory store): nothing about
+		// the app was judged — exit 2, never 1.
 		fmt.Fprintf(os.Stderr,
-			"error: pipeline failed: %v\n", err)
-		os.Exit(1)
+			"error: pipeline could not run: %v (exit %d)\n", err, exitCodeNotExecuted)
+		os.Exit(exitCodeNotExecuted)
 	}
-	if err := pipeline.WriteReport(result); err != nil {
+	reportErr := pipeline.WriteReport(result)
+	if reportErr != nil {
 		fmt.Fprintf(os.Stderr,
-			"warning: could not write report: %v\n", err)
+			"error: could not write report: %v (an otherwise passing session exits %d)\n", reportErr, exitCodeNotExecuted)
 	}
 	if result.Status == autonomous.StatusFailed {
 		fmt.Fprintf(os.Stderr,
 			"Session failed: %s\n", result.Error)
 		os.Exit(1)
+	}
+	if result.Status == autonomous.StatusBlocked {
+		// Network / VPN preflight, provider outage or timeout: could not
+		// determine (2) — unless a structured case already FAILED (1).
+		fmt.Fprintf(os.Stderr,
+			"Session BLOCKED (could not determine): %s\n", result.Error)
+	}
+	// Structured bank outcome -> exit code (1 a case FAILED, 2 a case
+	// BLOCKED / could not determine / banks not runnable; 1 outranks 2).
+	if code := autonomousExitCode(result, reportErr); code != 0 {
+		if s := result.Structured; s != nil {
+			fmt.Fprintf(os.Stderr,
+				"Structured cases: %d passed, %d failed, %d blocked (could not determine), %d skipped — exit %d\n",
+				s.TestCasesPassed, s.TestCasesFailed, s.TestCasesBlocked, s.TestCasesSkipped, code)
+		}
+		if result.StructuredError != "" {
+			fmt.Fprintf(os.Stderr, "Structured phase could not run: %s\n", result.StructuredError)
+		}
+		os.Exit(code)
 	}
 }
 

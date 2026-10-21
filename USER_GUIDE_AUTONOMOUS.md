@@ -469,6 +469,83 @@ HELIX_DOCS_AUTO_DISCOVER=true
 HELIX_DOCS_FORMATS=md,yaml,html,adoc,rst
 ```
 
+### Vision-Gated Structured Steps and a Local Vision Model
+
+In the structured phase, a bank step that declares `vision_verify: true`,
+`recognize: [...]`, `forbid: [...]`, `golden: <id>` (with optional
+`phash_max_distance`) or `expect_change: true` is vision-gated. It passes
+only when every requested check succeeds on the exact after-action frame;
+otherwise it is FAILED (the frame contradicts the expectation) or BLOCKED
+(could not determine: no provider gave a definite `VERIFIED: yes|no` line
+or a strict JSON transcription, blank or missing frame, missing golden, a
+gated step whose action was skipped, frames that cannot be compared or are
+black, no executor for the platform, a configured device / display that is
+unreachable — also when it drops mid-session (the probe is re-run after
+any failed device action), the session timing out, an `http:` step with
+no base URL, an `assert:` with no `http:` step in the same case, a case in
+which no step OBSERVED app state — an accepted tap / key press is not
+evidence — or a case with a step skipped as not executable). The
+summary line reads `N passed, N failed, N
+blocked (could not determine), ...`. A blocked case is never counted as
+passed: it files an `environment` finding (never ticketed or reproduced as
+an app bug), is persisted under `structured` in `pipeline-report.json`, and
+makes the session exit with code 2 (a failed case exits 1).
+
+`recognize` / `forbid` ask the model for exactly one JSON object
+`{"texts": [...], "description": "..."}` and match tokens only inside
+single `texts` elements — never the description. A reply in any other shape
+is unusable (the next provider is asked, then BLOCKED), and so is a reading
+with no screen text (empty / filler only) or made only of refusals /
+remarks by the model. A `forbid` token that is present fails the step; its
+absence counts only when the same reading matched the step's `recognize`
+tokens, so `forbid` needs `recognize`.
+Commentary in other wording inside `texts` is not detected; pair
+`recognize` with `golden` where you have a reference screenshot. A
+`vision_verify` reply is honoured only when it is exactly one
+`VERIFIED: yes|no` line plus at most one `ACTUAL: …` line.
+
+`helixqa run` uses the same contract: exit 0 all passed, 1 a failure /
+crash / ANR, 2 nothing failed but not everything executed (`INCOMPLETE`,
+including a bank that could not be loaded, a report that could not be
+written, or a run cut by Ctrl-C / `--timeout`). A failed challenge still
+exits 1 when an error or a cancellation follows it. Challenges run in dependency
+order (`dependencies:` first, then ID); a dependency cycle is reported and
+not run. An `http:` step without `expect_status` must return a 2xx; a
+step that expects an error status must declare it. Exit
+70 means an internal HelixQA panic. Scripts must treat 2 as "not a pass",
+never as a warning. `helixqa autonomous` also exits 2 when the session is
+BLOCKED (network / VPN preflight, provider outage in learn / plan,
+timeout) or when its report cannot be written, unless a structured case
+FAILED (1).
+
+A `recognize` token must equal one whole on-screen element (e.g. a button
+label) by default, so a model's commentary inside the transcription
+("Login not visible") cannot satisfy it; a token found only inside a
+longer element is reported BLOCKED with that hint. Set
+`recognize_contains: true` on a step only when the token is part of a
+longer on-screen string.
+
+Banks that already used `vision_verify: true` are now gated: run them with
+a vision provider that answers in the `VERIFIED:` format, or expect those
+cases to report BLOCKED.
+
+To use a local model served by llama-server (for example llmctl's
+`vision` instance), set:
+
+```bash
+HELIX_VISION_ENDPOINT=http://127.0.0.1:8082/v1
+HELIX_VISION_MODEL=            # optional; empty = server default model
+HELIX_VISION_API_KEY=          # optional, never logged
+HELIXQA_GOLDENS_DIR=/path/to/goldens   # only for `golden:` steps
+```
+
+At startup the session prints `Vision endpoint: <url> (model: ..., api key: set|unset)`.
+The endpoint URL must not contain user info, a query, a fragment, an encoded
+`?`/`#` or a `;` parameter — such a value is refused at startup (put a key in
+`HELIX_VISION_API_KEY`). The local endpoint is asked with `temperature: 0`,
+a fixed seed and a JSON-schema `response_format` for transcriptions.
+Full semantics: [docs/vision/NO_BLUFF_VISION.md](docs/vision/NO_BLUFF_VISION.md).
+
 ---
 
 ## Troubleshooting

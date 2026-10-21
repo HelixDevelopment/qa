@@ -4,7 +4,10 @@
 package autonomous
 
 import (
+	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"digital.vasic.helixqa/pkg/detector"
 	"digital.vasic.helixqa/pkg/navigator"
@@ -107,8 +110,99 @@ func (f *DefaultExecutorFactory) Create(
 	}
 }
 
+// probeTimeout bounds the one reachability probe per platform.
+const probeTimeout = 20 * time.Second
+
+// Probe checks that the platform's configured device / display / browser
+// actually answers (see probePlatformReachable). StructuredTestExecutor
+// calls it once per platform (ExecutorProber).
+func (f *DefaultExecutorFactory) Probe(ctx context.Context, platform string) error {
+	return probePlatformReachable(ctx, platform, f.config.AndroidDevice, f.runner, f.Create)
+}
+
+// probePlatformReachable is the one reachability probe both production
+// factories use, so a configured-but-unreachable target (an emulator that
+// is gone, the default desktop display ":0" with no X server, a browser
+// that cannot start) BLOCKS the steps that need it instead of being acted
+// on blindly:
+//
+//   - android / androidtv: the last non-empty line of
+//     `adb -s <device> get-state` must be exactly "device" (offline /
+//     unauthorized / not found / no serial are unreachable);
+//   - desktop, web: one real capture through the executor itself must
+//     return bytes without error;
+//   - other platforms (cli, api) run on the host and are not probed.
+func probePlatformReachable(
+	ctx context.Context,
+	platform, androidDevice string,
+	runner detector.CommandRunner,
+	create func(string) (navigator.ActionExecutor, error),
+) error {
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	switch platform {
+	case "android", "androidtv":
+		if androidDevice == "" {
+			return fmt.Errorf("no android device serial configured")
+		}
+		out, err := runner.Run(pctx, "adb", "-s", androidDevice, "get-state")
+		// adb may print daemon start-up / warning lines before or after
+		// the state; the state is the last line that IS an adb state word.
+		state := adbStateLine(string(out))
+		if err != nil || state != "device" {
+			return fmt.Errorf("adb -s %s get-state: state %q (%v) — device not reachable",
+				androidDevice, truncateOutput([]byte(state), 120), err)
+		}
+		return nil
+	case "desktop", "web":
+		ex, err := create(platform)
+		if err != nil {
+			return err
+		}
+		shot, err := ex.Screenshot(pctx)
+		if err != nil {
+			return fmt.Errorf("%s capture probe failed: %w", platform, err)
+		}
+		if len(shot) == 0 {
+			return fmt.Errorf("%s capture probe returned no image data", platform)
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
 // NoopExecutorFactory moved to noop_executor_test.go per §11.4 /
 // CONST-050(A) — test-only. Production callers must use
 // DefaultExecutorFactory; a stub that silently succeeds every UI
 // action without driving a real device is a PASS-bluff if reached
 // from a production binary.
+
+// lastNonEmptyLine returns the last line of s that is not blank, trimmed.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return ""
+}
+
+// adbStates are the words `adb get-state` prints as a device state.
+var adbStates = map[string]bool{"device": true, "offline": true, "unauthorized": true, "bootloader": true,
+	"recovery": true, "sideload": true, "rescue": true, "unknown": true, "authorizing": true,
+	"connecting": true, "no permissions": true, "host": true}
+
+// adbStateLine returns the last line of `adb get-state` output that is a
+// device state word (warning / daemon lines around it are ignored), or the
+// last non-empty line when none is.
+func adbStateLine(out string) string {
+	lines := strings.Split(out, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); adbStates[l] {
+			return l
+		}
+	}
+	return lastNonEmptyLine(out)
+}

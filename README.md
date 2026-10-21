@@ -110,6 +110,40 @@ test_cases:
         path: "docs/USER_MANUAL.md"
 ```
 
+### Vision-gated steps (no-bluff vision)
+
+A step that carries `vision_verify: true`, `recognize`, `forbid`,
+`golden` (+ `phash_max_distance`) or `expect_change: true` is
+**vision-gated**: it PASSES only on positive evidence bound to the exact
+after-action frame (sha256 + pHash recorded, persisted in
+`pipeline-report.json`), and is **BLOCKED** (could not determine) — never
+passed — when no vision provider gives a definite answer (exactly one
+`VERIFIED: yes|no` line; `recognize`/`forbid` read only the `texts` array of
+a strict JSON reply), or the frame is blank or missing. A blocked case files a
+finding and makes `helixqa autonomous` exit **2** (a failed case exits
+**1**). A non-gated step the model could not confirm is reported
+**UNVERIFIED-by-vision**. Vision keys are refused on `shell:`/`http:`/
+`assert:` and prose steps, and `expect_change`/`forbid` need `vision_verify`,
+`recognize` or `golden` beside them. A blocked case is an `environment`
+finding, never an app bug. **Exit codes (`autonomous` and `run`): 0 pass,
+1 fail, 2 blocked / not everything executed** — wrappers must branch on 2
+(see the reference).
+
+```yaml
+      - name: "Open settings"
+        action: "keypress: KEYCODE_ENTER"
+        expected: "Settings screen is shown"
+        vision_verify: true
+        expect_change: true
+        recognize: ["Settings"]
+        forbid: ["Error"]
+```
+
+A local OpenAI-compatible vision model (e.g. llama-server) is wired with
+`HELIX_VISION_ENDPOINT` (+ optional `HELIX_VISION_MODEL`,
+`HELIX_VISION_API_KEY`). Full reference and state diagram:
+[`docs/vision/NO_BLUFF_VISION.md`](docs/vision/NO_BLUFF_VISION.md).
+
 ## Architecture
 
 ```

@@ -10,7 +10,11 @@ package testbank
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"digital.vasic.challenges/pkg/challenge"
 	"digital.vasic.helixqa/pkg/config"
@@ -259,6 +263,18 @@ const (
 	ActionTypePlaywright ActionType = "playwright"
 )
 
+// IsNonScreen reports actions whose verdict is their own deterministic
+// check (exit code, HTTP response) rather than anything on the screen. A
+// screenshot says nothing about them: vision keys are refused on them at
+// load, and a non-gated one never consults a vision model.
+func (a ActionType) IsNonScreen() bool {
+	switch a {
+	case ActionTypeShell, ActionTypeHTTP, ActionTypeAssert:
+		return true
+	}
+	return false
+}
+
 // TestStep is a single step within a test case.
 type TestStep struct {
 	// Name identifies this step.
@@ -285,8 +301,64 @@ type TestStep struct {
 	// Default is 30 seconds.
 	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 
-	// VisionVerify enables LLM vision verification of the result.
+	// VisionVerify makes this step VISION-GATED: it can PASS only when a
+	// vision model positively confirms the expected state on the exact
+	// after-action frame. No provider, a provider error, an ambiguous or
+	// empty reply, or a blank/missing frame make the step BLOCKED
+	// (could-not-determine) — never PASS. Without it, a step's vision
+	// result is advisory and is reported UNVERIFIED-by-vision when the
+	// model could not confirm it.
 	VisionVerify bool `yaml:"vision_verify,omitempty" json:"vision_verify,omitempty"`
+
+	// Golden names a reference image (<id>.png / .jpg / .jpeg) in the
+	// goldens directory (PipelineConfig.VisionGoldensDir or
+	// HELIXQA_GOLDENS_DIR). The after-action frame's pHash must be within
+	// PHashMaxDistance of the golden's pHash. A deterministic oracle — it
+	// needs no vision model. Setting it gates the step.
+	Golden string `yaml:"golden,omitempty" json:"golden,omitempty"`
+
+	// PHashMaxDistance is the largest Hamming distance (0..16, see
+	// MaxPHashMaxDistance) between the
+	// frame's and the golden's 64-bit pHash that still counts as a match.
+	// Only valid together with Golden; nil means DefaultPHashMaxDistance.
+	PHashMaxDistance *int `yaml:"phash_max_distance,omitempty" json:"phash_max_distance,omitempty"`
+
+	// Recognize lists tokens that MUST appear, as whole words after
+	// normalisation (lower-case, punctuation folded to spaces), within ONE
+	// element of the "texts" array of an expectation-BLIND JSON reading of the frame by
+	// the vision model — never in its "description" or any prose. The
+	// tokens are never sent to the model; "no text" filler tokens are
+	// refused. Setting it gates the step and requires a vision model.
+	Recognize []string `yaml:"recognize,omitempty" json:"recognize,omitempty"`
+
+	// RecognizeExact states the DEFAULT explicitly: each recognize token
+	// must EQUAL one whole "texts" element (after normalisation), not just
+	// appear inside one — so commentary such as "(no Login button visible)"
+	// cannot satisfy recognize [Login]. Only valid together with Recognize;
+	// contradicts RecognizeContains.
+	RecognizeExact bool `yaml:"recognize_exact,omitempty" json:"recognize_exact,omitempty"`
+
+	// RecognizeContains opts OUT of exact-element matching: a token then
+	// matches when it appears as whole words INSIDE one element. Negations
+	// and commentary inside an element ("Login not visible") then satisfy
+	// recognize — use it only for tokens that are part of longer on-screen
+	// strings. Only valid together with Recognize.
+	RecognizeContains bool `yaml:"recognize_contains,omitempty" json:"recognize_contains,omitempty"`
+
+	// Forbid lists tokens that MUST NOT appear in any "texts" element
+	// (e.g. an error banner; a "description" saying "no error is visible"
+	// does not count). Same matching rules as Recognize; it is
+	// negative evidence only, so it must be paired with vision_verify,
+	// recognize or golden. Setting it gates the step.
+	Forbid []string `yaml:"forbid,omitempty" json:"forbid,omitempty"`
+
+	// ExpectChange declares that the action must visibly change the
+	// screen: an after-frame that does not differ from the before-frame
+	// FAILS the step; an unusable before-frame, or frames of different
+	// dimensions, make it BLOCKED. "Something changed" is not evidence of
+	// the expected screen, so it must be paired with vision_verify,
+	// recognize or golden. Setting it gates the step.
+	ExpectChange bool `yaml:"expect_change,omitempty" json:"expect_change,omitempty"`
 
 	// Body is the HTTP request body for ActionTypeHTTP. Strings
 	// are sent verbatim; map/slice values are JSON-encoded.
@@ -342,6 +414,26 @@ type TestStep struct {
 	// expect_json_path — because a negative assertion alone passes on
 	// a 500, an empty body or an error envelope.
 	ExpectBodyNotContains *string `yaml:"expect_body_not_contains,omitempty" json:"expect_body_not_contains,omitempty"`
+
+	// ExpectExit is the exit code a `shell:` step's command must return.
+	// It is a pointer so an explicit 0 is distinguishable from an absent
+	// key: nil means "no explicit expectation", which keeps the established
+	// shell verdict (the command must exit 0). A non-zero value turns a
+	// failing command into the asserted outcome (e.g. a negative probe that
+	// must exit 2). A signal death reports -1 and therefore never matches.
+	//
+	// Accepted ONLY on a `shell:` action (TestCase.IsValid): it is the only
+	// action kind whose executors yield an exit code, so on any other kind
+	// the assertion would be silently ignored. Valid range 0..255.
+	ExpectExit *int `yaml:"expect_exit,omitempty" json:"expect_exit,omitempty"`
+
+	// ExpectOutputContains is a substring that must appear in the
+	// COMBINED stdout+stderr of a `shell:` step's command (case-sensitive,
+	// raw bytes). It is a pointer so an explicitly empty value is refused
+	// at load time (an empty substring matches everything, so the step
+	// could never fail) and again at run time. Accepted ONLY on a `shell:`
+	// action.
+	ExpectOutputContains *string `yaml:"expect_output_contains,omitempty" json:"expect_output_contains,omitempty"`
 
 	// Skip, when true, causes the runner to mark this step
 	// SKIPPED with the reason in SkipReason instead of executing
@@ -484,6 +576,12 @@ func (tc *TestCase) IsValid() string {
 	}
 	for i := range tc.Steps {
 		st := &tc.Steps[i]
+		if msg := st.validateShellAssertions(tc.ID, i); msg != "" {
+			return msg
+		}
+		if msg := st.validateVisionAssertions(tc.ID, i); msg != "" {
+			return msg
+		}
 		nc := st.ExpectBodyNotContains
 		if nc == nil {
 			continue
@@ -506,4 +604,364 @@ func (tc *TestCase) IsValid() string {
 		}
 	}
 	return ""
+}
+
+// validateShellAssertions enforces the load-time rules for expect_exit and
+// expect_output_contains so neither can ever be a silent no-op: both are
+// accepted only on a `shell:` action (the one kind whose executors yield an
+// exit code and combined output), an empty substring is refused, and an exit
+// code must be a real one (0..255).
+func (st *TestStep) validateShellAssertions(caseID string, idx int) string {
+	if st.ExpectExit == nil && st.ExpectOutputContains == nil {
+		return ""
+	}
+	key := "expect_exit"
+	if st.ExpectExit == nil {
+		key = "expect_output_contains"
+	}
+	if kind, _ := st.ParseAction(); kind != ActionTypeShell {
+		return fmt.Sprintf("test case %s step %d: %s is only evaluated by a shell: action, "+
+			"but this step's action is %q — on any other kind the assertion would be "+
+			"silently ignored", caseID, idx, key, string(kind))
+	}
+	if st.ExpectExit != nil && (*st.ExpectExit < 0 || *st.ExpectExit > 255) {
+		return fmt.Sprintf("test case %s step %d: expect_exit %d is not an exit code (0..255) — "+
+			"the step could never pass", caseID, idx, *st.ExpectExit)
+	}
+	if st.ExpectOutputContains != nil && *st.ExpectOutputContains == "" {
+		return fmt.Sprintf("test case %s step %d: expect_output_contains is empty — "+
+			"an empty substring matches every output, so the assertion is vacuous", caseID, idx)
+	}
+	return ""
+}
+
+// DefaultPHashMaxDistance is the pHash Hamming distance accepted for a
+// golden match when a step sets `golden` without `phash_max_distance`
+// (8 of 64 bits: tolerant of re-encoding / anti-aliasing, far below the
+// ~32 bits two unrelated frames differ by).
+const DefaultPHashMaxDistance = 8
+
+// MaxPHashMaxDistance caps phash_max_distance: two unrelated frames differ
+// by ~32 of 64 bits, so a tolerance above 16 would accept a different screen.
+const MaxPHashMaxDistance = 16
+
+// visionFillerKeys are normalised phrases a model writes to say "there is
+// no text". They are never screen text: dropped from a transcription and
+// refused as recognize/forbid tokens.
+var visionFillerKeys = map[string]bool{
+	"no": true, "not": true, "none": true, "nothing": true, "empty": true,
+	"blank": true, "null": true, "nil": true, "na": true, "n a": true,
+	"no text": true, "no text visible": true, "no visible text": true,
+	"no text is visible": true, "nothing visible": true, "nothing is visible": true,
+	"there is no text": true, "no text present": true, "none visible": true,
+}
+
+// IsVisionFiller reports whether a normalised (VisionTokenKey) phrase is
+// "no text" filler rather than on-screen text.
+func IsVisionFiller(key string) bool { return visionFillerKeys[key] }
+
+// HasPositiveVisionCheck reports whether the step asks for positive
+// evidence of the expected screen (vision_verify, recognize or golden), as
+// opposed to only negative evidence (forbid) or "something changed"
+// (expect_change).
+func (st TestStep) HasPositiveVisionCheck() bool {
+	return st.VisionVerify || len(st.Recognize) > 0 || st.Golden != ""
+}
+
+// NeedsVisionModel reports whether the step's verdict requires a vision
+// model's answer (vision_verify, recognize or forbid).
+func (st TestStep) NeedsVisionModel() bool {
+	return st.VisionVerify || len(st.Recognize) > 0 || len(st.Forbid) > 0
+}
+
+// IsVisionGated reports whether the step can PASS only on positive,
+// frame-bound visual evidence: any vision key makes it gated.
+func (st TestStep) IsVisionGated() bool {
+	return st.NeedsVisionModel() || st.Golden != "" || st.ExpectChange
+}
+
+// ExactRecognize reports whether recognize tokens must equal a whole
+// transcription element (the default) rather than appear inside one
+// (recognize_contains).
+func (st TestStep) ExactRecognize() bool { return !st.RecognizeContains }
+
+// EffectivePHashMaxDistance returns the golden-match tolerance in bits.
+func (st TestStep) EffectivePHashMaxDistance() int {
+	if st.PHashMaxDistance != nil {
+		return *st.PHashMaxDistance
+	}
+	return DefaultPHashMaxDistance
+}
+
+// VisionTokenKey folds a recognize/forbid token (or any text) to the
+// form the deterministic token check compares: lower-case, every run of
+// non-letter/non-digit characters collapsed to one space, trimmed.
+func VisionTokenKey(s string) string {
+	// NFKC folds compatibility forms (fullwidth, ligatures, mathematical
+	// alphanumerics) to their plain letters; combining marks (Mn / Mc) are
+	// part of the word, except the optional Arabic / Hebrew vowel marks,
+	// which are dropped; format characters (zero-width
+	// space / joiner, BOM, soft hyphen, tags — Unicode Cf) and the other
+	// default-ignorable / variation-selector code points (isInvisibleNonFormat)
+	// are dropped, so none can split or disguise a token.
+	s = norm.NFKC.String(s)
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(s) {
+		if unicode.Is(unicode.Cf, r) || isInvisibleNonFormat(r) {
+			continue
+		}
+		if isOptionalVowelMark(r) || r == '\u0640' {
+			// Optional vowel marks and the Arabic tatweel (kashida, a
+			// stretching glyph) are not letters of the word.
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			space = false
+			b.WriteRune(r)
+			continue
+		}
+		space = true
+	}
+	return b.String()
+}
+
+// isInvisibleNonFormat reports the invisible code points OUTSIDE Unicode
+// Cf that would otherwise split or disguise a token: the
+// Other_Default_Ignorable_Code_Point set (combining grapheme joiner U+034F,
+// Hangul fillers U+115F / U+1160 / U+3164 / U+FFA0 — letters, so not
+// separators either — Khmer U+17B4 / U+17B5) and the Variation_Selector set
+// (U+FE00..U+FE0F, U+E0100..U+E01EF, Mongolian U+180B..).
+func isInvisibleNonFormat(r rune) bool {
+	return unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Variation_Selector, r)
+}
+
+// optionalVowelMarks are the Arabic harakat and the Hebrew niqqud /
+// cantillation marks: optional vowel / reading marks that the same word is
+// written with or without, so they are dropped. Every OTHER combining mark
+// (Devanagari / Thai vowel signs, Latin accents without a precomposed form)
+// is part of the word.
+var optionalVowelMarks = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x0591, Hi: 0x05BD, Stride: 1},
+		{Lo: 0x05BF, Hi: 0x05BF, Stride: 1},
+		{Lo: 0x05C1, Hi: 0x05C2, Stride: 1},
+		{Lo: 0x05C4, Hi: 0x05C5, Stride: 1},
+		{Lo: 0x05C7, Hi: 0x05C7, Stride: 1},
+		{Lo: 0x0610, Hi: 0x061A, Stride: 1},
+		{Lo: 0x064B, Hi: 0x065F, Stride: 1},
+		{Lo: 0x0670, Hi: 0x0670, Stride: 1},
+		{Lo: 0x06D6, Hi: 0x06DC, Stride: 1},
+		{Lo: 0x06DF, Hi: 0x06E4, Stride: 1},
+		{Lo: 0x06E7, Hi: 0x06E8, Stride: 1},
+		{Lo: 0x06EA, Hi: 0x06ED, Stride: 1},
+		{Lo: 0x08D3, Hi: 0x08FF, Stride: 1},
+	},
+}
+
+// isOptionalVowelMark reports an Arabic / Hebrew optional vowel mark.
+func isOptionalVowelMark(r rune) bool {
+	return unicode.Is(unicode.Mn, r) && unicode.Is(optionalVowelMarks, r)
+}
+
+// validateVisionAssertions refuses vision keys that would assert nothing
+// or contradict themselves, so a gated step can never pass vacuously.
+func (st *TestStep) validateVisionAssertions(caseID string, idx int) string {
+	if st.PHashMaxDistance != nil {
+		if st.Golden == "" {
+			return fmt.Sprintf("test case %s step %d: phash_max_distance without golden — "+
+				"there is no reference to measure the distance to", caseID, idx)
+		}
+		if d := *st.PHashMaxDistance; d < 0 || d > MaxPHashMaxDistance {
+			return fmt.Sprintf("test case %s step %d: phash_max_distance %d is outside 0..%d "+
+				"(two unrelated frames differ by ~32 of 64 bits; a wider tolerance would "+
+				"accept a different screen)", caseID, idx, d, MaxPHashMaxDistance)
+		}
+	}
+	if st.IsVisionGated() {
+		if kind, _ := st.ParseAction(); kind == ActionTypeDescription {
+			return fmt.Sprintf("test case %s step %d: vision keys on a prose/description action — the "+
+				"action is not executable, so the step would be skipped and its vision check never "+
+				"made; use screenshot, sleep: or a real UI action", caseID, idx)
+		}
+		if kind, _ := st.ParseAction(); kind.IsNonScreen() {
+			return fmt.Sprintf("test case %s step %d: vision keys (vision_verify, recognize, forbid, "+
+				"golden, expect_change) are only meaningful on a screen action, but this step's "+
+				"action is %q — its verdict is its own exit code / response, not the screen",
+				caseID, idx, string(kind))
+		}
+		if !st.HasPositiveVisionCheck() {
+			return fmt.Sprintf("test case %s step %d: expect_change / forbid alone is not a positive "+
+				"check — any change (a crash dialog included) or any screen without the forbidden "+
+				"text would pass; add vision_verify, recognize or golden", caseID, idx)
+		}
+	}
+	if st.Golden != "" {
+		g := st.Golden
+		if strings.ContainsAny(g, `/\`) || strings.Contains(g, "..") || strings.TrimSpace(g) != g {
+			return fmt.Sprintf("test case %s step %d: golden %q must be a bare id "+
+				"(no path separators, no '..', no surrounding space)", caseID, idx, g)
+		}
+	}
+	if st.RecognizeExact && len(st.Recognize) == 0 {
+		return fmt.Sprintf("test case %s step %d: recognize_exact without recognize — "+
+			"there is no token to match exactly", caseID, idx)
+	}
+	if st.RecognizeContains && len(st.Recognize) == 0 {
+		return fmt.Sprintf("test case %s step %d: recognize_contains without recognize — "+
+			"there is no token to match", caseID, idx)
+	}
+	if st.RecognizeContains && st.RecognizeExact {
+		return fmt.Sprintf("test case %s step %d: recognize_contains and recognize_exact "+
+			"contradict each other — set at most one", caseID, idx)
+	}
+	recognized := map[string]bool{}
+	for _, tok := range st.Recognize {
+		k := VisionTokenKey(tok)
+		if k == "" {
+			return fmt.Sprintf("test case %s step %d: recognize token %q is empty after "+
+				"normalisation — it would match every description", caseID, idx, tok)
+		}
+		if IsVisionFiller(k) {
+			return fmt.Sprintf("test case %s step %d: recognize token %q is filler a model writes "+
+				"when there is NO text (it is dropped from the transcription)", caseID, idx, tok)
+		}
+		recognized[k] = true
+	}
+	for _, tok := range st.Forbid {
+		k := VisionTokenKey(tok)
+		if k == "" {
+			return fmt.Sprintf("test case %s step %d: forbid token %q is empty after "+
+				"normalisation — it would forbid every description", caseID, idx, tok)
+		}
+		if IsVisionFiller(k) {
+			return fmt.Sprintf("test case %s step %d: forbid token %q is filler a model writes "+
+				"when there is NO text (it is dropped from the transcription)", caseID, idx, tok)
+		}
+		if recognized[k] {
+			return fmt.Sprintf("test case %s step %d: token %q is both recognized and "+
+				"forbidden — the step could never pass", caseID, idx, tok)
+		}
+	}
+	if len(st.Forbid) > 0 && len(st.Recognize) == 0 {
+		return fmt.Sprintf("test case %s step %d: forbid without recognize — the absence of a "+
+			"forbidden token is only credited when the same reading matched a recognize token "+
+			"(proof the model read the screen); add recognize", caseID, idx)
+	}
+	return ""
+}
+
+// CheckShellOutcome is the single verdict function for a `shell:` step. Both
+// shell executors (the bank-driven runner and the autonomous executor) call
+// it with the command's real exit code and combined stdout+stderr, so the two
+// paths cannot drift apart.
+//
+//   - no expect_exit: the command must exit 0 (the established behaviour);
+//   - expect_exit N: the command must exit exactly N;
+//   - expect_output_contains S: the combined output must contain S.
+//
+// It returns ok=true with an empty message, or ok=false with a message naming
+// what was expected and what was observed.
+func (st TestStep) CheckShellOutcome(exitCode int, output string) (bool, string) {
+	want := 0
+	if st.ExpectExit != nil {
+		want = *st.ExpectExit
+	}
+	if exitCode != want {
+		if st.ExpectExit == nil {
+			return false, fmt.Sprintf("shell exited %d", exitCode)
+		}
+		return false, fmt.Sprintf("shell exited %d, expected %d", exitCode, want)
+	}
+	if st.ExpectOutputContains != nil {
+		if *st.ExpectOutputContains == "" {
+			return false, "expect_output_contains is empty — an empty substring matches everything, refusing to pass"
+		}
+		if !strings.Contains(output, *st.ExpectOutputContains) {
+			return false, fmt.Sprintf("output does not contain %q", *st.ExpectOutputContains)
+		}
+	}
+	return true, ""
+}
+
+// DependencyOrder orders ids so that every id comes after the ids it
+// depends on (Kahn's algorithm; among the ids that are ready the smallest
+// comes first, so the order is deterministic and ID is the tie-break).
+// A dependency on an id outside the set is ignored (it is not part of this
+// run). Ids in a dependency cycle, or depending on one, cannot be ordered:
+// they are returned, sorted, in cyclic — callers must not run them.
+func DependencyOrder(ids []string, deps map[string][]string) (order, cyclic []string) {
+	in := map[string]bool{}
+	for _, id := range ids {
+		in[id] = true
+	}
+	indeg := map[string]int{}
+	users := map[string][]string{}
+	for _, id := range ids {
+		seen := map[string]bool{}
+		for _, d := range deps[id] {
+			if !in[d] || seen[d] {
+				continue
+			}
+			seen[d] = true
+			indeg[id]++
+			users[d] = append(users[d], id)
+		}
+	}
+	var ready []string
+	for _, id := range ids {
+		if indeg[id] == 0 {
+			ready = append(ready, id)
+		}
+	}
+	sort.Strings(ready)
+	placed := map[string]bool{}
+	for len(ready) > 0 {
+		id := ready[0]
+		ready = ready[1:]
+		if placed[id] {
+			continue
+		}
+		placed[id] = true
+		order = append(order, id)
+		for _, u := range users[id] {
+			indeg[u]--
+			if indeg[u] == 0 {
+				ready = append(ready, u)
+			}
+		}
+		sort.Strings(ready)
+	}
+	for _, id := range ids {
+		if !placed[id] {
+			cyclic = append(cyclic, id)
+		}
+	}
+	sort.Strings(cyclic)
+	return order, cyclic
+}
+
+// DefaultStatusHTTPSteps lists the `http:` steps that declare no
+// expect_status and therefore rely on the default 2xx expectation, as
+// `<case> step <i> "<name>" (<action>)`: active (executed) steps and
+// `_skip: true` steps separately. Callers print them at load so a bank
+// author sees which steps changed meaning when the default became 2xx.
+func DefaultStatusHTTPSteps(cases []TestCase) (active, skipped []string) {
+	for _, tc := range cases {
+		for i, st := range tc.Steps {
+			if k, _ := st.ParseAction(); k != ActionTypeHTTP || st.ExpectStatus != 0 {
+				continue
+			}
+			row := fmt.Sprintf("%s step %d %q (%s)", tc.ID, i, st.Name, strings.TrimSpace(st.Action))
+			if st.Skip {
+				skipped = append(skipped, row)
+			} else {
+				active = append(active, row)
+			}
+		}
+	}
+	return active, skipped
 }

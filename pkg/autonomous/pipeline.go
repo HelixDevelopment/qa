@@ -65,6 +65,13 @@ type PipelineConfig struct {
 	// reconciliation.
 	BanksDir string
 
+	// VisionGoldensDir holds the reference images that bank
+	// steps name with `golden: <id>` (<id>.png/.jpg/.jpeg).
+	// When empty, env HELIXQA_GOLDENS_DIR is used; when both
+	// are empty a golden step is BLOCKED (could not determine),
+	// never passed.
+	VisionGoldensDir string
+
 	// HTTPBaseURL is the root URL the structured executor
 	// uses for ActionTypeHTTP steps (e.g.
 	// "http://thinker.local:8092"). When empty, the executor
@@ -252,13 +259,53 @@ type PipelineResult struct {
 	CoveragePct    float64          `json:"coverage_pct"`
 	Cost           *llm.CostSummary `json:"cost,omitempty"`
 	Error          string           `json:"error,omitempty"`
+
+	// Structured is the Phase 3.5 structured test-bank outcome, per case
+	// and per step (frame sha256 / pHash included). Nil when the phase
+	// did not run.
+	Structured *StructuredExecutionResult `json:"structured,omitempty"`
+	// StructuredError records why the structured phase could not run
+	// (e.g. banks failed to load).
+	StructuredError string `json:"structured_error,omitempty"`
+}
+
+// ExitCode is the process exit status for this session, on the
+// three-valued contract: 1 when the session failed or a structured case
+// FAILED; 2 when a structured case was BLOCKED (could not determine), when
+// structured cases ran but none passed, when the session itself was
+// BLOCKED (preflight network / VPN, provider outage in learn / plan, a
+// timeout), or when the structured phase could not run its banks; 0
+// otherwise. A finding (1) outranks could-not-determine
+// (2). A session whose structured phase ran no case makes no structured
+// claim and is judged on its other phases alone.
+func (r *PipelineResult) ExitCode() int {
+	if r.Status == StatusFailed {
+		return 1
+	}
+	if r.Structured != nil && r.Structured.TestCasesRun > 0 {
+		if c := r.Structured.ExitCode(); c != 0 {
+			return c
+		}
+	}
+	if r.Status == StatusBlocked {
+		// The session stopped for an environment reason (network / VPN,
+		// provider outage, timeout) — could not determine.
+		return 2
+	}
+	if r.StructuredError != "" {
+		return 2
+	}
+	return 0
 }
 
 // SessionPipeline orchestrates the four-phase autonomous QA
 // pipeline: learn, plan, execute, analyze.
 type SessionPipeline struct {
-	config   *PipelineConfig
-	provider llm.Provider
+	// preflight replaces preflightCheck when set (tests inject the
+	// network outcome instead of depending on the host's DNS).
+	preflight func(context.Context) error
+	config    *PipelineConfig
+	provider  llm.Provider
 	// chatProvider is used for reasoning-heavy phases (Plan,
 	// Analyze report generation). When nil, falls back to the
 	// shared provider.
@@ -643,8 +690,11 @@ func (sp *SessionPipeline) Run(
 	// regardless of which return statement fires.
 	defer func() {
 		v := conduit.VerdictPass
-		if result.Status == StatusFailed {
+		switch result.Status {
+		case StatusFailed:
 			v = conduit.VerdictFail
+		case StatusBlocked:
+			v = conduit.VerdictOperatorBlocked
 		}
 		conduit.SessionEnd(sp.sink(), sessionID, v,
 			fmt.Sprintf("status=%s", result.Status))
@@ -654,8 +704,14 @@ func (sp *SessionPipeline) Run(
 	// Fail fast with a clear message if Mullvad or another
 	// VPN is actively blocking DNS. This prevents cryptic
 	// "all providers failed" errors later in the plan phase.
-	if err := sp.preflightCheck(ctx); err != nil {
-		result.Status = StatusFailed
+	preflight := sp.preflightCheck
+	if sp.preflight != nil {
+		preflight = sp.preflight
+	}
+	if err := preflight(ctx); err != nil {
+		// The network / VPN is not usable: nothing about the app was
+		// judged — BLOCKED (exit 2), never a FAILED verdict.
+		result.Status = StatusBlocked
 		result.Error = err.Error()
 		result.Duration = time.Since(start)
 		now := time.Now()
@@ -1183,7 +1239,8 @@ func (sp *SessionPipeline) Run(
 		sp.config.ProjectRoot, sp.store,
 	)
 	if err != nil {
-		result.Status = StatusFailed
+		// The project could not be read: environment, not an app verdict.
+		result.Status = StatusBlocked
 		result.Error = fmt.Sprintf("learn phase: %v", err)
 		result.Duration = time.Since(start)
 		sp.updateSession(sessionID, result)
@@ -1275,7 +1332,8 @@ func (sp *SessionPipeline) Run(
 		ctx, kb, sp.config.Platforms,
 	)
 	if err != nil {
-		result.Status = StatusFailed
+		// Provider outage / timeout while planning: no test ran.
+		result.Status = StatusBlocked
 		result.Error = fmt.Sprintf("plan phase: %v", err)
 		result.Duration = time.Since(start)
 		sp.updateSession(sessionID, result)
@@ -1554,7 +1612,9 @@ func (sp *SessionPipeline) Run(
 					time.Millisecond,
 				),
 			)
-			result.Status = StatusFailed
+			// The session ran out of time: the remaining tests were
+			// never judged — BLOCKED, not FAILED.
+			result.Status = StatusBlocked
 			result.Error = fmt.Sprintf(
 				"context canceled during execution "+
 					"after %d/%d tests",
@@ -1833,12 +1893,11 @@ func (sp *SessionPipeline) Run(
 	// ── Phase 3.5: Structured Test Bank Execution ──────
 	sp.setPhase("structured")
 	fmt.Println("[pipeline] Phase 3.5: Structured test bank execution")
-	structuredStart := time.Now()
-
-	structuredExec := NewStructuredTestExecutor(
-		*sp.config,
+	sp.runStructuredPhase(
+		ctx,
 		execFactory,
 		sp.selectProviderForPhase("structured"),
+		result,
 		func(f analysis.AnalysisFinding) {
 			allFindings = append(allFindings, f)
 		},
@@ -1847,25 +1906,6 @@ func (sp *SessionPipeline) Run(
 			_ = data
 		},
 	)
-
-	structuredResult, err := structuredExec.Execute(ctx)
-	if err != nil {
-		fmt.Printf(
-			"  [structured] Execution error: %v\n", err,
-		)
-	} else {
-		fmt.Printf(
-			"  [structured] Completed: %d passed, %d failed, "+
-				"%d skipped (bank placeholders), %d total, "+
-				"%d steps executed in %v\n",
-			structuredResult.TestCasesPassed,
-			structuredResult.TestCasesFailed,
-			structuredResult.TestCasesSkipped,
-			structuredResult.TestCasesRun,
-			structuredResult.StepsExecuted,
-			time.Since(structuredStart).Round(time.Millisecond),
-		)
-	}
 
 	// ── Phase 3.6: Curiosity-Driven Exploration ────────
 	if sp.config.CuriosityEnabled {
@@ -3036,7 +3076,7 @@ func (sp *SessionPipeline) Run(
 		}
 	}
 
-	result.IssuesFound = len(allFindings)
+	result.IssuesFound = len(appDefectFindings(allFindings))
 
 	// ── BugReproducer: confirm high-severity bugs ───────
 	// After analysis finds issues, attempt to reproduce
@@ -3973,6 +4013,47 @@ func selectEvenly(items []string, max int) []string {
 	return selected
 }
 
+// runStructuredPhase runs Phase 3.5 (structured test-bank execution) and
+// records its outcome on the session result.
+func (sp *SessionPipeline) runStructuredPhase(
+	ctx context.Context,
+	execFactory ExecutorFactory,
+	vision llm.Provider,
+	result *PipelineResult,
+	onFinding func(analysis.AnalysisFinding),
+	onScreenshot func(platform string, data []byte),
+) {
+	structuredStart := time.Now()
+	structuredExec := NewStructuredTestExecutor(
+		*sp.config, execFactory, vision, onFinding, onScreenshot,
+	)
+	structuredResult, err := structuredExec.Execute(ctx)
+	// Record the outcome on the session result: it is persisted by
+	// WriteReport (per-case verdicts, per-step frame sha256 / pHash) and
+	// drives the process exit code (PipelineResult.ExitCode).
+	result.Structured = structuredResult
+	if err != nil {
+		result.StructuredError = err.Error()
+		fmt.Printf(
+			"  [structured] Execution error: %v\n", err,
+		)
+	} else {
+		fmt.Printf(
+			"  [structured] Completed: %d passed, %d failed, "+
+				"%d blocked (could not determine), "+
+				"%d skipped (bank placeholders), %d total, "+
+				"%d steps executed in %v\n",
+			structuredResult.TestCasesPassed,
+			structuredResult.TestCasesFailed,
+			structuredResult.TestCasesBlocked,
+			structuredResult.TestCasesSkipped,
+			structuredResult.TestCasesRun,
+			structuredResult.StepsExecuted,
+			time.Since(structuredStart).Round(time.Millisecond),
+		)
+	}
+}
+
 // WriteReport writes the PipelineResult as JSON to
 // OutputDir/pipeline-report.json.
 func (sp *SessionPipeline) WriteReport(
@@ -4498,11 +4579,28 @@ func sanitizeFilename(s string) string {
 // findingsToReproBugs converts high-severity analysis
 // findings into Bug structs for the BugReproducer. Only
 // findings with "critical" or "high" severity are included.
+// appDefectFindings keeps only findings that claim a defect in the app
+// under test (drops environment findings such as BLOCKED vision cases).
+func appDefectFindings(findings []analysis.AnalysisFinding) []analysis.AnalysisFinding {
+	out := make([]analysis.AnalysisFinding, 0, len(findings))
+	for _, f := range findings {
+		if f.Category.IsAppDefect() {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func findingsToReproBugs(
 	findings []analysis.AnalysisFinding,
 ) []reproduce.Bug {
 	var bugs []reproduce.Bug
 	for i, f := range findings {
+		if !f.Category.IsAppDefect() {
+			// The QA run could not judge (e.g. vision unavailable):
+			// there is no app bug to reproduce.
+			continue
+		}
 		sev := strings.ToLower(string(f.Severity))
 		if sev != "critical" && sev != "high" {
 			continue

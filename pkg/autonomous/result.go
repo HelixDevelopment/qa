@@ -20,6 +20,10 @@ const (
 	StatusComplete SessionStatus = "complete"
 	StatusFailed   SessionStatus = "failed"
 	StatusCanceled SessionStatus = "canceled"
+	// StatusBlocked: the session stopped for an environment reason (network
+	// / VPN preflight, provider outage, timeout) — could not determine, never
+	// a FAILED verdict about the app.
+	StatusBlocked SessionStatus = "blocked"
 )
 
 // SessionResult captures the complete outcome of an autonomous

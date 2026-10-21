@@ -129,7 +129,9 @@ func (c ProviderConfig) Validate() error {
 		// Loopback engine: base_url defaults to http://127.0.0.1:8082
 		// and no API key exists.
 		return nil
-	case ProviderOllama, ProviderUITars:
+	case ProviderOllama, ProviderUITars, ProviderVisionEndpoint:
+		// Self-hosted endpoints: the URL is required, an API key is
+		// optional (a local llama-server needs none).
 		if c.BaseURL == "" {
 			return fmt.Errorf(
 				"llm: provider %q requires base_url", c.Name,

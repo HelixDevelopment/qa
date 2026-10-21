@@ -353,7 +353,15 @@ func (h *HTTPExecutor) Execute(
 	h.lastHeaders = resp.Header
 	h.mu.Unlock()
 
-	// Assertions
+	// Assertions. With no expect_status a 2xx is expected: an http: step
+	// with no expectation must not pass on a 500 / 404 error page.
+	if step.ExpectStatus == 0 && (resp.StatusCode < 200 || resp.StatusCode > 299) {
+		return ActionResult{
+			Success: false,
+			Message: fmt.Sprintf("http: %s %s → status %d; no expect_status is declared, so a 2xx is expected (body: %s)",
+				method, path, resp.StatusCode, truncateOutput(body, 200)),
+		}
+	}
 	if step.ExpectStatus != 0 && resp.StatusCode != step.ExpectStatus {
 		return ActionResult{
 			Success: false,

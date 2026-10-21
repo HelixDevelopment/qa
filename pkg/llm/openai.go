@@ -8,9 +8,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -19,6 +20,17 @@ const (
 	openaiDefaultBaseURL = "https://api.openai.com"
 	openaiDefaultModel   = "gpt-4o"
 	openaiHTTPTimeout    = 180 * time.Second
+
+	// openaiMaxResponseBytes caps how much of a reply is read; a larger
+	// body is refused rather than buffered without limit.
+	openaiMaxResponseBytes = 8 << 20
+	// openaiErrorBodySnippet caps how much of an error reply is quoted in
+	// the returned error (error text reaches logs and reports).
+	openaiErrorBodySnippet = 512
+	// visionEndpointSeed is the fixed sampling seed sent to the
+	// operator-supplied vision endpoint so the same frame gets the same
+	// answer (together with temperature 0).
+	visionEndpointSeed = 1
 )
 
 // openaiProvider implements Provider for the OpenAI API.
@@ -48,13 +60,25 @@ var visionCapableProviders = map[string]bool{
 	"qwen":             true, // Alibaba Qwen3-VL — ~90% UI grounding accuracy
 	"stepfun":          true, // Stepfun Step-GUI — GUI-specialized vision
 	"astica":           true, // Astica.AI — specialized vision API (captioning, OCR, object detection)
+	// Operator-supplied OpenAI-compatible vision endpoint
+	// (HELIX_VISION_ENDPOINT, e.g. a local llama-server).
+	ProviderVisionEndpoint: true,
 }
 
 // openaiRequest is the JSON body sent to /v1/chat/completions.
 type openaiRequest struct {
-	Model     string         `json:"model"`
+	// Model is omitted when empty: an OpenAI-compatible local server
+	// (llama-server) then answers with the model it serves.
+	Model     string         `json:"model,omitempty"`
 	MaxTokens int            `json:"max_tokens"`
 	Messages  []openaiReqMsg `json:"messages"`
+	// Temperature / Seed are sent only to the vision endpoint (fixed,
+	// deterministic sampling); other providers keep their defaults.
+	Temperature *float64 `json:"temperature,omitempty"`
+	Seed        *int     `json:"seed,omitempty"`
+	// ResponseFormat is sent only to the vision endpoint, when the caller
+	// asked for a schema-constrained JSON reply (WithResponseSchema).
+	ResponseFormat map[string]any `json:"response_format,omitempty"`
 }
 
 // openaiReqMsg is a single outbound message whose content is an
@@ -112,7 +136,9 @@ func NewOpenAIProvider(cfg ProviderConfig) Provider {
 		baseURL = openaiDefaultBaseURL
 	}
 	model := cfg.Model
-	if model == "" {
+	if model == "" && cfg.Name != ProviderVisionEndpoint {
+		// The vision endpoint keeps an empty model: the request then
+		// omits "model" and the local server uses the one it serves.
 		model = openaiDefaultModel
 	}
 	name := cfg.Name
@@ -229,6 +255,11 @@ func (p *openaiProvider) Vision(
 		MaxTokens: 4096,
 		Messages:  msgs,
 	}
+	if p.providerName == ProviderVisionEndpoint {
+		if schema := responseSchemaFrom(ctx); schema != nil {
+			req.ResponseFormat = map[string]any{"type": "json_object", "schema": schema}
+		}
+	}
 	return p.doRequest(ctx, req)
 }
 
@@ -238,6 +269,10 @@ func (p *openaiProvider) doRequest(
 	ctx context.Context,
 	req openaiRequest,
 ) (*Response, error) {
+	if p.providerName == ProviderVisionEndpoint {
+		temp, seed := 0.0, visionEndpointSeed
+		req.Temperature, req.Seed = &temp, &seed
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai: marshal request: %w", err)
@@ -246,13 +281,7 @@ func (p *openaiProvider) doRequest(
 	// Build the endpoint URL. Most providers use /v1/, but
 	// some (e.g. Z.AI/zhipu) use /v4/. If the baseURL already
 	// ends with a version path, append only /chat/completions.
-	endpoint := p.baseURL + "/v1/chat/completions"
-	for _, vp := range []string{"/v1", "/v2", "/v3", "/v4", "/v5"} {
-		if strings.HasSuffix(p.baseURL, vp) {
-			endpoint = p.baseURL + "/chat/completions"
-			break
-		}
-	}
+	endpoint := chatCompletionsURL(p.baseURL)
 
 	httpReq, err := http.NewRequestWithContext(
 		ctx,
@@ -263,26 +292,32 @@ func (p *openaiProvider) doRequest(
 	if err != nil {
 		return nil, fmt.Errorf("openai: create request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	// A keyless self-hosted endpoint gets no Authorization header
+	// rather than a malformed "Bearer " one.
+	if p.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	httpResp, err := p.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openai: send request: %w", err)
+		return nil, fmt.Errorf("openai: send request: %w", scrubURLError(err))
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, tooBig, err := readCappedBody(httpResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("openai: read response body: %w", err)
 	}
-
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(
 			"openai: API error %d: %s",
 			httpResp.StatusCode,
-			string(respBody),
+			errorBodyText(respBody, p.apiKey),
 		)
+	}
+	if tooBig {
+		return nil, fmt.Errorf("openai: response body exceeds %d bytes — refused", openaiMaxResponseBytes)
 	}
 
 	var apiResp openaiResponse
@@ -301,4 +336,47 @@ func (p *openaiProvider) doRequest(
 		InputTokens:  apiResp.Usage.PromptTokens,
 		OutputTokens: apiResp.Usage.CompletionTokens,
 	}, nil
+}
+
+// chatCompletionsURL appends the chat-completions path to the base URL's
+// PATH (keeping any query after it). Most providers use /v1/, but some
+// (e.g. Z.AI/zhipu) use /v4/: if the path already ends with a version
+// segment only /chat/completions is appended.
+func chatCompletionsURL(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base + "/v1/chat/completions"
+	}
+	path := strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(path, "/chat/completions") {
+		// The base already names the endpoint: use it as is.
+		u.Path = path
+		u.RawPath = ""
+		return u.String()
+	}
+	suffix := "/v1/chat/completions"
+	for _, vp := range []string{"/v1", "/v2", "/v3", "/v4", "/v5"} {
+		if strings.HasSuffix(path, vp) {
+			suffix = "/chat/completions"
+			break
+		}
+	}
+	u.Path = path + suffix
+	u.RawPath = ""
+	return u.String()
+}
+
+// scrubURLError removes user info, query and fragment from the URL a
+// transport error quotes (*url.Error), so a secret pasted into an endpoint
+// URL cannot reach a log, a BLOCKED reason, a finding or a report.
+func scrubURLError(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	shown := "(endpoint)"
+	if u, perr := url.Parse(ue.URL); perr == nil && u.Host != "" {
+		shown = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	}
+	return fmt.Errorf("%s %q: %w", ue.Op, shown, ue.Err)
 }

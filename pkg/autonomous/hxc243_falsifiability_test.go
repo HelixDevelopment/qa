@@ -145,12 +145,13 @@ func TestHXC243_PreFixStepsWouldHaveBluffPassed(t *testing.T) {
 		method, path := parseHTTPAction(strings.TrimSpace(strings.TrimPrefix(step.Action, "http:")))
 		h := NewHTTPExecutor(badSrv.URL)
 		res := h.Execute(context.Background(), method, path, step)
-		assert.True(t, res.Success,
-			"BEFORE (pre-fix, HEAD content of ADM-026/ADM-029): expected the "+
-				"undocumented HXC-243 bug to reproduce — Success=true against a "+
-				"service answering every request with 500 — but got Success=false "+
-				"(message=%q). If this no longer reproduces, the demonstrated "+
-				"scenario this fix is based on cannot be re-verified.", res.Message)
+		// Round 8 (review round 7, finding 6) closed the bug CLASS at the
+		// executor: an http: step with no expect_status now expects a 2xx,
+		// so even the pre-fix step literals FAIL against the broken service.
+		assert.False(t, res.Success,
+			"pre-fix step literal (no expectation) against a service answering "+
+				"every request with 500 must FAIL (default 2xx expectation), got "+
+				"Success=true (message=%q)", res.Message)
 	}
 
 	for _, cid := range []string{"ADM-026", "ADM-029"} {

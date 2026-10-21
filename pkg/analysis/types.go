@@ -45,7 +45,20 @@ const (
 	// text, placeholder strings, or missing
 	// localisation.
 	CategoryContent FindingCategory = "content"
+
+	// CategoryEnvironment records that the QA run itself could not judge
+	// something (e.g. a vision-gated step BLOCKED because no vision
+	// provider answered). It is NOT a defect of the app under test: it is
+	// never sent to bug reproduction, never ticketed as a bug, and not
+	// counted as an issue found.
+	CategoryEnvironment FindingCategory = "environment"
 )
+
+// IsAppDefect reports whether a finding of this category claims a defect
+// in the application under test.
+func (c FindingCategory) IsAppDefect() bool {
+	return c != CategoryEnvironment
+}
 
 // FindingSeverity describes how serious a finding is and
 // how urgently it should be addressed.
