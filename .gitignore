@@ -99,3 +99,7 @@ qa-results/
 *.pem
 *.key
 keys/
+
+# Third-party tool checkouts live flat in the consumer project (see docs/flat-tools-manifest.tsv)
+/tools/opensource/
+/tools/test-apps/

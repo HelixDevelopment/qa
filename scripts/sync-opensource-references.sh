@@ -39,18 +39,19 @@ printf '%s\n' "$(printf '=%.0s' {1..160})"
 
 # shellcheck source=resolve_tool.sh
 source "$ROOT_DIR/scripts/resolve_tool.sh"
-TOOLS_ROOT="${HELIXQA_TOOLS_DIR:-}"
-if [[ -z "$TOOLS_ROOT" ]]; then
-  if [[ "$(basename "$(dirname "$ROOT_DIR")")" == "submodules" ]]; then
-    TOOLS_ROOT="$(dirname "$ROOT_DIR")"
-  else
-    TOOLS_ROOT="$ROOT_DIR/tools/opensource"
-  fi
-fi
-for dir in "$TOOLS_ROOT"/*/; do
-  name=$(basename "$dir")
-  [[ "$dir" == "$ROOT_DIR/" ]] && continue
-  resolved=$(helixqa_resolve_tool "$name" "$ROOT_DIR" 2>/dev/null) || continue
+
+# Iterate ONLY the documented tool list (never glob a parent submodules/
+# directory: it holds the consumer's first-party submodules).
+MANIFEST="${HELIXQA_MANIFEST:-$ROOT_DIR/docs/flat-tools-manifest.tsv}"
+[[ -r "$MANIFEST" ]] || { echo "manifest not readable: $MANIFEST" >&2; exit 2; }
+
+while IFS=$'\t' read -r old_path _new _url _sha <&3; do
+  [[ "$old_path" == "old_path" || -z "$old_path" ]] && continue
+  name=$(basename "$old_path")
+  resolved=$(helixqa_resolve_tool "$name" "$ROOT_DIR" 2>/dev/null) || {
+    printf '%-45s %-45s %-45s %s\n' "$name" "-" "-" "NOT-FOUND"
+    continue
+  }
   cd "$resolved"
 
   # Guard against dirty working tree.
@@ -92,7 +93,7 @@ for dir in "$TOOLS_ROOT"/*/; do
 
   printf '%-45s %-45s %-45s %s\n' "$name" "$pinned" "$remote_tip" "$state"
   cd "$ROOT_DIR"
-done
+done 3< "$MANIFEST"
 
 echo
 echo "NEXT STEPS:"

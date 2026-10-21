@@ -186,7 +186,7 @@ Each pass generates different test cases, explores different paths, and accumula
 
 ## Integrated Open-Source Tools
 
-22 tools available as submodules in `tools/opensource/`:
+22 tools available as submodules (flat `<root>/submodules/<snake_name>/`, see `docs/flat-tools-manifest.tsv`; legacy fallback `tools/opensource/<name>`):
 
 | Tool | Purpose |
 |------|---------|

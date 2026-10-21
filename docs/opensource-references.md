@@ -1,7 +1,7 @@
 # Open-Source Reference Codebases
 
 This document tracks every OSS codebase HelixQA vendors as a git
-submodule under `tools/opensource/`. The purpose is **reference
+submodule. (Layout note: the tool repos are no longer nested submodules of HelixQA. A consumer project adds each one flat at `<root>/submodules/<snake_name>/`; the list with pinned SHAs is `docs/flat-tools-manifest.tsv`. Tools are located by `pkg/opensource.ResolveTool` / `scripts/resolve_tool.sh`: `$HELIXQA_TOOLS_DIR/<name>`, then the sibling `<root>/submodules/<snake_name>`, then the legacy `tools/opensource/<name>` fallback.) The table keys below keep the historical `tools/opensource/<name>` spelling. The purpose is **reference
 study** — HelixQA ports *patterns* from these frameworks, not
 compiled code. Pinning via submodules lets the team inspect the
 exact source the OpenClawing2.md analysis draws from, without
@@ -135,14 +135,16 @@ future `OC-REF-001` challenge assert that every `tools/opensource/*`
 directory has a matching row in this document. The CI grep gate is:
 
 ```sh
-for dir in tools/opensource/*/; do
-  name=$(basename "$dir")
+# iterate the manifest (never glob a consumer's submodules/ directory)
+tail -n +2 docs/flat-tools-manifest.tsv | cut -f1 | while read -r old; do
+  name=$(basename "$old")
   grep -q "tools/opensource/$name" docs/opensource-references.md ||
     echo "MISSING: $name not documented"
 done
 ```
+(The Go equivalent is `pkg/opensource.AuditTools`, which resolves each manifest tool with `ResolveTool`.)
 
-Every new OSS submodule added to `tools/opensource/` must include
+Every new OSS tool (a row in `docs/flat-tools-manifest.tsv`) must include
 an entry here + a licence-inventory row in the same PR.
 
 ---

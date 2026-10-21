@@ -1,6 +1,6 @@
 # Licences Inventory — OSS Reference Submodules
 
-Every third-party codebase vendored under `tools/opensource/` must
+Every third-party codebase vendored as a tool submodule (flat `<root>/submodules/<snake_name>/`, legacy `tools/opensource/<name>`; see `docs/flat-tools-manifest.tsv`) must
 appear below with its licence declared + compatibility status vs.
 HelixQA's own Apache-2.0 licence. Reviewers re-read this table every
 time a new submodule lands, and quarterly for existing entries.

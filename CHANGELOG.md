@@ -5,11 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-21
+
+### Fixed
+
+- `scripts/sync-opensource-references.sh` iterates `docs/flat-tools-manifest.tsv` instead of globbing the tools directory, so it can never fetch/pull a consumer project's first-party submodules.
+- `pkg/opensource` audit resolves each manifest tool (`AuditTools`); in a consumer layout a missing tools tree fails instead of skipping.
 
 ### Changed
 
-- Third-party tool repos are no longer nested submodules under `tools/opensource/*`; they are flattened into the consumer project's `<root>/submodules/<snake_name>/` (manifest: `docs/flat-tools-manifest.tsv`). Resolution order (`pkg/opensource.ResolveTool`, `scripts/resolve_tool.sh`): `$HELIXQA_TOOLS_DIR/<name>`, sibling `<parent>/<snake_name>` when HelixQA sits in a `submodules` dir, then legacy `tools/opensource/<name>`.
+- Third-party tool repos are no longer nested submodules under `tools/opensource/*`; they are flattened into the consumer project's `<root>/submodules/<snake_name>/` (manifest: `docs/flat-tools-manifest.tsv`). Resolution order (`pkg/opensource.ResolveTool`, `scripts/resolve_tool.sh`; candidates must be non-empty dirs; names with `/` or `..` rejected): `$HELIXQA_TOOLS_DIR/<name>` (authoritative when set: a miss is an error), sibling `<parent>/<snake_name>` when HelixQA sits in a `submodules` dir, then legacy `tools/opensource/<name>`.
 
 ## [0.1.0] - 2026-03-18
 

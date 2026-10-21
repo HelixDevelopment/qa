@@ -10,6 +10,33 @@ import (
 	"testing"
 )
 
+// loadToolsOrSkip loads the manifest and applies the SKIP/FAIL rule:
+// in a consumer layout (HELIXQA_TOOLS_DIR set, or the module inside a
+// "submodules" dir) a missing tools tree is a FAILURE; only a standalone
+// helix_qa checkout where NO manifest tool resolves may skip.
+func loadToolsOrSkip(t *testing.T, repoRoot string) []Tool {
+	t.Helper()
+	tools, err := LoadManifest(filepath.Join(repoRoot, "docs", "flat-tools-manifest.tsv"))
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	var oss []Tool
+	for _, tl := range tools {
+		if strings.HasPrefix(tl.OldPath, "tools/opensource/") {
+			oss = append(oss, tl)
+		}
+	}
+	tools = oss
+	switch ToolsVerdict(repoRoot, tools) {
+	case VerdictFail:
+		_, missing := ResolveAll(repoRoot, tools)
+		t.Fatalf("consumer layout: tools missing (add at <root>/submodules/<snake_name>, see docs/flat-tools-manifest.tsv): %v", missing)
+	case VerdictSkip:
+		t.Skipf("standalone helix_qa with no tool checkouts (HELIXQA_TOOLS_DIR, sibling submodules/, tools/opensource) SKIP-OK: #opensource-vendor-tree-optional")
+	}
+	return tools
+}
+
 // TestAudit_P1_T9_EverySubmoduleDocumented locks in OpenClawing2
 // Phase 1 task P1.T9: every directory under tools/opensource/ must
 // have a matching entry in both docs/opensource-references.md and
@@ -17,19 +44,18 @@ import (
 // submodule the moment the PR lands.
 func TestAudit_P1_T9_EverySubmoduleDocumented(t *testing.T) {
 	repoRoot := findRepoRoot(t)
-	openSourceDir := ToolsRoot(repoRoot)
 	referencesDoc := filepath.Join(repoRoot, "docs", "opensource-references.md")
 	licencesDoc := filepath.Join(repoRoot, "docs", "licences-inventory.md")
+	tools := loadToolsOrSkip(t, repoRoot)
 
-	if _, err := os.Stat(openSourceDir); os.IsNotExist(err) {
-		t.Skipf("tools/opensource/ not present in this checkout SKIP-OK: #opensource-vendor-tree-optional")
-	}
-
-	result, err := Audit(openSourceDir, referencesDoc, licencesDoc)
+	result, err := AuditTools(repoRoot, referencesDoc, licencesDoc, tools)
 	if err != nil {
 		t.Fatalf("audit failed: %v", err)
 	}
 
+	if len(result.MissingTools) > 0 {
+		t.Logf("standalone checkout, tools not vendored: %v", result.MissingTools)
+	}
 	if len(result.MissingFromReferences) > 0 {
 		t.Errorf("submodules missing from opensource-references.md: %v",
 			result.MissingFromReferences)
@@ -97,10 +123,7 @@ func TestAudit_MissingSubmoduleSurfaces(t *testing.T) {
 // in the quarterly refresh queue.
 func TestLocateLicenceFile_OpenClawing2Set(t *testing.T) {
 	repoRoot := findRepoRoot(t)
-	openSourceDir := ToolsRoot(repoRoot)
-	if _, err := os.Stat(openSourceDir); os.IsNotExist(err) {
-		t.Skipf("tools/opensource/ not present SKIP-OK: #opensource-vendor-tree-optional")
-	}
+	loadToolsOrSkip(t, repoRoot)
 	openClawingSet := []string{
 		"browser-use",
 		"skyvern",
@@ -110,14 +133,13 @@ func TestLocateLicenceFile_OpenClawing2Set(t *testing.T) {
 		"anthropic-quickstarts",
 	}
 	for _, name := range openClawingSet {
-		path := filepath.Join(openSourceDir, name)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Skipf("OpenClawing2 reference submodule %s is not vendored SKIP-OK: #openclawing-vendor-optional", name)
-			continue
-		}
-		entries, _ := os.ReadDir(path)
-		if len(entries) == 0 {
-			t.Skipf("OpenClawing2 reference submodule %s is empty SKIP-OK: #openclawing-vendor-optional", name)
+		path, err := ResolveTool(repoRoot, name)
+		if err != nil {
+			if IsConsumerLayout(repoRoot) {
+				t.Errorf("consumer layout: OpenClawing2 reference tool %s missing: %v", name, err)
+			} else {
+				t.Logf("OpenClawing2 reference tool %s not vendored SKIP-OK: #openclawing-vendor-optional", name)
+			}
 			continue
 		}
 		if LocateLicenceFile(path) == "" {
@@ -133,18 +155,12 @@ func TestLocateLicenceFile_OpenClawing2Set(t *testing.T) {
 func TestLocateLicenceFile_PreExistingInfo(t *testing.T) {
 	// bluff-scan: nil-only-ok (registry helper — pre-existing info file must be located without error)
 	repoRoot := findRepoRoot(t)
-	openSourceDir := ToolsRoot(repoRoot)
-	if _, err := os.Stat(openSourceDir); os.IsNotExist(err) {
-		t.Skipf("tools/opensource/ not present SKIP-OK: #opensource-vendor-tree-optional")
-	}
-	err := WalkGitDirs(openSourceDir, func(name, path string) error {
+	tools := loadToolsOrSkip(t, repoRoot)
+	found, _ := ResolveAll(repoRoot, tools)
+	for name, path := range found {
 		if LocateLicenceFile(path) == "" {
 			t.Logf("INFO: pre-existing submodule %s has no recognised licence file (tracked in quarterly refresh)", name)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -196,7 +196,7 @@ resources:
 
 ## Containerized Android Emulators
 
-For CI environments without physical devices, use the `docker-android` open-source tool (included as a submodule in `tools/opensource/docker-android`):
+For CI environments without physical devices, use the `docker-android` open-source tool (vendored flat at `<root>/submodules/docker_android`; resolve with `scripts/resolve_tool.sh docker-android`; legacy path `tools/opensource/docker-android`):
 
 ```yaml
 services:

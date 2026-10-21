@@ -31,11 +31,14 @@ type AuditResult struct {
 	// MissingFromLicences names directories that do not appear in
 	// licences-inventory.md.
 	MissingFromLicences []string
+	// MissingTools names manifest tools that could not be resolved
+	// (AuditTools only).
+	MissingTools []string
 }
 
 // OK reports whether every submodule is documented in both files.
 func (r AuditResult) OK() bool {
-	return len(r.MissingFromReferences) == 0 && len(r.MissingFromLicences) == 0
+	return len(r.MissingFromReferences) == 0 && len(r.MissingFromLicences) == 0 && len(r.MissingTools) == 0
 }
 
 // Audit walks scannedRoot for immediate subdirectories (each taken
@@ -75,6 +78,38 @@ func Audit(scannedRoot, referencesDoc, licencesDoc string) (AuditResult, error) 
 		}
 		if !strings.Contains(licText, marker) {
 			res.MissingFromLicences = append(res.MissingFromLicences, name)
+		}
+	}
+	return res, nil
+}
+
+// AuditTools is the layout-independent audit: each manifest tool is
+// resolved with ResolveTool (flat snake_case sibling, env override or
+// legacy tools/opensource) and its legacy name is checked against the
+// docs, which stay keyed by "tools/opensource/<legacy-name>". Tools that
+// cannot be resolved are reported in MissingTools (and fail OK()).
+func AuditTools(moduleRoot, referencesDoc, licencesDoc string, tools []Tool) (AuditResult, error) {
+	var res AuditResult
+	refData, err := os.ReadFile(referencesDoc)
+	if err != nil {
+		return res, fmt.Errorf("opensource audit: read %s: %w", referencesDoc, err)
+	}
+	licData, err := os.ReadFile(licencesDoc)
+	if err != nil {
+		return res, fmt.Errorf("opensource audit: read %s: %w", licencesDoc, err)
+	}
+	for _, t := range tools {
+		if _, err := ResolveTool(moduleRoot, t.Name); err != nil {
+			res.MissingTools = append(res.MissingTools, t.Name)
+			continue
+		}
+		res.Submodules = append(res.Submodules, t.Name)
+		marker := "tools/opensource/" + t.Name
+		if !strings.Contains(string(refData), marker) {
+			res.MissingFromReferences = append(res.MissingFromReferences, t.Name)
+		}
+		if !strings.Contains(string(licData), marker) {
+			res.MissingFromLicences = append(res.MissingFromLicences, t.Name)
 		}
 	}
 	return res, nil

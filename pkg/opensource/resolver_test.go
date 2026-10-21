@@ -32,7 +32,7 @@ func TestResolveTool_SiblingInSubmodulesDir(t *testing.T) {
 	root := filepath.Join(base, "submodules", "helix_qa")
 	mk(t, root)
 	want := filepath.Join(base, "submodules", "ui_tars")
-	mk(t, want)
+	fill(t, want)
 	got, err := ResolveTool(root, "ui-tars")
 	if err != nil || got != want {
 		t.Fatalf("got %q err %v want %q", got, err, want)
@@ -43,10 +43,10 @@ func TestResolveTool_EnvOverrideWins(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "submodules", "helix_qa")
 	mk(t, root)
-	mk(t, filepath.Join(base, "submodules", "ui_tars"))
+	fill(t, filepath.Join(base, "submodules", "ui_tars"))
 	env := filepath.Join(base, "envtools")
 	want := filepath.Join(env, "ui_tars")
-	mk(t, want)
+	fill(t, want)
 	t.Setenv("HELIXQA_TOOLS_DIR", env)
 	got, err := ResolveTool(root, "ui-tars")
 	if err != nil || got != want {
@@ -58,7 +58,7 @@ func TestResolveTool_LegacyFallback(t *testing.T) {
 	t.Setenv("HELIXQA_TOOLS_DIR", "")
 	root := filepath.Join(t.TempDir(), "standalone", "helix_qa")
 	want := filepath.Join(root, "tools", "opensource", "ui-tars")
-	mk(t, want)
+	fill(t, want)
 	got, err := ResolveTool(root, "ui-tars")
 	if err != nil || got != want {
 		t.Fatalf("got %q err %v want %q", got, err, want)
@@ -70,7 +70,7 @@ func TestResolveTool_SiblingNotUsedOutsideSubmodulesDir(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "other", "helix_qa")
 	mk(t, root)
-	mk(t, filepath.Join(base, "other", "ui_tars"))
+	fill(t, filepath.Join(base, "other", "ui_tars"))
 	if _, err := ResolveTool(root, "ui-tars"); err == nil {
 		t.Fatal("expected error: sibling lookup only applies inside a directory named submodules")
 	}
