@@ -112,9 +112,9 @@ func AuditTools(moduleRoot, referencesDoc, licencesDoc string, tools []Tool) (Au
 			continue
 		}
 		res.Submodules = append(res.Submodules, t.Name)
-		// Docs are keyed "tools/opensource/<name>"; rows outside
-		// tools/opensource (e.g. the tools/test-apps test app) must resolve
-		// but have no doc key to check.
+		// Docs are keyed "tools/opensource/<name>"; a row whose old_path
+		// lies outside tools/opensource (e.g. tools/test-apps/<name>) must
+		// resolve but has no doc key to check.
 		if filepath.Dir(t.oldPath()) != "tools/opensource" {
 			continue
 		}

@@ -189,14 +189,23 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// TestLegacyPathFixtureToolIsListed keeps the non-tools/opensource
-// fixtures (resolver_more_test.go, sync_script_test.go) on a tool that is
-// still a manifest row, so no test depends on a removed tool name. The
-// fixture's legacy old_path (tools/test-apps/<name>) is synthetic: no
-// manifest row lives outside tools/opensource, but the resolver still
-// supports that layout and the tests keep covering it.
+// The legacy-path fixtures in resolver_more_test.go and sync_script_test.go
+// (an old_path outside tools/opensource) all use these constants, so the
+// fixture tool name lives in one place. The old_path (tools/test-apps/<name>)
+// is synthetic: no manifest row lives outside tools/opensource, but the
+// resolver still supports that layout and the tests keep covering it.
+const (
+	legacyFixtureName    = "docker-android"
+	legacyFixtureNewName = "docker_android"
+	legacyFixtureOldPath = "tools/test-apps/" + legacyFixtureName
+)
+
+// TestLegacyPathFixtureToolIsListed fails when the shared legacy-path
+// fixture constants above name a tool (name + new_name pair) that is not a
+// row of docs/flat-tools-manifest.tsv, so the fixtures cannot drift onto a
+// removed tool name.
 func TestLegacyPathFixtureToolIsListed(t *testing.T) {
-	const name, newName = "docker-android", "docker_android"
+	name, newName := legacyFixtureName, legacyFixtureNewName
 	tools, err := LoadManifest(filepath.Join(findRepoRoot(t), "docs", "flat-tools-manifest.tsv"))
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
