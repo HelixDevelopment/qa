@@ -224,6 +224,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-10-21
 
+### Removed
+
+- **`appcrawler` and `rest-demo` dropped from `docs/flat-tools-manifest.tsv`**
+  (27 -> 25 rows; owner decision 2026-10-22). Nothing in HelixQA or its
+  consumer executed either tool; they were listed only in the manifest and
+  the docs. The docs counts and tool lists now match the 25 remaining rows.
+  The resolver still supports a manifest `old_path` outside
+  `tools/opensource` (e.g. `tools/test-apps/<name>`); its tests now use the
+  listed tool `docker-android` as a synthetic legacy-path fixture, and
+  `TestLegacyPathFixtureToolIsListed` fails if that fixture names a tool the
+  manifest no longer lists.
+
 ### Fixed
 
 - Sync script: port digits are bounded to 5 before any arithmetic (a 2^64+443 port no longer wraps into 443), `extensions.worktreeConfig` is read from the repo's own config only, and git without `config --show-scope` (< 2.26) exits 2 with a clear message.

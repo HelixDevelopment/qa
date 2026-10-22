@@ -11,7 +11,7 @@
 #   2. <parent>/<snake_name> when module_root sits in a dir named "submodules"
 #   3. <module_root>/<old_path> EXACTLY (legacy; old_path defaults to
 #      tools/opensource/<name> and must be a clean relative path ending in the
-#      name, e.g. tools/test-apps/rest-demo); for tools/opensource/<name> the
+#      name, e.g. tools/test-apps/<name>); for tools/opensource/<name> the
 #      snake_case spelling is also tried
 # Names that are empty, start with "." or "-", contain '/', '\' or '..', or equal the
 # module's own name (helix_qa / helixqa) are rejected.

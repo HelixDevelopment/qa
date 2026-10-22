@@ -11,7 +11,7 @@
 # ending in the tool name; url must be an accepted https/ssh/scp form (see
 # below) or the row is INVALID-ROW.
 # The resolver treats <root>/<old_path> from the manifest EXACTLY as the legacy
-# location (e.g. tools/test-apps/rest-demo); the sibling flat dir and
+# location (e.g. tools/test-apps/<name>); the sibling flat dir and
 # HELIXQA_TOOLS_DIR still take precedence.
 #
 # SKIP policy (mirrors the Go audit): in a standalone checkout (not inside a

@@ -363,7 +363,7 @@ func TestLoadManifest_Validation(t *testing.T) {
 
 func TestRealManifestIsValid(t *testing.T) {
 	tools, err := LoadManifest("../../docs/flat-tools-manifest.tsv")
-	if err != nil || len(tools) != 27 {
+	if err != nil || len(tools) != 25 {
 		t.Fatalf("real manifest: %v (%d rows)", err, len(tools))
 	}
 }
@@ -454,24 +454,24 @@ func TestResolveToolAt_OutsideToolsOpensource(t *testing.T) {
 	t.Setenv("HELIXQA_TOOLS_DIR", "")
 	b := t.TempDir()
 	root := filepath.Join(b, "submodules", "helix_qa")
-	want := filepath.Join(root, "tools", "test-apps", "rest-demo")
+	want := filepath.Join(root, "tools", "test-apps", "docker-android")
 	fill(t, want)
-	p, tier, err := ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo")
+	p, tier, err := ResolveToolAt(root, "docker-android", "tools/test-apps/docker-android")
 	if err != nil || p != want || tier != TierLegacy {
 		t.Fatalf("%q %q %v", p, tier, err)
 	}
 	// plain name API cannot see it (not under tools/opensource)
-	if _, err := ResolveTool(root, "rest-demo"); err == nil {
+	if _, err := ResolveTool(root, "docker-android"); err == nil {
 		t.Error("ResolveTool must only know tools/opensource")
 	}
 	// flat still wins
-	flat := filepath.Join(b, "submodules", "rest_demo")
+	flat := filepath.Join(b, "submodules", "docker_android")
 	fill(t, flat)
-	if p, tier, _ = ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo"); p != flat || tier != TierFlat {
+	if p, tier, _ = ResolveToolAt(root, "docker-android", "tools/test-apps/docker-android"); p != flat || tier != TierFlat {
 		t.Errorf("flat must win: %q %q", p, tier)
 	}
-	for _, bad := range []string{"../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other", "", "tools//..//rest-demo", "rest-demo"} {
-		if _, _, err := ResolveToolAt(root, "rest-demo", bad); err == nil {
+	for _, bad := range []string{"../x/docker-android", "/abs/docker-android", "tools/test-apps/other", "", "tools//..//docker-android", "docker-android"} {
+		if _, _, err := ResolveToolAt(root, "docker-android", bad); err == nil {
 			t.Errorf("old_path %q must be rejected", bad)
 		}
 	}
@@ -486,12 +486,12 @@ func TestAuditTools_NonOpensourceRowResolvedButNotDocKeyed(t *testing.T) {
 	lic := filepath.Join(b, "lic.md")
 	os.WriteFile(ref, []byte("x"), 0o644)
 	os.WriteFile(lic, []byte("x"), 0o644)
-	tools := []Tool{{Name: "rest-demo", NewName: "rest_demo", OldPath: "tools/test-apps/rest-demo"}}
+	tools := []Tool{{Name: "docker-android", NewName: "docker_android", OldPath: "tools/test-apps/docker-android"}}
 	res, _ := AuditTools(root, ref, lic, tools)
 	if len(res.MissingTools) != 1 {
 		t.Fatalf("absent test app must be a missing tool: %+v", res)
 	}
-	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
+	fill(t, filepath.Join(root, "tools", "test-apps", "docker-android"))
 	res, _ = AuditTools(root, ref, lic, tools)
 	if !res.OK() || len(res.Submodules) != 1 {
 		t.Fatalf("test app resolves; docs are keyed tools/opensource/<name> only so no doc entry is required: %+v", res)
@@ -506,10 +506,10 @@ func TestShellResolverParity_OldPath(t *testing.T) {
 	t.Setenv("HELIXQA_TOOLS_DIR", "")
 	b := t.TempDir()
 	root := filepath.Join(b, "submodules", "helix_qa")
-	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
-	for _, old := range []string{"tools/test-apps/rest-demo", "../x/rest-demo", "/abs/rest-demo", "tools/test-apps/other", "rest-demo"} {
-		gp, gt, gerr := ResolveToolAt(root, "rest-demo", old)
-		out, err := exec.Command("bash", script, "--tier", "rest-demo", root, old).Output()
+	fill(t, filepath.Join(root, "tools", "test-apps", "docker-android"))
+	for _, old := range []string{"tools/test-apps/docker-android", "../x/docker-android", "/abs/docker-android", "tools/test-apps/other", "docker-android"} {
+		gp, gt, gerr := ResolveToolAt(root, "docker-android", old)
+		out, err := exec.Command("bash", script, "--tier", "docker-android", root, old).Output()
 		line := strings.TrimSpace(string(out))
 		want := string(gt) + "\t" + gp
 		if (gerr == nil) != (err == nil) || (gerr == nil && line != want) {
@@ -517,9 +517,9 @@ func TestShellResolverParity_OldPath(t *testing.T) {
 		}
 	}
 	// after flat appears both prefer flat
-	fill(t, filepath.Join(b, "submodules", "rest_demo"))
-	gp, _, _ := ResolveToolAt(root, "rest-demo", "tools/test-apps/rest-demo")
-	out, _ := exec.Command("bash", script, "rest-demo", root, "tools/test-apps/rest-demo").Output()
+	fill(t, filepath.Join(b, "submodules", "docker_android"))
+	gp, _, _ := ResolveToolAt(root, "docker-android", "tools/test-apps/docker-android")
+	out, _ := exec.Command("bash", script, "docker-android", root, "tools/test-apps/docker-android").Output()
 	if strings.TrimSpace(string(out)) != gp {
 		t.Errorf("flat parity: go=%q shell=%q", gp, out)
 	}
@@ -549,15 +549,15 @@ func TestToolsReport_NestedLegacyWordingForNonOpensourcePaths(t *testing.T) {
 	b := t.TempDir()
 	root := filepath.Join(b, "submodules", "helix_qa")
 	fill(t, filepath.Join(root, "tools", "opensource", "a"))
-	fill(t, filepath.Join(root, "tools", "test-apps", "rest-demo"))
-	r := ToolsReport(root, []Tool{{Name: "a", NewName: "a"}, {Name: "rest-demo", NewName: "rest_demo", OldPath: "tools/test-apps/rest-demo"}})
+	fill(t, filepath.Join(root, "tools", "test-apps", "docker-android"))
+	r := ToolsReport(root, []Tool{{Name: "a", NewName: "a"}, {Name: "docker-android", NewName: "docker_android", OldPath: "tools/test-apps/docker-android"}})
 	if len(r.Warnings) != 2 {
 		t.Fatalf("%+v", r.Warnings)
 	}
-	if !strings.Contains(r.Warnings[0], LegacyWarning) || strings.Contains(r.Warnings[0], "rest-demo") {
+	if !strings.Contains(r.Warnings[0], LegacyWarning) || strings.Contains(r.Warnings[0], "docker-android") {
 		t.Errorf("tools/opensource warning must list only tools/opensource rows: %q", r.Warnings[0])
 	}
-	if !strings.Contains(r.Warnings[1], "legacy nested resolution") || !strings.Contains(r.Warnings[1], "rest-demo") {
+	if !strings.Contains(r.Warnings[1], "legacy nested resolution") || !strings.Contains(r.Warnings[1], "docker-android") {
 		t.Errorf("non-tools/opensource row needs its own wording: %q", r.Warnings[1])
 	}
 }

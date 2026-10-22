@@ -650,18 +650,18 @@ func TestSyncScript_NonOpensourceRowResolvesAndIsOk(t *testing.T) {
 	proj := t.TempDir()
 	hq := filepath.Join(proj, "submodules", "helix_qa")
 	bare := filepath.Join(t.TempDir(), "r.git")
-	tool := filepath.Join(hq, "tools", "test-apps", "rest-demo")
+	tool := filepath.Join(hq, "tools", "test-apps", "docker-android")
 	repoWithOrigin(t, tool, bare)
-	installSync(t, hq, mheader+"tools/test-apps/rest-demo\trest_demo\t"+fakeURL(bare)+"\t"+head(t, tool)+"\n")
+	installSync(t, hq, mheader+"tools/test-apps/docker-android\tdocker_android\t"+fakeURL(bare)+"\t"+head(t, tool)+"\n")
 	out, code := runSync(t, hq, nil)
-	r := rowFor(out, "rest-demo")
+	r := rowFor(out, "docker-android")
 	if code != 0 || !strings.Contains(r, "legacy") || !strings.Contains(r, " ok") || strings.Contains(out, "NOT-FOUND") {
-		t.Errorf("rest-demo outside tools/opensource must be ok (exit %d)\n%s", code, out)
+		t.Errorf("docker-android outside tools/opensource must be ok (exit %d)\n%s", code, out)
 	}
 	// a symlinked tools/test-apps is still rejected
 	os.RemoveAll(filepath.Join(hq, "tools"))
 	outside := filepath.Join(t.TempDir(), "test-apps")
-	cloneTool(t, bare, filepath.Join(outside, "rest-demo"))
+	cloneTool(t, bare, filepath.Join(outside, "docker-android"))
 	mk(t, filepath.Join(hq, "tools"))
 	os.Symlink(outside, filepath.Join(hq, "tools", "test-apps"))
 	out, code = runSync(t, hq, nil)
@@ -895,11 +895,11 @@ func TestSyncScript_NestedLegacyWarningWording(t *testing.T) {
 	hq := filepath.Join(proj, "submodules", "helix_qa")
 	b := t.TempDir()
 	a := filepath.Join(hq, "tools", "opensource", "scrcpy")
-	r := filepath.Join(hq, "tools", "test-apps", "rest-demo")
+	r := filepath.Join(hq, "tools", "test-apps", "docker-android")
 	repoWithOrigin(t, a, filepath.Join(b, "a.git"))
 	repoWithOrigin(t, r, filepath.Join(b, "r.git"))
 	installSync(t, hq, mheader+mrow("scrcpy", fakeURL(filepath.Join(b, "a.git")), head(t, a))+
-		"tools/test-apps/rest-demo\trest_demo\t"+fakeURL(filepath.Join(b, "r.git"))+"\t"+head(t, r)+"\n")
+		"tools/test-apps/docker-android\tdocker_android\t"+fakeURL(filepath.Join(b, "r.git"))+"\t"+head(t, r)+"\n")
 	out, code := runSync(t, hq, nil)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
@@ -907,8 +907,8 @@ func TestSyncScript_NestedLegacyWarningWording(t *testing.T) {
 	if !strings.Contains(out, "WARNING: legacy tools/opensource resolution in consumer layout: scrcpy\n") {
 		t.Errorf("tools/opensource warning must list only scrcpy\n%s", out)
 	}
-	if !strings.Contains(out, "legacy nested resolution") || !strings.Contains(out, "rest-demo") {
-		t.Errorf("rest-demo needs the nested-resolution wording\n%s", out)
+	if !strings.Contains(out, "legacy nested resolution") || !strings.Contains(out, "docker-android") {
+		t.Errorf("docker-android needs the nested-resolution wording\n%s", out)
 	}
 }
 

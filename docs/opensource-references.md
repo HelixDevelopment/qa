@@ -39,7 +39,6 @@ accurate.
 | Path | Purpose |
 |---|---|
 | `tools/opensource/allure2` | Allure 2 test report format reference. |
-| `tools/opensource/appcrawler` | Android UI crawler reference. |
 | `tools/opensource/appium` | Appium mobile automation reference. |
 | `tools/opensource/chroma` | Chroma vector DB reference for AI memory. |
 | `tools/opensource/docker-android` | Android-in-Docker reference for emulator automation. |

@@ -1,6 +1,6 @@
 # Open-Source Tools
 
-HelixQA integrates 26 open-source tools (plus 1 test app, `rest-demo`, per `docs/flat-tools-manifest.tsv`) as git submodules. They are vendored flat in the consumer project at `<root>/submodules/<snake_name>/` (list and pinned SHAs: `docs/flat-tools-manifest.tsv`); the legacy `tools/opensource/<name>` location is still honoured as a fallback. Each tool addresses a specific aspect of QA automation — device recording, vision-driven interaction, memory leak detection, test reporting, and more.
+HelixQA integrates 25 open-source tools (per `docs/flat-tools-manifest.tsv`) as git submodules. They are vendored flat in the consumer project at `<root>/submodules/<snake_name>/` (list and pinned SHAs: `docs/flat-tools-manifest.tsv`); the legacy `tools/opensource/<name>` location is still honoured as a fallback. Each tool addresses a specific aspect of QA automation — device recording, vision-driven interaction, memory leak detection, test reporting, and more.
 
 ## Tool Index
 
@@ -27,7 +27,6 @@ HelixQA integrates 26 open-source tools (plus 1 test app, `rest-demo`, per `docs
 | llama-index | RAG | Retrieval-augmented generation framework |
 | signoz | Observability | Open-source APM and distributed tracing |
 | redroid | Android emulation | Android in a container (no hardware required) |
-| appcrawler | Android crawling | Automated Android app crawling |
 
 ## Submodule Location
 
@@ -54,7 +53,10 @@ HelixQA integrates 26 open-source tools (plus 1 test app, `rest-demo`, per `docs
 ├── llama-index/
 ├── signoz/
 ├── redroid/
-└── appcrawler/
+├── browser-use/
+├── skyvern/
+├── anthropic-quickstarts/
+└── ui-tars-desktop/
 ```
 
 Initialise the tool submodules from the consumer project root, one per row of `docs/flat-tools-manifest.tsv` (flat name `new_name`, same pinned SHA):

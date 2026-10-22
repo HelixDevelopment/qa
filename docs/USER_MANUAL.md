@@ -186,7 +186,7 @@ Each pass generates different test cases, explores different paths, and accumula
 
 ## Integrated Open-Source Tools
 
-26 open-source tools (plus 1 test app, `rest-demo`, per the manifest) available as submodules (flat `<root>/submodules/<snake_name>/`, see `docs/flat-tools-manifest.tsv`; legacy fallback `tools/opensource/<name>`):
+25 open-source tools (per the manifest) available as submodules (flat `<root>/submodules/<snake_name>/`, see `docs/flat-tools-manifest.tsv`; legacy fallback `tools/opensource/<name>`):
 
 | Tool | Purpose |
 |------|---------|
@@ -211,4 +211,7 @@ Each pass generates different test cases, explores different paths, and accumula
 | llama-index | RAG framework |
 | signoz | Open-source APM |
 | redroid | Android in container |
-| appcrawler | Android app crawler |
+| browser-use | Browser agent loop (pattern reference) |
+| skyvern | Observe/Plan/Act agent (AGPL, reference only) |
+| anthropic-quickstarts | Computer-use demo (pattern reference) |
+| ui-tars-desktop | UI-TARS desktop app (pattern reference) |

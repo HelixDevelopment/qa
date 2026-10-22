@@ -20,8 +20,6 @@ tools/opensource/redroid	redroid	git@github.com:remote-android/redroid-doc.git	e
 tools/opensource/signoz	signoz	git@github.com:SigNoz/signoz.git	7646aabb2b849129f3a6acabd01bb07cbdb84a02
 tools/opensource/docling	docling	git@github.com:DS4SD/docling.git	c7b1734217fcb958688589b70c27147cab86a9ae
 tools/opensource/llama-index	llama_index	git@github.com:run-llama/llama_index.git	5891d5f4f3e934973c18334902ca8ea4eb6a2e12
-tools/opensource/appcrawler	appcrawler	git@github.com:nicetester/AppCrawler.git	c1f4af109a778e758fa67cc9a49a9e0484e7afc5
-tools/test-apps/rest-demo	rest_demo	git@github.com:nicehash/rest-clients-demo.git	e5cf556ee3b4e01e21e22313066b0466973989fe
 tools/opensource/browser-use	browser_use	git@github.com:browser-use/browser-use.git	c8e6e8f0fe617564687895702c2338967293b309
 tools/opensource/skyvern	skyvern	git@github.com:Skyvern-AI/skyvern.git	d30575bb9a062611d51deacf4cd4398e2c9e3e49
 tools/opensource/anthropic-quickstarts	anthropic_quickstarts	git@github.com:anthropics/anthropic-quickstarts.git	f37f1685e256d61b2982b8ae69c857b51efe11bf

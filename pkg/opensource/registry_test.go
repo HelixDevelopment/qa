@@ -20,7 +20,7 @@ func loadToolsOrSkip(t *testing.T, repoRoot string) []Tool {
 	if err != nil {
 		t.Fatalf("manifest: %v", err)
 	}
-	// All manifest rows are resolved (including tools/test-apps/rest-demo) so
+	// All manifest rows are resolved (every row, including any outside tools/opensource) so
 	// the Go policy and scripts/sync-opensource-references.sh agree; only the
 	// doc-key check is limited to tools/opensource rows (see AuditTools).
 	rep := ToolsReport(repoRoot, tools)
@@ -187,4 +187,24 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// TestLegacyPathFixtureToolIsListed keeps the non-tools/opensource
+// fixtures (resolver_more_test.go, sync_script_test.go) on a tool that is
+// still a manifest row, so no test depends on a removed tool name. The
+// fixture's legacy old_path (tools/test-apps/<name>) is synthetic: no
+// manifest row lives outside tools/opensource, but the resolver still
+// supports that layout and the tests keep covering it.
+func TestLegacyPathFixtureToolIsListed(t *testing.T) {
+	const name, newName = "docker-android", "docker_android"
+	tools, err := LoadManifest(filepath.Join(findRepoRoot(t), "docs", "flat-tools-manifest.tsv"))
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	for _, tl := range tools {
+		if tl.Name == name && tl.NewName == newName {
+			return
+		}
+	}
+	t.Fatalf("legacy-path fixture tool %q/%q is not a manifest row", name, newName)
 }

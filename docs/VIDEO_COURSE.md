@@ -272,11 +272,12 @@
 
 ## Appendix A: Integrated Open-Source Tools
 
-26 open-source tools (plus 1 test app, `rest-demo`, per `docs/flat-tools-manifest.tsv`) available as submodules:
+25 open-source tools (per `docs/flat-tools-manifest.tsv`) available as submodules:
 scrcpy, appium, midscene, allure2, leakcanary, docker-android,
 ui-tars, moondream, mem0, chroma, perfetto, shortest, stagehand,
 testdriverai, kiwi-tcms, unstructured, marker, docling,
-llama-index, signoz, redroid, appcrawler
+llama-index, signoz, redroid, browser-use, skyvern,
+anthropic-quickstarts, ui-tars-desktop
 
 ## Appendix B: All 40+ Supported LLM Providers
 
