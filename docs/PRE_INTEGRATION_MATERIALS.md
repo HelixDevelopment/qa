@@ -119,12 +119,12 @@ in `README.md` name the two load-bearing siblings `../challenges` and
 
 ### 3.2 Third-party git submodules (`.gitmodules`)
 
-~30 third-party open-source tool submodules under `tools/opensource/` (plus
-`tools/test-apps/rest-demo`), e.g. `scrcpy`, `appium`, `midscene`, `moondream`,
+25 third-party open-source tool submodules (flat `<root>/submodules/<snake_name>/`,
+legacy `tools/opensource/`, list in `docs/flat-tools-manifest.tsv`), e.g. `scrcpy`, `appium`, `midscene`, `moondream`,
 `ui-tars` / `ui-tars-desktop`, `perfetto`, `chroma`, `marker`, `docling`,
 `browser-use`, `skyvern`, `stagehand`, `unstructured`, `llama-index`,
 `kiwi-tcms`, `signoz`, `redroid`, `docker-android`, `leakcanary`, `allure2`,
-`shortest`, `testdriverai`, `appcrawler`, `mem0`, `anthropic-quickstarts`.
+`shortest`, `testdriverai`, `mem0`, `anthropic-quickstarts`.
 These are upstream third-party repos (§11.4.28 exempt from own-org rules).
 Inventory / licences: `docs/licences-inventory.md`, `docs/opensource-references.md`.
 

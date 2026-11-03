@@ -11,7 +11,7 @@ import (
 	"digital.vasic.helixqa/pkg/nexus"
 )
 
-// P3 port from tools/opensource/browser-use/browser_use/agent/
+// P3 port from <tools-dir>/browser-use/browser_use/agent/
 // message_manager/service.py.
 //
 // MessageManager shapes the message stream sent to an LLM. The

@@ -1,6 +1,6 @@
 # Open-Source Tools
 
-HelixQA integrates 22 open-source tools as git submodules under `tools/opensource/`. Each tool addresses a specific aspect of QA automation — device recording, vision-driven interaction, memory leak detection, test reporting, and more.
+HelixQA integrates 25 open-source tools (per `docs/flat-tools-manifest.tsv`) as git submodules. They are vendored flat in the consumer project at `<root>/submodules/<snake_name>/` (list and pinned SHAs: `docs/flat-tools-manifest.tsv`); the legacy `tools/opensource/<name>` location is still honoured as a fallback. Each tool addresses a specific aspect of QA automation — device recording, vision-driven interaction, memory leak detection, test reporting, and more.
 
 ## Tool Index
 
@@ -27,12 +27,11 @@ HelixQA integrates 22 open-source tools as git submodules under `tools/opensourc
 | llama-index | RAG | Retrieval-augmented generation framework |
 | signoz | Observability | Open-source APM and distributed tracing |
 | redroid | Android emulation | Android in a container (no hardware required) |
-| appcrawler | Android crawling | Automated Android app crawling |
 
 ## Submodule Location
 
 ```
-tools/opensource/
+<root>/submodules/   (legacy fallback: tools/opensource/, names with dashes: ui-tars/)
 ├── scrcpy/
 ├── appium/
 ├── midscene/
@@ -54,14 +53,20 @@ tools/opensource/
 ├── llama-index/
 ├── signoz/
 ├── redroid/
-└── appcrawler/
+├── browser-use/
+├── skyvern/
+├── anthropic-quickstarts/
+└── ui-tars-desktop/
 ```
 
-Initialise all tool submodules after cloning:
+Initialise the tool submodules from the consumer project root, one per row of `docs/flat-tools-manifest.tsv` (flat name `new_name`, same pinned SHA):
 
 ```bash
-git submodule update --init --recursive tools/opensource/
+git submodule add <url> submodules/<new_name>   # then: git -C submodules/<new_name> checkout <pinned_sha>
+git submodule update --init submodules/<new_name>
 ```
+
+Locate a tool from code or scripts with `pkg/opensource.ResolveTool` or `scripts/resolve_tool.sh <name>`; set `HELIXQA_TOOLS_DIR` to override (authoritative: a miss is an error).
 
 ## Key Tools in Detail
 
@@ -172,7 +177,7 @@ export HELIX_SIGNOZ_URL="http://localhost:3301"
 
 To integrate an additional open-source tool:
 
-1. Add it as a git submodule under `tools/opensource/`
+1. Add it as a flat git submodule at `<root>/submodules/<snake_name>/` and add a row to `docs/flat-tools-manifest.tsv`
 2. Implement the relevant interface in `pkg/navigator/` (for executors) or `pkg/analysis/` (for analysis tools)
 3. Wire it into the executor factory in `pkg/autonomous/`
 

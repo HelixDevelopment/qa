@@ -13,7 +13,7 @@
 //	Observe — descriptor        → nexus.ElementRef(s)
 //	Agent   — scoped goal       → full agent state-machine run
 //
-// Ported as a pattern from tools/opensource/stagehand/lib/v3/
+// Ported as a pattern from <tools-dir>/stagehand/lib/v3/
 // (act.ts, extract.ts, observe.ts, agent.ts). HelixQA re-implements
 // in Go from first principles — no Stagehand source is linked into
 // the build graph.
