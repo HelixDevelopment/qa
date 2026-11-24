@@ -588,7 +588,7 @@ test_cases:
     action: POST /api/v1/auth/login with admin credentials
     expected: 200 OK with token
   - name: Create SMB storage root
-    action: POST /api/v1/storage/roots with body {"name":"Synology NAS","protocol":"smb","host":"synology.local","share":"media","path":"/"}
+    action: POST /api/v1/storage/roots with body {"name":"Synology NAS","protocol":"smb","host":"nas.example.com","share":"media","path":"/"}
     expected: 201 Created with storage root ID
   tags:
   - storage
@@ -745,7 +745,7 @@ test_cases:
   - api
   steps:
   - name: Test SMB connection
-    action: POST /api/v1/smb/test with body {"host":"synology.local","share":"media","username":"test","password":"test"}
+    action: POST /api/v1/smb/test with body {"host":"nas.example.com","share":"media","username":"test","password":"test"}
     expected: 200 OK with connection test result (success or failure details)
   tags:
   - storage
@@ -761,7 +761,7 @@ test_cases:
   - api
   steps:
   - name: Discover SMB shares
-    action: POST /api/v1/smb/discover with body {"host":"synology.local"}
+    action: POST /api/v1/smb/discover with body {"host":"nas.example.com"}
     expected: 200 OK with list of available shares
   tags:
   - storage
@@ -778,7 +778,7 @@ test_cases:
   - api
   steps:
   - name: Browse SMB share
-    action: POST /api/v1/smb/browse with body {"host":"synology.local","share":"media","path":"/"}
+    action: POST /api/v1/smb/browse with body {"host":"nas.example.com","share":"media","path":"/"}
     expected: 200 OK with directory listing
   tags:
   - storage
@@ -897,7 +897,7 @@ test_cases:
   - api
   steps:
   - name: Test SMB connection via GET
-    action: GET /api/v1/smb/test?host=synology.local&share=media
+    action: GET /api/v1/smb/test?host=nas.example.com&share=media
     expected: 200 OK with connection test result
   tags:
   - storage
@@ -914,7 +914,7 @@ test_cases:
   - api
   steps:
   - name: Discover via GET
-    action: GET /api/v1/smb/discover?host=synology.local
+    action: GET /api/v1/smb/discover?host=nas.example.com
     expected: 200 OK with discovered shares
   tags:
   - storage

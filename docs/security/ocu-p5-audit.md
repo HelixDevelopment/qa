@@ -43,7 +43,7 @@ regardless of `OptIn`, so no socket is ever opened in this phase.
 ## 4. NVENC remote dispatch
 
 **Finding**: The `nvenc` encoder stub includes a documented plan to dispatch
-encode jobs to `thinker.local` via `ocuremote.Dispatcher` in P5.5. This reuses
+encode jobs to `host-a.example.com` via `ocuremote.Dispatcher` in P5.5. This reuses
 the SSH trust and key-based auth established by P2 — no new credential, no new
 firewall rule, no new attack surface is introduced in P5.  
 **Risk**: None in P5 (stub returns ErrNotWired; no network call made).  

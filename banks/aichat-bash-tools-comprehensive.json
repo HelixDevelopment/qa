@@ -271,7 +271,7 @@
           "expected": "File created",
           "action": "echo 'test content' > /tmp/test.txt",
           "_skip": true,
-          "_skip_reason": "aider binary is installed (/home/milosvasic/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
+          "_skip_reason": "aider binary is installed ($HOME/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
           "_conversion_note": "hxc029-honest-skip (§11.4.98)"
         },
         {
@@ -279,7 +279,7 @@
           "expected": "Output: test content",
           "action": "./internal/tools/bash_providers/fs_cat.sh --path /tmp/test.txt",
           "_skip": true,
-          "_skip_reason": "aider binary is installed (/home/milosvasic/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
+          "_skip_reason": "aider binary is installed ($HOME/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
           "_conversion_note": "hxc029-honest-skip (§11.4.98)"
         },
         {
@@ -412,7 +412,7 @@
           "expected": "Directory created",
           "action": "fs_mkdir --path /tmp/test_dir",
           "_skip": true,
-          "_skip_reason": "aider binary is installed (/home/milosvasic/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
+          "_skip_reason": "aider binary is installed ($HOME/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
           "_conversion_note": "hxc029-honest-skip (§11.4.98)"
         },
         {
@@ -420,7 +420,7 @@
           "expected": "Directory exists",
           "action": "ls -la /tmp/test_dir",
           "_skip": true,
-          "_skip_reason": "aider binary is installed (/home/milosvasic/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
+          "_skip_reason": "aider binary is installed ($HOME/.local/bin/aider, --help exit 0 2026-05-29) but these steps drive it with --model helixagent/ensemble + interactive slash-commands (/ask /map /commit /accept), which require (a) the helixagent endpoint on :7061 serving the ensemble model (NOT running — curl :7061 connection refused 2026-05-29) and (b) an interactive aider REPL (non-self-driving). Honest skip per §11.4.98(C) — never fabricated.",
           "_conversion_note": "hxc029-honest-skip (§11.4.98)"
         }
       ],

@@ -49,7 +49,7 @@ type Detector interface {
 // Client is the HTTP client for the text-detection sidecar.
 type Client struct {
 	// Endpoint is the base URL of the sidecar, e.g.
-	// "http://thinker.local:7870". Required.
+	// "http://host-a.example.com:7870". Required.
 	Endpoint string
 
 	// DetectPath is the relative URL of the detect endpoint.

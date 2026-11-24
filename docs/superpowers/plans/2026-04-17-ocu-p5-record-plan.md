@@ -13,7 +13,7 @@ buffer, and exposes three output surfaces:
 - **Ring-buffered Clip** — extract ±window/2 around a timestamp and write a
   newline-delimited JSON of frame metadata to any `io.Writer`. Real MKV/MP4
   muxing deferred to P5.5.
-- **Three encoder stubs** — x264 (CPU), NVENC (GPU, dispatches to thinker.local
+- **Three encoder stubs** — x264 (CPU), NVENC (GPU, dispatches to host-a.example.com
   in P5.5), VAAPI (GPU, local) all return `ErrNotWired` from production
   `Encode()`. Each registers via factory `init()`.
 - **WebRTC/WHIP publisher** — off by default; `LiveStream` returns `ErrNotWired`

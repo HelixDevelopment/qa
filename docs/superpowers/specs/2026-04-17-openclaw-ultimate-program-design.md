@@ -33,7 +33,7 @@ Recorded verbatim. These are non-negotiable for the programme; changes require a
 | 4 | Native vs LLM role | Native = eyes + hands + post-action verifier; LLM remains sole decider; HelixQA constitution intact |
 | 5 | Evidence default tier | Items 1–11, 15, 16 default on every ticket; items 13, 14 on demand; item 12 collected but not linked |
 | 6 | Sequencing + release | Diamond with parallel middle (P0 → {P1,P2,P3,P4 parallel} → P5 → P6 → P7); single **v4.0.0 "OpenClaw Ultimate"** release after P7 |
-| C | Hardware constraint | Local host has no NVIDIA GPU. Every CUDA/TensorRT/NVENC workload must run on `thinker.local` via `containers/pkg/distribution` with GPU label extension (§3). SSH user `milosvasic`, passwordless key auth already configured. |
+| C | Hardware constraint | Local host has no NVIDIA GPU. Every CUDA/TensorRT/NVENC workload must run on `host-a.example.com` via `containers/pkg/distribution` with GPU label extension (§3). SSH user `workshop-admin`, passwordless key auth already configured. |
 
 ---
 
@@ -51,7 +51,7 @@ helix_qa/
 │   ├── budget/                    Shared CPU/GPU/RAM/latency quotas (constants
 │   │                              + asserters; §4.4 encoded here)
 │   ├── probe/                     Hardware-capability autodiscovery
-│   │                              (local + thinker.local via SSH)
+│   │                              (local + host-a.example.com via SSH)
 │   └── contracts/                 Versioned interface types (§2)
 ├── pkg/nexus/capture/             [NEW — P1]
 │   ├── source/                    CaptureSource interface
@@ -99,13 +99,13 @@ containers/                        [EXTEND — P0]
 ├── pkg/scheduler/strategies.go    [EXTEND] gpu_affinity strategy
 ├── pkg/health/gpu.go              [NEW] nvidia-smi-based health check
 ├── pkg/envconfig/remote.go        [EXTEND] GPU_AUTOPROBE, GPU labels
-└── docs/gpu-scheduling.md         [NEW] thinker.local recipe
+└── docs/gpu-scheduling.md         [NEW] host-a.example.com recipe
 ```
 
 ### 1.2 Distribution topology
 
 ```
-┌───── orchestrator host (no NVIDIA GPU) ───────────┐        ┌──────── thinker.local (RTX 3060) ─────────┐
+┌───── orchestrator host (no NVIDIA GPU) ───────────┐        ┌──────── host-a.example.com (RTX 3060) ─────────┐
 │  helixqa autonomous ...                           │        │  podman container (gpu-sidecar)           │
 │    ├─ pkg/nexus/automation.Engine                 │  SSH   │    ├─ nvidia-container-toolkit            │
 │    ├─ pkg/nexus/capture  (local sources)          │ ◄────► │    ├─ OpenCV-CUDA worker (gRPC listener)  │
@@ -225,7 +225,7 @@ type Recorder interface {
 }
 ```
 
-### 2.6 Remote-dispatch contract (CUDA-on-thinker.local glue)
+### 2.6 Remote-dispatch contract (CUDA-on-host-a.example.com glue)
 
 ```go
 // pkg/nexus/native/remote/dispatcher.go
@@ -350,9 +350,9 @@ Results fold into `HostResources.GPU`. Runs on host-add and via existing `HostMa
 ### 3.6 Env-config additions
 
 ```bash
-CONTAINERS_REMOTE_HOST_1_NAME=thinker.local
-CONTAINERS_REMOTE_HOST_1_ADDRESS=thinker.local
-CONTAINERS_REMOTE_HOST_1_USER=milosvasic
+CONTAINERS_REMOTE_HOST_1_NAME=host-a.example.com
+CONTAINERS_REMOTE_HOST_1_ADDRESS=host-a.example.com
+CONTAINERS_REMOTE_HOST_1_USER=workshop-admin
 CONTAINERS_REMOTE_HOST_1_LABELS=gpu=true,gpu_vendor=nvidia,gpu_model=rtx3060,cuda=12.2,nvenc=true,vulkan=true
 CONTAINERS_REMOTE_HOST_1_GPU_AUTOPROBE=true
 ```
@@ -368,13 +368,13 @@ CONTAINERS_REMOTE_HOST_1_GPU_AUTOPROBE=true
 ### 3.8 Release
 
 - `containers/ARCHITECTURE.md` section for GPU scheduling
-- `containers/docs/gpu-scheduling.md` with thinker.local recipe
+- `containers/docs/gpu-scheduling.md` with host-a.example.com recipe
 - `containers/CHANGELOG.md` minor bump (backward-compat, additive only)
 - Tagged after merge
 
 ### 3.9 Rationale for placing extension in containers/
 
-- the parent project benefits (can move off legacy `DB_HOST=thinker.local`)
+- the parent project benefits (can move off legacy `DB_HOST=host-a.example.com`)
 - Future consumers get GPU-aware distribution for free
 - Keeps HelixQA `pkg/nexus/native/remote` adapter thin (~200 LOC)
 
@@ -386,7 +386,7 @@ CONTAINERS_REMOTE_HOST_1_GPU_AUTOPROBE=true
 
 | Constitution rule | Where enforced in design |
 |---|---|
-| HelixQA: Project-agnostic | Zero consumer imports in any new `pkg/nexus/*`. All thinker.local specifics in operator `.env`. |
+| HelixQA: Project-agnostic | Zero consumer imports in any new `pkg/nexus/*`. All host-a.example.com specifics in operator `.env`. |
 | HelixQA: LLM sole decider (supreme) | P6 `AutomationEngine` receives actions from the Agent; native never synthesises actions. Vision returns signals, not decisions. Verifier reports true/false; on false asks Agent to decide, never auto-retries. |
 | HelixQA: video geo-restriction probe | Unchanged — pipeline wraps existing probe verbatim. |
 | HelixQA: QA priority order | P7 bank `OCU-*` ordered happy → edge → adversarial. |
@@ -396,7 +396,7 @@ CONTAINERS_REMOTE_HOST_1_GPU_AUTOPROBE=true
 | HelixQA: No sudo/root | P3 Linux interactor uses `udev` rule + `input` group. Installer ships the rule + per-user activation hint; refuses if group missing. |
 | HelixQA: API keys & secrets | SSH key auth only; no passwords stored. `.env.example` with `GPU_AUTOPROBE=true`. `gpu_capability.json` gitignored. |
 | Main CONSTITUTION §V (100% coverage, 10 categories) | §4.2 |
-| Main CONSTITUTION Article VI (closure brief) | Each sub-project ticks the relevant `OPEN_POINTS_CLOSURE.md` items atomically in the same commit. New operator items (e.g., thinker.local SSH key quarterly rotation) land in the brief in the same commit that surfaces them. |
+| Main CONSTITUTION Article VI (closure brief) | Each sub-project ticks the relevant `OPEN_POINTS_CLOSURE.md` items atomically in the same commit. New operator items (e.g., host-a.example.com SSH key quarterly rotation) land in the brief in the same commit that surfaces them. |
 
 ### 4.2 Test coverage targets — 10 categories per sub-project
 
@@ -501,7 +501,7 @@ Retention: existing `FileEvidenceStore.Sweep(RetentionPolicy)` from P4 closure (
 
 | Vector | Mitigation |
 |---|---|
-| CUDA sidecar runs with `--gpus=all` | Runs only on thinker.local (trusted host); container reuses canonical `security/pkg/ssrf` guard on every outbound URL |
+| CUDA sidecar runs with `--gpus=all` | Runs only on host-a.example.com (trusted host); container reuses canonical `security/pkg/ssrf` guard on every outbound URL |
 | SSH to thinker uses agent-forwarded keys | No password ever stored; key presence probed at startup with actionable error |
 | LD_PRELOAD shim | Compiled per-target; installed to user path; never system dirs; never requires CAP_SYS_PTRACE |
 | plthook attack surface | Registrations allowlisted (hardcoded symbol list). Runtime additions require signed orchestrator config |
@@ -518,7 +518,7 @@ Retention: existing `FileEvidenceStore.Sweep(RetentionPolicy)` from P4 closure (
 
 | # | Scope | Exit gate |
 |---|---|---|
-| P0 | `pkg/nexus/native/{bridge,remote,budget,probe,contracts}` + Containers GPU extension | Contracts compile; `pkg/nexus/native/probe` reports thinker.local GPU correctly; Containers backward-compat regression green; vertical-slice dispatch (no-op CUDA call → thinker) works |
+| P0 | `pkg/nexus/native/{bridge,remote,budget,probe,contracts}` + Containers GPU extension | Contracts compile; `pkg/nexus/native/probe` reports host-a.example.com GPU correctly; Containers backward-compat regression green; vertical-slice dispatch (no-op CUDA call → thinker) works |
 
 **Wave 2 — Middle diamond (parallel)**
 
@@ -587,7 +587,7 @@ Maintenance rule: every commit that changes sub-project state updates this table
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| thinker.local unreachable during release | medium | high | Local CPU/OpenCL fallback in P2/P5; degraded-mode path exercised by nightly bank entry; release gate requires thinker-on + thinker-off runs both green |
+| host-a.example.com unreachable during release | medium | high | Local CPU/OpenCL fallback in P2/P5; degraded-mode path exercised by nightly bank entry; release gate requires thinker-on + thinker-off runs both green |
 | CUDA container image drift | medium | high | Image pins CUDA 12.2 + runtime validates host driver ≥ 525; mismatch is actionable error, not silent fail |
 | go-opencv CGO compile fragility | high | medium | All GPU paths run in container; local dev gets `build tag opencv_stub` so the tree builds on any dev machine without OpenCV installed; test matrix covers both tags |
 | Contract churn during P1–P4 parallel wave | medium | high | §2.8 stability rule; any change requires v2 adapter |
@@ -607,8 +607,8 @@ Per the brainstorming skill's terminal rule: only `writing-plans` is invoked nex
 
 | Reviewer | Timestamp | Outcome |
 |---|---|---|
-| Operator (milosvasic) | 2026-04-17 brainstorm session | All six §0 decisions locked |
-| Operator (milosvasic) | pending | Spec doc review — pending |
+| Operator (workshop-admin) | 2026-04-17 brainstorm session | All six §0 decisions locked |
+| Operator (workshop-admin) | pending | Spec doc review — pending |
 
 When operator approves the spec, `writing-plans` produces `docs/superpowers/plans/2026-04-17-ocu-p0-foundation-plan.md` and P0 implementation begins.
 

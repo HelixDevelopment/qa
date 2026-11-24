@@ -12,7 +12,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/diagnostics-status.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password -- see
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password -- see
 #     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
 #     $VASIC_ROOT is the umbrella project root>' --verbose
 #

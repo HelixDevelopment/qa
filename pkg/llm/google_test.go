@@ -331,7 +331,7 @@ func TestRedactKeyFromError_EmptyKey(t *testing.T) {
 }
 
 func TestRedactKeyFromError_RedactsKey(t *testing.T) {
-	key := "AIzaSyBnQTvs9r3X0kNYnUv9BSy-AuGO20jKnww"
+	key := "AIzaSyFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0"
 	err := fmt.Errorf(
 		"Post https://example.com/api?key=%s: timeout",
 		key,

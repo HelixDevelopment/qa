@@ -72,7 +72,7 @@ The Android executor communicates via ADB. Connect your device over USB or Wi-Fi
 
 ```bash
 # Connect your Android device over Wi-Fi
-adb connect 192.168.0.214:5555
+adb connect 192.0.2.214:5555
 
 # Verify the connection
 adb devices
@@ -82,7 +82,7 @@ helixqa autonomous \
   --project /path/to/your/project \
   --platforms android \
   --timeout 15m \
-  --env HELIX_ANDROID_DEVICE=192.168.0.214:5555 \
+  --env HELIX_ANDROID_DEVICE=192.0.2.214:5555 \
   --env HELIX_ANDROID_PACKAGE=com.your.app
 ```
 

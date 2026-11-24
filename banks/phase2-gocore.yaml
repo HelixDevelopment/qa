@@ -1167,7 +1167,7 @@ test_cases:
     tags: [phase2, perceptual, dreamsim, error-paths]
 
   # Production Triton integration (blocked on operator action per
-  # OPEN_POINTS_CLOSURE.md §10.3 — DreamSim ONNX deployment to thinker.local)
+  # OPEN_POINTS_CLOSURE.md §10.3 — DreamSim ONNX deployment to host-a.example.com)
   - id: PH2-DREAMSIM-INT-001
     name: "pkg/vision/perceptual — DreamSim live Triton smoke test"
     category: integration
@@ -1176,7 +1176,7 @@ test_cases:
     requires: [triton-thinker-local-dreamsim-deployed]
     steps:
       - name: "Live endpoint returns similarity ≈ 1.0 for identical inputs"
-        action: "DreamSim{Endpoint: 'http://thinker.local:8000'}.Compare(identical, identical)"
+        action: "DreamSim{Endpoint: 'http://host-a.example.com:8000'}.Compare(identical, identical)"
         expected: "similarity > 0.95"
       - name: "Live endpoint handles 480p inputs within the 200 ms budget"
         action: "Compare twice against a 854×480 pair"

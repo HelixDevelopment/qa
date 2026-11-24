@@ -57,7 +57,7 @@ import (
 // Client is the OmniParser REST client.
 type Client struct {
 	// Endpoint is the base URL of the OmniParser sidecar, e.g.
-	// "http://thinker.local:7860". Required.
+	// "http://host-a.example.com:7860". Required.
 	Endpoint string
 
 	// ParsePath is the relative URL of the parse endpoint. Default:

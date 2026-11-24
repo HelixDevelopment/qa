@@ -3,10 +3,10 @@
 
 // Package nvenc is the OCU P5.5 NVIDIA NVENC encoder backend.
 // It routes H.264/HEVC encode requests to a KindNVENC Worker on
-// thinker.local via ocuremote.Dispatcher, reusing the SSH trust
+// host-a.example.com via ocuremote.Dispatcher, reusing the SSH trust
 // established in P2 — no new credential or firewall rule required.
 //
-// The real gRPC server on thinker.local is P5.6 operator scope; P5.5
+// The real gRPC server on host-a.example.com is P5.6 operator scope; P5.5
 // wires the client side so that once the sidecar is running the encoder
 // Just Works. When no GPU host satisfies the capability the encoder
 // degrades gracefully to ErrNotWired.

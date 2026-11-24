@@ -53,7 +53,7 @@ func TestProbeRemote_Thinker(t *testing.T) {
 	}}
 	rep, err := ProbeRemote(
 		context.Background(), exec,
-		remote.RemoteHost{Name: "thinker", Address: "thinker.local"},
+		remote.RemoteHost{Name: "thinker", Address: "host-a.example.com"},
 	)
 	require.NoError(t, err)
 	require.Equal(t, "thinker", rep.Host)

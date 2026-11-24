@@ -53,20 +53,20 @@
         {
           "name": "Locate server URL field",
           "action": "Scroll to Server Connection section on login screen",
-          "expected": "Server URL text field visible with placeholder 'http://192.168.0.100:8080'",
+          "expected": "Server URL text field visible with placeholder 'http://192.0.2.100:8080'",
           "expect_status": 192,
           "_conversion_note": "manual-review-required"
         },
         {
           "name": "Enter server URL",
-          "action": "Tap server URL field and type 'http://192.168.0.100:8080'",
+          "action": "Tap server URL field and type 'http://192.0.2.100:8080'",
           "expected": "URL text appears in the field",
           "_conversion_note": "manual-review-required"
         },
         {
           "name": "Tap Connect",
           "action": "Tap the Connect button",
-          "expected": "Server saved, connection status shown as 'Connected: http://192.168.0.100:8080'",
+          "expected": "Server saved, connection status shown as 'Connected: http://192.0.2.100:8080'",
           "expect_status": 192,
           "_conversion_note": "manual-review-required"
         }
@@ -549,7 +549,7 @@
       "steps": [
         {
           "name": "Configure server URL",
-          "action": "Set server URL to 'http://192.168.0.100:8080' and connect",
+          "action": "Set server URL to 'http://192.0.2.100:8080' and connect",
           "expected": "Connection established",
           "_conversion_note": "manual-review-required"
         },

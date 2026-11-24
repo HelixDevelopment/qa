@@ -42,8 +42,8 @@ export GROQ_API_KEY="gsk_..."
 
 ```bash
 # Android/TV device via ADB
-adb connect 192.168.0.214:5555
-export HELIX_ANDROID_DEVICE="192.168.0.214:5555"
+adb connect 192.0.2.214:5555
+export HELIX_ANDROID_DEVICE="192.0.2.214:5555"
 export HELIX_ANDROID_PACKAGE="com.your.app"
 
 # Web app

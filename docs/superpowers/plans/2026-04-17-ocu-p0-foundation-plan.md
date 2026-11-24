@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the foundation layer that every other OCU sub-project (P1–P7) depends on: contracts, shared budget constants, capability probing, remote dispatch adapter, and the upstream GPU extension to `containers/`. Prove end-to-end with a trivial vertical slice that dispatches a command to `thinker.local` via `containers/pkg/distribution`.
+**Goal:** Land the foundation layer that every other OCU sub-project (P1–P7) depends on: contracts, shared budget constants, capability probing, remote dispatch adapter, and the upstream GPU extension to `containers/`. Prove end-to-end with a trivial vertical slice that dispatches a command to `host-a.example.com` via `containers/pkg/distribution`.
 
 **Architecture:** Additive only. New packages under `helix_qa/pkg/nexus/native/{contracts,budget,probe,bridge,remote}`. `containers/` gets GPU-aware fields on existing structs and one new `probe_gpu.go` file. No existing test fails. No public API breaks anywhere.
 
@@ -14,9 +14,9 @@
 
 - `helix_qa/` — primary (subagent dispatches should `cd` here for `go` commands)
 - `containers/` — upstream submodule extension
-- `/run/media/milosvasic/DATA4TB/Projects/Catalogizer/` — main repo (submodule pointer bump + closure brief tick at the end)
+- `$WORKSPACE/Catalogizer/` — main repo (submodule pointer bump + closure brief tick at the end)
 
-All paths in this plan are relative to `/run/media/milosvasic/DATA4TB/Projects/Catalogizer/` unless noted.
+All paths in this plan are relative to `$WORKSPACE/Catalogizer/` unless noted.
 
 ---
 
@@ -24,7 +24,7 @@ All paths in this plan are relative to `/run/media/milosvasic/DATA4TB/Projects/C
 
 This plan covers P0 only. P1–P7 each get their own brainstorm + plan cycle later. P0 itself does **not** implement any real capture, vision, interact, observe, record, or automation — it only ships the contracts, the shared primitives, the distribution adapter, and the upstream `containers/` GPU plumbing needed so later sub-projects can run in parallel.
 
-A P0 release alone produces a working, testable artifact: `cmd/ocu-probe` reports thinker.local GPU capability end-to-end; `cmd/ocu-dispatch-test` sends a trivial dispatched command and prints its result. That is enough for Wave 1's exit gate (spec §5.1).
+A P0 release alone produces a working, testable artifact: `cmd/ocu-probe` reports host-a.example.com GPU capability end-to-end; `cmd/ocu-dispatch-test` sends a trivial dispatched command and prints its result. That is enough for Wave 1's exit gate (spec §5.1).
 
 ---
 
@@ -52,7 +52,7 @@ A P0 release alone produces a working, testable artifact: `cmd/ocu-probe` report
 | `pkg/nexus/native/remote/capability.go` | `Capability` + `Kind` + `Worker` + resolution logic |
 | `pkg/nexus/native/remote/dispatcher_test.go` | Table-driven tests with fake distributor |
 | `cmd/ocu-probe/main.go` | CLI that prints local + remote GPU capability as JSON |
-| `cmd/ocu-dispatch-test/main.go` | CLI that dispatches an `echo` to thinker.local and prints result |
+| `cmd/ocu-dispatch-test/main.go` | CLI that dispatches an `echo` to host-a.example.com and prints result |
 | `tests/integration/ocu_foundation_test.go` | Build-tag `integration` E2E + benchmark |
 
 ### Files created in Containers (4 files)
@@ -62,7 +62,7 @@ A P0 release alone produces a working, testable artifact: `cmd/ocu-probe` report
 | `pkg/remote/gpu.go` | `GPUDevice` struct + `GPU` field helpers |
 | `pkg/remote/probe_gpu.go` | `ProbeGPU(ctx, executor, host)` — SSH-based nvidia-smi/rocm-smi/clinfo probe |
 | `pkg/health/gpu.go` | `GPUHealthCheck` + `NewGPUHealthCheck` |
-| `docs/gpu-scheduling.md` | End-to-end thinker.local recipe |
+| `docs/gpu-scheduling.md` | End-to-end host-a.example.com recipe |
 
 ### Files modified in Containers (5 files)
 
@@ -1006,7 +1006,7 @@ const (
 	// VisionRemoteCompute — time the remote CUDA worker spends
 	// executing, excluding network RTT.
 	VisionRemoteCompute = 8 * time.Millisecond
-	// VisionRemoteRTT — network RTT laptop↔thinker.local.
+	// VisionRemoteRTT — network RTT laptop↔host-a.example.com.
 	VisionRemoteRTT = 3 * time.Millisecond
 	// InteractVerified — action dispatch + post-action verification.
 	InteractVerified = 20 * time.Millisecond
@@ -1025,7 +1025,7 @@ const (
 	// buffers which are measured separately).
 	MaxHostRSSMB uint64 = 1_500
 	// MaxSidecarRSSMB is the RSS ceiling for the CUDA sidecar
-	// container on thinker.local.
+	// container on host-a.example.com.
 	MaxSidecarRSSMB uint64 = 4_096
 	// MaxSidecarVRAMMB is the VRAM ceiling for the CUDA sidecar.
 	MaxSidecarVRAMMB uint64 = 4_096
@@ -2340,8 +2340,8 @@ Append to `containers/pkg/envconfig/parser_test.go`:
 func TestParse_HostGPUAutoprobe(t *testing.T) {
 	t.Setenv("CONTAINERS_REMOTE_ENABLED", "true")
 	t.Setenv("CONTAINERS_REMOTE_HOST_1_NAME", "thinker")
-	t.Setenv("CONTAINERS_REMOTE_HOST_1_ADDRESS", "thinker.local")
-	t.Setenv("CONTAINERS_REMOTE_HOST_1_USER", "milosvasic")
+	t.Setenv("CONTAINERS_REMOTE_HOST_1_ADDRESS", "host-a.example.com")
+	t.Setenv("CONTAINERS_REMOTE_HOST_1_USER", "workshop-admin")
 	t.Setenv("CONTAINERS_REMOTE_HOST_1_LABELS", "gpu=true,cuda=12.2")
 	t.Setenv("CONTAINERS_REMOTE_HOST_1_GPU_AUTOPROBE", "true")
 
@@ -2489,8 +2489,8 @@ Added 2026-04-17 as part of the OpenClaw Ultimate (OCU) foundation wave.
 # .env
 CONTAINERS_REMOTE_ENABLED=true
 CONTAINERS_REMOTE_HOST_1_NAME=thinker
-CONTAINERS_REMOTE_HOST_1_ADDRESS=thinker.local
-CONTAINERS_REMOTE_HOST_1_USER=milosvasic
+CONTAINERS_REMOTE_HOST_1_ADDRESS=host-a.example.com
+CONTAINERS_REMOTE_HOST_1_USER=workshop-admin
 CONTAINERS_REMOTE_HOST_1_LABELS=gpu=true,gpu_vendor=nvidia,gpu_model=rtx3060,cuda=12.2,nvenc=true,vulkan=true
 CONTAINERS_REMOTE_HOST_1_GPU_AUTOPROBE=true
 ```
@@ -2563,7 +2563,7 @@ git commit -m "docs(gpu): add gpu-scheduling guide + CHANGELOG + backcompat test
 
 Backward-compatibility invariant test pinned: a host with no GPU +
 a requirement with no GPU scores exactly as before. Docs show the
-thinker.local recipe end-to-end.
+host-a.example.com recipe end-to-end.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -2843,7 +2843,7 @@ func TestProbeRemote_Thinker(t *testing.T) {
 	}}
 	rep, err := ProbeRemote(
 		context.Background(), exec,
-		remote.RemoteHost{Name: "thinker", Address: "thinker.local"},
+		remote.RemoteHost{Name: "thinker", Address: "host-a.example.com"},
 	)
 	require.NoError(t, err)
 	require.Equal(t, "thinker", rep.Host)
@@ -3902,7 +3902,7 @@ Expected: push landed on github/vasic-digital, gitlab/vasic-digital, github/Heli
 - [ ] **Step 1: Bump submodules**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer
+cd $WORKSPACE/Catalogizer
 git add HelixQA Containers
 git status --short
 ```
@@ -3918,7 +3918,7 @@ Open `docs/OPEN_POINTS_CLOSURE.md`. Bump the "Last refresh" date to 2026-04-17. 
       2026-04-17**: contracts + budget + probe + remote dispatcher
       land in HelixQA; Containers GPU extension land in Containers.
       Vertical-slice `cmd/ocu-probe` + `cmd/ocu-dispatch-test` prove
-      thinker.local routing end-to-end. Spec + plan in
+      host-a.example.com routing end-to-end. Spec + plan in
       `helix_qa/docs/superpowers/{specs,plans}/2026-04-17-*`.
 ```
 
@@ -3927,7 +3927,7 @@ Open `docs/nexus/remaining-work.md` (HelixQA internal). Update the OpenClaw road
 - [ ] **Step 3: Commit and push main**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer
+cd $WORKSPACE/Catalogizer
 git add HelixQA Containers docs/OPEN_POINTS_CLOSURE.md
 git commit -m "chore: bump HelixQA + Containers — OCU P0 foundation
 
@@ -4014,7 +4014,7 @@ GIT_SSH_COMMAND="ssh -o BatchMode=yes" git push origin main 2>&1 | tail -6
 - [ ] **Step 3: Bump submodule + push main**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer
+cd $WORKSPACE/Catalogizer
 git add HelixQA
 git commit -m "chore: bump HelixQA — OCU roadmap tracker
 

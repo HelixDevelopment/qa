@@ -3,7 +3,7 @@
 #
 # HelixQA Test Bank: Catalogizer Full QA - Android TV
 # Comprehensive QA coverage for the Catalogizer Android TV app running on
-# Xiaomi Mi Box 4 (192.168.0.214:5555, Android 9). Covers app launch, login,
+# Xiaomi Mi Box 4 (192.0.2.214:5555, Android 9). Covers app launch, login,
 # home screen, media browsing, detail, playback, TV home screen channels,
 # deep linking, Watch Next, favorites, collections, settings, search,
 # and edge cases/negative scenarios. All navigation is via DPAD remote.
@@ -466,7 +466,7 @@ test_cases:
         action: "adb_shell: input keyevent KEYCODE_MOVE_END && input keyevent --longpress KEYCODE_DEL"
         expected: "Server URL field empty"
       - name: "Enter new URL"
-        action: "text: http://192.168.0.100:8080"
+        action: "text: http://192.0.2.100:8080"
         expected: "New URL displayed in field"
       - name: "Test connection"
         action: "keypress: KEYCODE_DPAD_CENTER"

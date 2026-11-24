@@ -516,7 +516,7 @@ HelixQA uses a dual-model architecture for autonomous QA sessions:
 - No hardcoded model preferences. All selection is score-based via LLMsVerifier.
 - Astica.AI is a specialized vision API that competes on score alongside general-purpose providers.
 - Local Ollama models get cost=1.0 (free) and compete on quality/speed/reliability.
-- Distributed llama.cpp RPC splits large models across thinker.local (GPU) + amber.local (CPU).
+- Distributed llama.cpp RPC splits large models across host-a.example.com (GPU) + host-b.example.com (CPU).
 - FallbackProvider in VisionEngine chains multiple providers for resilience.
 
 ### Bridge Adapter Pattern

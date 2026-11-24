@@ -52,7 +52,7 @@ type VisionResponse struct {
 // device at a specific test step.
 type DeviceScreenshot struct {
 	// Device is the device identifier
-	// (e.g. "192.168.0.134:5555").
+	// (e.g. "192.0.2.134:5555").
 	Device string `json:"device"`
 
 	// Platform is the platform type

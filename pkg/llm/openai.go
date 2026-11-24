@@ -170,7 +170,7 @@ func (p *openaiProvider) SupportsVision() bool {
 		return true
 	}
 	// llama.cpp per-slot providers have dynamic names like
-	// "llamacpp-androidtv-192.168.0.134:5555". All
+	// "llamacpp-androidtv-192.0.2.134:5555". All
 	// llamacpp providers support vision.
 	if len(p.providerName) > 8 &&
 		p.providerName[:8] == "llamacpp" {

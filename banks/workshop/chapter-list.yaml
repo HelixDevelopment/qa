@@ -18,7 +18,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/chapter-list.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password — see
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password — see
 #     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md, where $VASIC_ROOT is
 #     the umbrella project root; this path does NOT resolve from either
 #     submodules/qa/ or workshop/ on their own>' --verbose
@@ -30,10 +30,10 @@
 # name is HTTPExecutor's generic primary-credential-slot naming (see
 # --admin-user/--admin-pass in cmd/helixqa/http.go) — it is NOT an assertion
 # about the application's own RBAC role. On workshop specifically it happens
-# to coincide: `milosvasic` really is seeded with role "admin" (confirmed
+# to coincide: `workshop-admin` really is seeded with role "admin" (confirmed
 # live below), per spec 007's FR-010 workshop gives BOTH seeded users
-# (milosvasic, rami) full, equal access — so either account would pass every
-# assertion in this bank; `milosvasic` was picked only because it is spec
+# (workshop-admin, workshop-user) full, equal access — so either account would pass every
+# assertion in this bank; `workshop-admin` was picked only because it is spec
 # 007's first-listed seeded workshop account. `expect_json_path` is
 # presence-only in this HelixQA build (pkg/autonomous/http_executor.go's
 # jsonPathExists) — it does NOT pin a value — so every value pinned below uses
@@ -125,12 +125,12 @@ test_cases:
     priority: critical
     platforms: [web]
     steps:
-      - name: "Confirm the session authenticates as the seeded milosvasic account"
+      - name: "Confirm the session authenticates as the seeded workshop-admin account"
         action: "http: GET /api/auth/me"
         auth: "admin"
         expect_status: 200
         expect_body_contains: "\"role\":\"admin\""
-        expected: "200 OK; the seeded account really does authenticate and carries role \"admin\" (compact-JSON /api/auth/me response, no indentation — real bytes: {\"module\":\"workshop\",\"permissions\":[...],\"user\":{\"id\":1,\"username\":\"milosvasic\",\"role\":\"admin\"}})"
+        expected: "200 OK; the seeded account really does authenticate and carries role \"admin\" (compact-JSON /api/auth/me response, no indentation — real bytes: {\"module\":\"workshop\",\"permissions\":[...],\"user\":{\"id\":1,\"username\":\"workshop-admin\",\"role\":\"admin\"}})"
       - name: "List chapters reports status ok"
         action: "http: GET /api/chapters"
         auth: "admin"

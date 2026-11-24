@@ -35,14 +35,14 @@
 #     slot (--admin-user / --admin-pass) is used to carry the seeded
 #     user-role account's credentials; that flag name is HTTPExecutor's
 #     generic "primary credential slot" naming and is NOT an assertion that
-#     rami holds the application's admin role (step 1 below asserts the
+#     workshop-user holds the application's admin role (step 1 below asserts the
 #     opposite: role "user").
 #
 #     Run as:
 #       bin/helixqa http --banks banks/ai_interviewing/ \
 #         --base-url http://127.0.0.1:8099 \
 #         --login-path /api/auth/login \
-#         --admin-user rami --admin-pass '<seeded rami password — see
+#         --admin-user workshop-user --admin-pass '<seeded workshop-user password — see
 #         $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md, where $VASIC_ROOT
 #         is the umbrella project root; this path does not resolve from either
 #         submodules/qa/ or ai_interviewing/ on their own>' --verbose
@@ -98,7 +98,7 @@ metadata:
 
 test_cases:
   - id: AI-RBAC-001
-    name: "A user-role account (rami) is authenticated but denied access to an admin-only module with a genuine 403, not a 401/404/5xx"
+    name: "A user-role account (workshop-user) is authenticated but denied access to an admin-only module with a genuine 403, not a 401/404/5xx"
     category: security
     priority: critical
     platforms: [web]
@@ -110,7 +110,7 @@ test_cases:
         expect_json_path: "$.user.username"
         expect_body_contains: "\"role\":\"user\""
         expected: "200 OK; a username field is present in the response ($.user.username — expect_json_path is presence-only in this HelixQA build, it does not pin a specific value, see pkg/autonomous/http_executor.go's jsonPathExists), and the role is separately, genuinely pinned to \"user\" (not admin) via expect_body_contains"
-      - name: "Request an admin-only module's data while authenticated as rami"
+      - name: "Request an admin-only module's data while authenticated as workshop-user"
         action: "http: GET /api/modules/41"
         auth: "admin"
         expect_status: 403

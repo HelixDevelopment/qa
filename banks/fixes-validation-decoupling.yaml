@@ -55,7 +55,7 @@ test_cases:
     steps:
       - name: "cfg := NewGitConfig(...)"
         action: "Config/pkg/storageconfig.NewGitConfig"
-        expected: "CommitAuthorEmail != 'catalogizer@vasic.digital'; == DefaultCommitAuthorEmail"
+        expected: "CommitAuthorEmail != 'catalogizer@example.com'; == DefaultCommitAuthorEmail"
     expected_result: "Library has no project-specific default identity"
     fix_reference:
       id: decoupling-config

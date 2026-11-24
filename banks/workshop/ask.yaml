@@ -11,7 +11,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/ask.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password --
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password --
 #     see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
 #     $VASIC_ROOT is the umbrella project root>' --verbose
 #
@@ -148,7 +148,7 @@
 #     throwaway server.
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. Already
+# spec.md, FR-009 -- workshop-admin/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, workshop-user/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. Already
 # public per that spec's own text (committed in its git history); never
 # relied on as a real secret. Consistent with auth-session.yaml and every
 # other sibling bank in this directory, the real password is NEVER written

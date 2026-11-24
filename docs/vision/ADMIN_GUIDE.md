@@ -35,7 +35,7 @@ HELIX_VISION_EXACT_CACHE=true
 HELIX_VISION_DIFFERENTIAL=true
 HELIX_VISION_VECTOR_MEMORY=true
 HELIX_VISION_FEW_SHOT=true
-HELIX_VISION_PERSIST_PATH=/home/milosvasic/.local/share/helixqa/vision
+HELIX_VISION_PERSIST_PATH=$HOME/.local/share/helixqa/vision
 HELIX_VISION_MAX_MEMORIES=100000
 HELIX_VISION_CHANGE_THRESHOLD=0.05
 GLM4V_API_KEY=your-key-here
@@ -61,9 +61,9 @@ Description=HelixQA Vision Server
 After=network.target
 
 [Service]
-WorkingDirectory=/home/milosvasic/HelixQA
+WorkingDirectory=$HOME/HelixQA
 EnvironmentFile=%h/.local/share/helixqa/.env
-ExecStart=/home/milosvasic/helix_qa/bin/helixqa server
+ExecStart=$HOME/helix_qa/bin/helixqa server
 Restart=on-failure
 RestartSec=5
 
@@ -238,7 +238,7 @@ Run it on a schedule with user cron:
 
 ```bash
 crontab -e
-# Add: 0 3 * * * /home/milosvasic/.local/bin/backup-helixqa-vision.sh
+# Add: 0 3 * * * $HOME/.local/bin/backup-helixqa-vision.sh
 ```
 
 ### Restore Procedure
@@ -335,7 +335,7 @@ When building container images, do not bake API keys into the image layer. Alway
 
 ```bash
 podman run --rm \
-  --env-file /home/milosvasic/.local/share/helixqa/.env \
+  --env-file $HOME/.local/share/helixqa/.env \
   localhost/helixqa-vision:latest
 ```
 
@@ -432,7 +432,7 @@ executor := cheaper.NewResilientExecutor(cheaper.ExecutorConfig{
 | Symptom | Likely Cause | Resolution |
 |---------|-------------|------------|
 | L3 cache never hit | `HELIX_VISION_VECTOR_MEMORY=false` | Set to `true` in `.env` |
-| Vector memory not persisting across restarts | `HELIX_VISION_PERSIST_PATH` not set or not writable | Set to a writable directory: `HELIX_VISION_PERSIST_PATH=/home/milosvasic/.local/share/helixqa/vision` |
+| Vector memory not persisting across restarts | `HELIX_VISION_PERSIST_PATH` not set or not writable | Set to a writable directory: `HELIX_VISION_PERSIST_PATH=$HOME/.local/share/helixqa/vision` |
 | Few-shot examples not improving accuracy | Fewer than ~50 successful interactions stored | The L4 layer improves as interactions accumulate; give it more sessions |
 | Provider optimizer returns empty string | All providers are stale (no calls within 10 minutes) | The optimizer requires recent activity; make at least one call to warm up metrics |
 

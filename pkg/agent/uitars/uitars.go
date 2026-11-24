@@ -7,7 +7,7 @@
 // /v1/chat/completions endpoint, extended with vision-content parts.
 //
 // The typical Phase-3 deployment runs llama-server on the GPU host
-// (thinker.local:18100) with --mmproj pointing at the mmproj gguf
+// (host-a.example.com:18100) with --mmproj pointing at the mmproj gguf
 // companion file. See docs/OPEN_POINTS_CLOSURE.md §10.3.
 //
 // Phase-3 foundation: this is the first agent-brain module. It takes
@@ -37,7 +37,7 @@ import (
 // endpoint. Zero-value fields fall back to sensible defaults.
 type Client struct {
 	// Endpoint is the base URL of the llama-server, e.g.
-	// "http://thinker.local:18100". Required.
+	// "http://host-a.example.com:18100". Required.
 	Endpoint string
 
 	// Model is the model identifier configured in llama-server.

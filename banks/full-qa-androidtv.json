@@ -799,7 +799,7 @@
         },
         {
           "name": "Enter new URL",
-          "action": "text: http://192.168.0.100:8080",
+          "action": "text: http://192.0.2.100:8080",
           "expected": "New URL displayed in field"
         },
         {

@@ -28,7 +28,7 @@
 # direct stdlib HTTP client (CONST-051(B) decoupling — no HelixAgent
 # provider-abstraction dependency), so it takes the FULL
 # `.../v1/chat/completions` URL, matching the wire calls captured during
-# authoring (`curl -X POST http://10.6.100.221:18434/v1/chat/completions`).
+# authoring (`curl -X POST http://198.51.100.221:18434/v1/chat/completions`).
 #
 # ANTI-BLUFF (§11.4.6 / §11.4.69 / §11.4.107(10) / §11.4.123). Every
 # ground-truth fixture below was AUTHORED AGAINST THE LIVE 30B MODEL'S
@@ -81,9 +81,9 @@
 # curates into `docs/qa/<run-id>/` at release-prep (§11.4.83).
 #
 # TOPOLOGY EVIDENCE (host LAN NICs exercised, captured 2026-07-08):
-#   eno1      = 10.6.100.221  (primary wired NIC)
-#   enp75s0u3 = 10.111.28.100 (secondary wired NIC)
-#   wlp70s0   = 10.6.100.58   (wifi NIC)
+#   eno1      = 198.51.100.221  (primary wired NIC)
+#   enp75s0u3 = 198.51.100.100 (secondary wired NIC)
+#   wlp70s0   = 198.51.100.58   (wifi NIC)
 # All three answered live, LAN-routed /v1/chat/completions requests during
 # authoring — this bank exercises all three to prove the network-provider
 # path is not tied to one hardcoded interface.
@@ -122,14 +122,14 @@ test_cases:
 
   - id: NETPROV-LAN-EXPLICIT-001
     challenge_id: helixagent.network_provider.lan-primary-nic-arithmetic
-    name: "Coder answers a real arithmetic fact over the primary LAN NIC (eno1, 10.6.100.221), not localhost"
+    name: "Coder answers a real arithmetic fact over the primary LAN NIC (eno1, 198.51.100.221), not localhost"
     category: functional
     priority: critical
     platforms: [api]
     domains: [network-provider, llm, lan]
     dispatches_to: >-
       bin/helixqa-verify-netprov
-      --endpoint http://10.6.100.221:18434/v1/chat/completions
+      --endpoint http://198.51.100.221:18434/v1/chat/completions
       --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       --prompt "What is 17 + 25? Reply with only the number."
       --expect "42"
@@ -155,7 +155,7 @@ test_cases:
         expect_status: 200
         expect_json_path: "$.choices[0].message.content"
         expected: >-
-          Response contains "42" and resolved_host=10.6.100.221 (not
+          Response contains "42" and resolved_host=198.51.100.221 (not
           loopback). Authored 2026-07-08 against the live 30B model over
           LAN, which answered "42" (re-confirmed deterministic across two
           runs at temperature=0, cache_n growing 6->23 confirming genuine
@@ -163,14 +163,14 @@ test_cases:
 
   - id: NETPROV-LAN-SECOND-NIC-001
     challenge_id: helixagent.network_provider.lan-secondary-nic-fact
-    name: "Coder answers a real geography fact over the secondary LAN NIC (enp75s0u3, 10.111.28.100)"
+    name: "Coder answers a real geography fact over the secondary LAN NIC (enp75s0u3, 198.51.100.100)"
     category: functional
     priority: high
     platforms: [api]
     domains: [network-provider, llm, lan]
     dispatches_to: >-
       bin/helixqa-verify-netprov
-      --endpoint http://10.111.28.100:18434/v1/chat/completions
+      --endpoint http://198.51.100.100:18434/v1/chat/completions
       --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       --prompt "What is the capital of France? Reply with only the city name."
       --expect "paris"
@@ -197,19 +197,19 @@ test_cases:
         expect_json_path: "$.choices[0].message.content"
         expected: >-
           Response contains "Paris" (case-insensitive) and
-          resolved_host=10.111.28.100. Authored 2026-07-08 against the live
+          resolved_host=198.51.100.100. Authored 2026-07-08 against the live
           30B model over this NIC, which answered "Paris".
 
   - id: NETPROV-LAN-THIRD-NIC-001
     challenge_id: helixagent.network_provider.lan-tertiary-wifi-nic-fact
-    name: "Coder answers a real color-mixing fact over the wifi LAN NIC (wlp70s0, 10.6.100.58)"
+    name: "Coder answers a real color-mixing fact over the wifi LAN NIC (wlp70s0, 198.51.100.58)"
     category: functional
     priority: medium
     platforms: [api]
     domains: [network-provider, llm, lan]
     dispatches_to: >-
       bin/helixqa-verify-netprov
-      --endpoint http://10.6.100.58:18434/v1/chat/completions
+      --endpoint http://198.51.100.58:18434/v1/chat/completions
       --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       --prompt "What color do you get by mixing blue and yellow paint? Reply with only the color name."
       --expect "green"
@@ -236,7 +236,7 @@ test_cases:
         expect_json_path: "$.choices[0].message.content"
         expected: >-
           Response contains "Green" (case-insensitive) and
-          resolved_host=10.6.100.58. Authored 2026-07-08 against the live
+          resolved_host=198.51.100.58. Authored 2026-07-08 against the live
           30B model over this NIC, which answered "Green".
 
   # ==========================================================================
@@ -310,7 +310,7 @@ test_cases:
     domains: [network-provider, llm, lan, anti-bluff]
     dispatches_to: >-
       bin/helixqa-verify-netprov
-      --endpoint http://10.6.100.221:19999/v1/chat/completions
+      --endpoint http://198.51.100.221:19999/v1/chat/completions
       --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       --prompt "reply with only the word OK"
       --expect "ok"
@@ -323,7 +323,7 @@ test_cases:
     metadata:
       expect_fail: true
       red_first_proof: >-
-        Authored 2026-07-08: port 19999 on 10.6.100.221 has no listener
+        Authored 2026-07-08: port 19999 on 198.51.100.221 has no listener
         ("connection refused"), captured honestly as a non-empty "error"
         field and pass=false; case_result=true via --expect-fail inversion.
         Proves the analyzer never fakes a PASS when the LAN endpoint is
@@ -364,7 +364,7 @@ test_cases:
     domains: [network-provider, llm, anti-bluff]
     dispatches_to: >-
       bin/helixqa-verify-netprov
-      --endpoint http://10.6.100.221:18434/v1/chat/completions
+      --endpoint http://198.51.100.221:18434/v1/chat/completions
       --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       --prompt "What is 17 + 25? Reply with only the number."
       --expect "42"
@@ -400,7 +400,7 @@ test_cases:
     domains: [network-provider, llm, anti-bluff]
     dispatches_to: >-
       bin/helixqa-verify-netprov
-      --endpoint http://10.6.100.221:18434/v1/chat/completions
+      --endpoint http://198.51.100.221:18434/v1/chat/completions
       --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
       --prompt "What is 17 + 25? Reply with only the number."
       --expect "99"
