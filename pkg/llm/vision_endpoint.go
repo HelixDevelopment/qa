@@ -6,6 +6,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -77,6 +78,36 @@ func VisionEndpointConfigFromEnvChecked(getenv func(string) string) (ProviderCon
 		return refuse("its path carries an encoded '?' / '#' or a ';' parameter")
 	}
 	return cfg, true, nil
+}
+
+// IsLocalEndpointURL reports whether raw is an http(s) URL whose HOST (parsed,
+// never prefix-matched) is this machine or a private network: localhost,
+// *.localhost, *.local (mDNS), a loopback address, an RFC 1918 / link-local
+// address, or an IPv6 ULA / link-local address. Anything else, including
+// names that merely START like a loopback address (127.0.0.1.evil.example) and
+// URLs whose user info smuggles a loopback look-alike in front of the real
+// host (http://127.0.0.1:1@evil.example), is NOT local. User info is refused
+// outright: the answer for such a URL is false whatever its host.
+func IsLocalEndpointURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.User != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	if h == "" {
+		return false
+	}
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") || strings.HasSuffix(h, ".local") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 func visionEndpointConfigRaw(getenv func(string) string) (ProviderConfig, bool) {

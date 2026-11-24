@@ -181,6 +181,24 @@ func (v *VisionAnalyzer) parseFindingsChecked(
 		return []AnalysisFinding{}, false
 	}
 
+	// A reply counts as a verdict on the frame only when it IS a findings
+	// array. An empty "[]" is the model saying "this frame is clean", which is
+	// believable only when the reply is nothing but that array: a refusal or
+	// commentary that merely contains a literal "[]" ("I cannot view images,
+	// so: []") says nothing about the frame. With prose around the array, it is
+	// accepted only when it carries at least one real finding (an object with a
+	// title or description) and every element is one.
+	if strings.TrimSpace(content[:start]) != "" || strings.TrimSpace(content[end+1:]) != "" {
+		if len(findings) == 0 {
+			return []AnalysisFinding{}, false
+		}
+	}
+	for _, f := range findings {
+		if strings.TrimSpace(f.Title) == "" && strings.TrimSpace(f.Description) == "" {
+			return []AnalysisFinding{}, false
+		}
+	}
+
 	// Inject caller-supplied context fields.
 	for i := range findings {
 		findings[i].Screen = screen

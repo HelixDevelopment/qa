@@ -285,7 +285,7 @@ func TestHXC270_FailedReplyBodyNeverReachesAFindingOrLog(t *testing.T) {
 			defer srv.Close()
 
 			sp := &SessionPipeline{
-				config: &PipelineConfig{WebURL: srv.URL},
+				config: dataValidationTestConfig(t, srv.URL),
 			}
 
 			var findings []analysis.AnalysisFinding

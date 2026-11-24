@@ -195,10 +195,15 @@ async function handleLaunch(cmd) {
   // This bypasses coordinate-based form interaction which is unreliable
   // in headless mode. The React app reads auth_token from localStorage.
   const apiBase = cmd.apiUrl || cmd.url?.replace(':3000', ':8080') || 'http://localhost:8080';
-  const username = cmd.username || process.env.ADMIN_USERNAME || 'admin';
-  const password = cmd.password || process.env.ADMIN_PASSWORD || 'admin123';
+  // SECURITY: no built-in credential. The login is sent only when the operator
+  // supplied one (cmd.username/password or ADMIN_USERNAME/ADMIN_PASSWORD);
+  // otherwise nothing is posted to the target.
+  const username = cmd.username || process.env.ADMIN_USERNAME || '';
+  const password = cmd.password || process.env.ADMIN_PASSWORD || '';
 
-  try {
+  if (!username || !password) {
+    process.stderr.write('pre-login skipped: no credentials supplied (ADMIN_USERNAME / ADMIN_PASSWORD)\n');
+  } else try {
     const token = await apiLogin(apiBase, username, password);
     // Connect to browser and inject the token.
     const browser = await chromium.connectOverCDP(cdpURL);
@@ -209,12 +214,12 @@ async function handleLaunch(cmd) {
         const page = pages[0];
         // Wait for page to load, then inject auth token.
         await page.waitForLoadState('load').catch(() => {});
-        await page.evaluate((t) => {
+        await page.evaluate(([t, u]) => {
           localStorage.setItem('auth_token', t);
           localStorage.setItem('user', JSON.stringify({
-            id: 1, username: 'admin', role: { name: 'Admin' }
+            id: 1, username: u, role: { name: 'Admin' }
           }));
-        }, token);
+        }, [token, username]);
         // Navigate to dashboard (reload with token in place).
         await page.goto(cmd.url || 'http://localhost:3000', {
           waitUntil: 'domcontentloaded',

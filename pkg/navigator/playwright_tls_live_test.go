@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"image/png"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -171,4 +173,106 @@ func TestBridge_CAFile_Unreadable_Refused(t *testing.T) {
 	_, err := screenshotVia(t, url+"/login", map[string]string{"HELIX_WEB_CA_FILE": filepath.Join(t.TempDir(), "nope.pem")})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "HELIX_WEB_CA_FILE")
+}
+
+// colourShare is pageColourShare for an arbitrary RGB background.
+func colourShare(t *testing.T, b []byte, rr, gg, bb uint32) float64 {
+	t.Helper()
+	img, err := png.Decode(bytes.NewReader(b))
+	require.NoError(t, err)
+	bd := img.Bounds()
+	hit, total := 0, 0
+	for y := bd.Min.Y; y < bd.Max.Y; y += 7 {
+		for x := bd.Min.X; x < bd.Max.X; x += 7 {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			total++
+			if r>>8 == rr && g>>8 == gg && bl>>8 == bb {
+				hit++
+			}
+		}
+	}
+	return float64(hit) / float64(total)
+}
+
+// selfSignedServer is a TLS server with its OWN self-signed leaf (not signed by
+// any CA the browser or the bridge trusts), serving a page whose background is
+// #654321.
+func selfSignedServer(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: "localhost"},
+		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body style="background:#654321;color:#fff"><h1>Other origin</h1></body></html>`)
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// HELIX_WEB_INSECURE_TLS used to hand Chromium --ignore-certificate-errors:
+// browser-wide, so after launching at a private host the same browser would
+// also render ANY other origin with a broken certificate. The exemption must
+// cover only the certificate of the target the bridge checked at launch.
+func TestBridge_InsecureTLS_DoesNotExtendToOtherOrigins(t *testing.T) {
+	requireBrowserTools(t)
+	target, _ := privateCAServer(t)
+	other := selfSignedServer(t)
+
+	t.Setenv("HELIX_WEB_INSECURE_TLS", "1")
+	t.Setenv("HELIX_OUTPUT_DIR", t.TempDir())
+	wd, _ := os.Getwd()
+	pe := NewPlaywrightExecutor(target+"/login", nil)
+	pe.bridgePath = filepath.Join(wd, "..", "..", "scripts", "playwright-bridge.js")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	defer func() { _, _ = pe.runBridgeCmd(context.Background(), map[string]interface{}{"action": "close"}) }()
+
+	shot, err := pe.Screenshot(ctx)
+	require.NoError(t, err)
+	require.Greater(t, pageColourShare(t, shot), 0.4, "control: the launch target renders under the opt-in")
+
+	// Another https origin with a certificate the browser does not trust.
+	_, _ = pe.runBridgeCmd(ctx, map[string]interface{}{"action": "navigate", "url": other + "/"})
+	shot2, err := pe.Screenshot(ctx)
+	require.NoError(t, err)
+	require.Less(t, colourShare(t, shot2, 0x65, 0x43, 0x21), 0.05,
+		"an origin other than the one the opt-in was checked for must NOT render with its broken certificate ignored")
+}
+
+// The bridge used to POST {"username":"admin","password":"admin123"} to
+// <target>/api/v1/auth/login at every launch (default-credential probing of
+// whatever the session points at). With no credentials supplied through the
+// environment it must send nothing.
+func TestBridge_Launch_SendsNoDefaultCredentialLogin(t *testing.T) {
+	requireBrowserTools(t)
+	var mu sync.Mutex
+	var logins []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/auth/login" {
+			b, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			logins = append(logins, r.Method+" "+string(b))
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body style="background:#123456"><h1>app</h1></body></html>`)
+	}))
+	defer srv.Close()
+	t.Setenv("ADMIN_USERNAME", "")
+	t.Setenv("ADMIN_PASSWORD", "")
+	_, err := screenshotVia(t, srv.URL+"/", nil)
+	require.NoError(t, err)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(t, logins, "the bridge must not send a login the operator did not supply credentials for")
 }

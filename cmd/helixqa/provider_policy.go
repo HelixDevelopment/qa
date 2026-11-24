@@ -78,3 +78,50 @@ func selectEnvProviders(
 	sort.Strings(skipped)
 	return allowed, skipped
 }
+
+// dataValidationPolicy is the resolved opt-in for the API data-validation
+// step. That step LOGS IN to the application under test, so it is off unless
+// asked for and it never carries a built-in credential: only the NAMES of the
+// environment variables holding the login are configured, and the values are
+// read at the moment of use and never printed.
+type dataValidationPolicy struct {
+	On       bool
+	UserEnv  string
+	PassEnv  string
+	envValue func(string) string
+}
+
+func resolveDataValidation(
+	flagOn bool, userEnv, passEnv string, getenv func(string) string,
+) dataValidationPolicy {
+	if userEnv == "" {
+		userEnv = strings.TrimSpace(getenv("HELIX_DATA_VALIDATION_USER_ENV"))
+	}
+	if passEnv == "" {
+		passEnv = strings.TrimSpace(getenv("HELIX_DATA_VALIDATION_PASS_ENV"))
+	}
+	return dataValidationPolicy{
+		On:       flagOn || envEnabled(getenv, "HELIX_DATA_VALIDATION"),
+		UserEnv:  userEnv,
+		PassEnv:  passEnv,
+		envValue: getenv,
+	}
+}
+
+// describe renders the banner value: never a credential, only names and
+// whether the named variables are set.
+func (d dataValidationPolicy) describe() string {
+	if !d.On {
+		return "off (no login or API probe is sent to the target)"
+	}
+	set := func(n string) string {
+		if n == "" {
+			return "(name not configured)"
+		}
+		if d.envValue(n) == "" {
+			return n + " (UNSET)"
+		}
+		return n + " (set)"
+	}
+	return "ON; user env " + set(d.UserEnv) + ", password env " + set(d.PassEnv)
+}

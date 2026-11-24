@@ -29,7 +29,7 @@ run() { # pkg regexp -> prints go test output, returns its status; SKIP counts a
 }
 fail=0
 echo "== control (unmutated) =="
-for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_" "./pkg/analysis TestAnalyzeScreenshotChecked"; do
+for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo|TestDataValidation_|TestPartialFrames" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_|TestResolveDataValidation" "./pkg/analysis TestAnalyzeScreenshotChecked" "./pkg/llm TestIsLocalEndpointURL"; do
   set -- $g; run "$1" "$2"; rc=$?
   [ $rc -eq 0 ] && echo "control PASS: $2" || { echo "control FAIL($rc): $2"; [ $rc -eq 2 ] && exit 2; fail=1; }
 done
@@ -47,8 +47,21 @@ mutate 2 pkg/autonomous/pipeline.go 's|if !sp.config.RecordVideo {|if false {|' 
 mutate 3 cmd/helixqa/provider_policy.go 's|if allowCloud \|\| isLocalProvider(c) {|if true {|' ./cmd/helixqa 'TestSelectEnvProviders|TestAutonomous_DefaultIsLocalOnly'
 mutate 4 cmd/helixqa/main.go 's|if !bridgedOK {|if false {|' ./cmd/helixqa 'TestAutonomous_DefaultIsLocalOnly'
 mutate 5 pkg/autonomous/pipeline.go 's|if sp.config.BanksExplicit {|if false {|' ./pkg/autonomous 'TestStructuredPhase_MissingBankDir'
-mutate 6 scripts/playwright-bridge-tls.js 's|rejectUnauthorized: true|rejectUnauthorized: false|' ./pkg/navigator 'TestBridge_PrivateCA_WrongCA_Refused'
+mutate 6 scripts/playwright-bridge-tls.js 's|rejectUnauthorized: !unverified|rejectUnauthorized: false|' ./pkg/navigator 'TestBridge_PrivateCA_WrongCA_Refused'
 mutate 7 scripts/playwright-bridge-tls.js 's|if (!isPrivateHost(host)) {|if (false) {|' ./pkg/navigator 'TestBridge_InsecureTLS_RefusedForPublicHost'
 mutate 8 scripts/playwright-bridge.js 's|\.\.\.tlsExtra,||' ./pkg/navigator 'TestBridge_PrivateCA_WithCAFile_RendersPage'
 mutate 9 pkg/analysis/vision.go 's|return \[\]AnalysisFinding{}, false|return []AnalysisFinding{}, true|' ./pkg/analysis 'TestAnalyzeScreenshotChecked'
+# Follow-ups after PR #9: default-credential probing, vision-endpoint locality,
+# prose "[]" parsing, partial sessions, browser-wide insecure TLS.
+mutate 10 pkg/autonomous/pipeline.go 's|if !sp.config.DataValidation {|if false {|' ./pkg/autonomous 'TestDataValidation_DefaultOff_SendsNoRequest|TestDataValidation_CredentialsAloneDoNotEnableIt'
+mutate 11 pkg/autonomous/pipeline.go 's|if dvUser == "" \|\| dvPass == "" {|if false {|' ./pkg/autonomous 'TestDataValidation_OptInWithoutCredentials_SendsNoRequest'
+mutate 12 cmd/helixqa/main.go 's|if !cloudOK \&\& !llm.IsLocalEndpointURL(vcfg.BaseURL) {|if false {|' ./cmd/helixqa 'TestAutonomous_VisionEndpointHosted_RefusedWithoutOptIn'
+mutate 13 pkg/llm/vision_endpoint.go 's|if err != nil \|\| u.User != nil {|if err != nil {|' ./pkg/llm 'TestIsLocalEndpointURL'
+mutate 14 pkg/llm/vision_endpoint.go 's|return ip.IsLoopback() .*|return true|' ./pkg/llm 'TestIsLocalEndpointURL'
+mutate 15 pkg/analysis/vision.go 's|if strings.TrimSpace(content\[:start\]) != "" \|\| strings.TrimSpace(content\[end+1:\]) != "" {|if false {|' ./pkg/analysis 'TestAnalyzeScreenshotChecked'
+mutate 16 pkg/analysis/vision.go 's|if strings.TrimSpace(f.Title) == "" \&\& strings.TrimSpace(f.Description) == "" {|if false {|' ./pkg/analysis 'TestAnalyzeScreenshotChecked'
+mutate 17 pkg/autonomous/pipeline.go 's|if partialFrames(r) != "" {|if false {|' ./pkg/autonomous 'TestPartialFrames'
+mutate 18 pkg/autonomous/pipeline.go 's|if reason := partialFrames(result); reason != "" {|if false {|' ./pkg/autonomous 'TestPartialFrames'
+mutate 19 scripts/playwright-bridge-tls.js "s|args.push('--ignore-certificate-errors-spki-list=' + spki.join(','));|args.push('--ignore-certificate-errors');|" ./pkg/navigator 'TestBridge_InsecureTLS_DoesNotExtendToOtherOrigins'
+mutate 20 scripts/playwright-bridge.js 's|if (!username \|\| !password) {|if (false) {|' ./pkg/navigator 'TestBridge_Launch_SendsNoDefaultCredentialLogin'
 echo "result: fail=$fail"; exit $fail

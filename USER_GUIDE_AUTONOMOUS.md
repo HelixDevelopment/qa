@@ -202,11 +202,24 @@ default is **local only**: loopback Ollama / llmctl and `HELIX_VISION_ENDPOINT`.
 | Hosted providers from API-key env vars | off | `-allow-cloud-providers` or `HELIX_ALLOW_CLOUD_PROVIDERS=1` |
 | claude / qwen-coder / opencode CLIs on PATH | off | `-allow-bridged-cli` or `HELIX_ALLOW_BRIDGED_CLI=1` |
 | ffmpeg x11grab of the host display (web/desktop) | off | `-record-video` or `HELIX_RECORD_VIDEO=1` |
-| Private-CA HTTPS target in the web bridge | strict | `-web-ca-file <pem>` / `HELIX_WEB_CA_FILE` (preferred) or `-web-insecure-tls` (localhost/private hosts only) |
+| API data-validation step (**logs in** to the target backend and probes its API) | off, nothing is sent | `-data-validation` or `HELIX_DATA_VALIDATION=1`, **plus** credentials supplied by environment variable NAME: `-data-validation-user-env NAME` / `-data-validation-pass-env NAME` (or `HELIX_DATA_VALIDATION_USER_ENV` / `_PASS_ENV`). There is no built-in credential; with either value unset the step is skipped and sends nothing |
+| `HELIX_VISION_ENDPOINT` on a host that is not this machine / a private network | refused (exit 2) | `-allow-cloud-providers` (the banner then labels the endpoint as off-network). The URL host is parsed, never prefix-matched, so `127.0.0.1.evil.example` and `127.0.0.1:1@evil.example` are not local; user info in the URL is refused outright |
+| Private-CA HTTPS target in the web bridge | strict | `-web-ca-file <pem>` / `HELIX_WEB_CA_FILE` (preferred) or `-web-insecure-tls` (localhost/private hosts only; see below) |
 | Structured banks | `<project>/challenges/helixqa-banks`; absent = skipped | `-banks <dir>` (missing = exit 2) |
 
 A session in which no frame was analysed exits 2 (UNDETERMINED); the report
-shows `frames_captured`, `frames_blank` and `frames_analysed`. The API-data
+shows `frames_captured`, `frames_blank` and `frames_analysed`. A session in
+which only SOME frames were judged is `PARTIAL (exit 2)`, not `Complete`: a
+frame counts as analysed only when the model reply IS a findings array (an empty
+`[]` counts only as the whole reply; a refusal or comment that merely contains
+`[]` does not), the report carries `frames_unusable` and `partial_reason`.
+
+`-web-insecure-tls` does not tell Chromium to ignore certificate errors
+browser-wide. The bridge reads the certificate the private target presents and
+exempts that one key (`--ignore-certificate-errors-spki-list`); another origin
+reached by a link, redirect or navigation with a broken certificate still fails
+to load. The web bridge also no longer posts a built-in `admin` login at launch:
+it pre-logs-in only when `ADMIN_USERNAME` / `ADMIN_PASSWORD` are set. The API-data
 validation step uses Go's HTTP client, which honours `SSL_CERT_FILE` for a
 private CA.
 

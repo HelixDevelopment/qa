@@ -130,3 +130,30 @@ func TestSessionPipeline_HostVideoIsOptIn(t *testing.T) {
 	assert.Contains(t, on, "video recording failed for web: ffmpeg not found", "control: with the opt-in the recorder is attempted")
 	assert.NotContains(t, on, "host-display video recording OFF")
 }
+
+// A session in which SOME frames were analysed and others got an unusable
+// model reply (empty / refusal / non-JSON) judged only part of what it
+// captured. It must say PARTIAL with the counts and must not exit 0.
+func TestPartialFrames_NotPlainComplete(t *testing.T) {
+	r := &PipelineResult{
+		Status: StatusComplete, TestsRun: 5, TestsPlanned: 5, CoveragePct: 100,
+		FramesCaptured: 5, FramesAnalysed: 3, FramesUnusable: 2,
+	}
+	line := sessionSummaryLine(r)
+	assert.Contains(t, line, "PARTIAL")
+	assert.Contains(t, line, "3 of 5")
+	assert.Contains(t, line, "2 frame(s) got an unusable")
+	assert.NotContains(t, line, "] Complete:", "must not read as a plain Complete")
+	assert.Equal(t, 2, r.ExitCode(), "part of the session could not be judged: could-not-determine, never 0")
+	assert.Contains(t, partialFrames(r), "2 of 5")
+
+	// Controls: all frames usable stays a plain Complete with exit 0.
+	ok := &PipelineResult{Status: StatusComplete, TestsRun: 5, TestsPlanned: 5, FramesCaptured: 5, FramesAnalysed: 5}
+	assert.Contains(t, sessionSummaryLine(ok), "] Complete:")
+	assert.Equal(t, 0, ok.ExitCode())
+	assert.Empty(t, partialFrames(ok))
+
+	// A failed session stays failed (1 outranks 2).
+	f := &PipelineResult{Status: StatusFailed, FramesAnalysed: 1, FramesUnusable: 1}
+	assert.Equal(t, 1, f.ExitCode())
+}

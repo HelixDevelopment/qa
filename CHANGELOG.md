@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING, safety)
 
+- **No default-credential probing.** The autonomous API data-validation step no
+  longer POSTs a built-in `admin` / `admin123` login to the target: it is OFF
+  unless `-data-validation` (`HELIX_DATA_VALIDATION=1`) is given AND credentials
+  are supplied by environment variable NAME (`-data-validation-user-env`,
+  `-data-validation-pass-env`); with either value unset nothing is sent. The web
+  bridge likewise no longer logs in with a built-in credential at launch (only
+  with `ADMIN_USERNAME` / `ADMIN_PASSWORD`).
+- **`HELIX_VISION_ENDPOINT` must be loopback / private** unless
+  `-allow-cloud-providers`: a hosted endpoint was accepted while the banner said
+  "Hosted providers: off". The host is parsed (`llm.IsLocalEndpointURL`), not
+  prefix-matched; refusal exits 2 and never echoes the URL.
+- **Prose containing a literal `[]` no longer counts as an analysed frame**, and
+  a session with some unusable frames is `PARTIAL (exit 2)` with counts
+  (`frames_unusable`, `partial_reason`), not a plain Complete.
+- **`HELIX_WEB_INSECURE_TLS` is scoped**: the bridge pins the private target's
+  leaf key (`--ignore-certificate-errors-spki-list`) instead of
+  `--ignore-certificate-errors`, so other origins with broken certificates are
+  still refused. Proof: `scripts/testing/prove_autonomous_honesty.sh`
+  (mutations M10-M20).
 - **`helixqa autonomous` is local-only and opt-in by default.** Hosted
   providers found through API-key environment variables are no longer
   registered, claude / qwen-coder / opencode CLIs on PATH are no longer

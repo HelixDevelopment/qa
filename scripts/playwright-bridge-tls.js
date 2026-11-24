@@ -22,11 +22,16 @@
 //                                silent fall-back to "no trust". Only the
 //                                verified origin is covered; a redirect to
 //                                another host is not.
-//   HELIX_WEB_INSECURE_TLS=1     ignore ALL certificate errors, but ONLY when
-//                                the target host is loopback, localhost, a
+//   HELIX_WEB_INSECURE_TLS=1     accept the certificate the TARGET presents
+//                                without validating it, but ONLY when the
+//                                target host is loopback, localhost, a
 //                                *.local / *.localhost name or a private-range
 //                                address (RFC 1918, link-local, ULA). Any other
-//                                host is REFUSED.
+//                                host is REFUSED. The exemption is PINNED to
+//                                that leaf key (--ignore-certificate-errors-
+//                                spki-list), not browser-wide: another origin
+//                                with a broken certificate, reached by a link,
+//                                a redirect or a navigation, still fails.
 
 'use strict';
 const fs = require('fs');
@@ -55,14 +60,18 @@ function spkiHashes(pemText) {
 
 // tlsArgs returns the extra Chromium arguments for the given environment and
 // target URL, or throws an Error naming the offending variable.
-function verifiedLeafSpki(targetUrl, caPem) {
+function verifiedLeafSpki(targetUrl, caPem, opts0) {
   const tls = require('tls');
+  const unverified = !!(opts0 && opts0.unverified);
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(targetUrl); } catch (e) { return reject(new Error('HELIX_WEB_CA_FILE: invalid target URL')); }
     if (u.protocol !== 'https:') return resolve(null); // plain http needs no trust
     const host = u.hostname.replace(/^\[|\]$/g, '');
-    const opts = { host, port: Number(u.port) || 443, ca: caPem, rejectUnauthorized: true };
+    // unverified: read the presented leaf WITHOUT validating it (used only for
+    // the HELIX_WEB_INSECURE_TLS opt-in on a private host, where the key is
+    // then pinned so the exemption covers that certificate and nothing else).
+    const opts = { host, port: Number(u.port) || 443, ca: caPem, rejectUnauthorized: !unverified };
     if (require('net').isIP(host) === 0) opts.servername = host; // SNI is not permitted for an IP literal
     const sock = tls.connect(opts, () => {
       try {
@@ -79,6 +88,7 @@ function verifiedLeafSpki(targetUrl, caPem) {
 
 async function tlsArgs(env, targetUrl) {
   const args = [];
+  const spki = []; // leaf keys whose certificate errors are exempted (never a browser-wide ignore)
   const caFile = env.HELIX_WEB_CA_FILE;
   if (caFile) {
     let text;
@@ -94,7 +104,7 @@ async function tlsArgs(env, targetUrl) {
     try { leaf = await verifiedLeafSpki(targetUrl, text); } catch (e) {
       throw new Error('HELIX_WEB_CA_FILE: ' + e.message);
     }
-    if (leaf) args.push('--ignore-certificate-errors-spki-list=' + leaf);
+    if (leaf) spki.push(leaf);
   }
   if (env.HELIX_WEB_INSECURE_TLS === '1' || env.HELIX_WEB_INSECURE_TLS === 'true') {
     let host = '';
@@ -103,8 +113,19 @@ async function tlsArgs(env, targetUrl) {
       throw new Error('HELIX_WEB_INSECURE_TLS is limited to localhost / loopback / private-range hosts; refusing for host "' +
         host + '" (use HELIX_WEB_CA_FILE to trust a specific CA instead)');
     }
-    args.push('--ignore-certificate-errors');
+    // NOT --ignore-certificate-errors: that is browser-wide, so every other
+    // origin the page links to, redirects to or is navigated to would also
+    // have its certificate errors ignored. Pin the leaf key the private
+    // target presents instead: the exemption covers that one certificate and
+    // a broken certificate on any other origin still fails. (Plain http
+    // needs no exemption.)
+    let leaf;
+    try { leaf = await verifiedLeafSpki(targetUrl, undefined, { unverified: true }); } catch (e) {
+      throw new Error('HELIX_WEB_INSECURE_TLS: cannot read the certificate presented by "' + host + '": ' + e.message);
+    }
+    if (leaf) spki.push(leaf);
   }
+  if (spki.length) args.push('--ignore-certificate-errors-spki-list=' + spki.join(','));
   return args;
 }
 
