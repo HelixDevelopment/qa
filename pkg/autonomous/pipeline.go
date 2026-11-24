@@ -1611,6 +1611,7 @@ func (sp *SessionPipeline) Run(
 		fmt.Printf("  [exec] mkdir screenshots failed: %v\n", mkErr)
 	}
 	var allScreenshots []string
+	structuredFrames := 0
 
 	testsRun := 0
 	testsSkipped := 0
@@ -1918,8 +1919,17 @@ func (sp *SessionPipeline) Run(
 			allFindings = append(allFindings, f)
 		},
 		func(platform string, data []byte) {
-			allScreenshots = append(allScreenshots, platform)
-			_ = data
+			// Persist the frame: a step verdict cites its sha256, so the
+			// frame it names must exist on disk (previously the platform NAME
+			// was appended here and the bytes were discarded, which left
+			// structured frames out of the evidence and out of frames_distinct).
+			structuredFrames++
+			fname, wErr := saveStructuredFrame(screenshotDir, platform, structuredFrames, data)
+			if wErr != nil {
+				fmt.Printf("    [%s] write structured frame failed: %v\n", platform, wErr)
+				return
+			}
+			allScreenshots = append(allScreenshots, fname)
 		},
 	)
 
@@ -4060,6 +4070,21 @@ func undecodableLoginBodyDescription(
 			"not in the API under test.",
 		cause, tried, contentType, len(body),
 	)
+}
+
+// saveStructuredFrame writes one structured-phase frame to dir as
+// structured-NNN-<platform>.png and returns its path. The bytes written are the
+// bytes the step verdict hashed, so the file's sha256 equals the frame_sha256
+// the report records for that step.
+func saveStructuredFrame(dir, platform string, n int, data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("empty frame")
+	}
+	fname := filepath.Join(dir, fmt.Sprintf("structured-%03d-%s.png", n, sanitizeFilename(platform)))
+	if err := os.WriteFile(fname, data, 0o644); err != nil {
+		return "", err
+	}
+	return fname, nil
 }
 
 // selectEvenly returns up to max elements from the slice,
