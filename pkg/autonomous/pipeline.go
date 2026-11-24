@@ -290,7 +290,8 @@ type PipelineResult struct {
 	// about the application, whatever number of tests it "ran".
 	FramesCaptured int `json:"frames_captured"` // non-blank screenshots saved
 	FramesBlank    int `json:"frames_blank"`    // screenshots dropped as blank/uniform
-	FramesAnalysed int `json:"frames_analysed"` // frames a vision analysis completed on
+	FramesAnalysed int `json:"frames_analysed"` // frames whose vision reply parsed as a findings array
+	FramesUnusable int `json:"frames_unusable"` // frames the model answered with an empty / non-JSON reply
 }
 
 // ExitCode is the process exit status for this session, on the
@@ -2971,8 +2972,8 @@ func (sp *SessionPipeline) Run(
 			base := filepath.Base(ssPath)
 
 			vStart := time.Now()
-			findings, err :=
-				visionAnalyzer.AnalyzeScreenshot(
+			findings, parsedOK, err :=
+				visionAnalyzer.AnalyzeScreenshotChecked(
 					ctx, imgData, base, "",
 				)
 			vDur := time.Since(vStart)
@@ -2986,7 +2987,16 @@ func (sp *SessionPipeline) Run(
 				)
 				continue
 			}
-			result.FramesAnalysed++
+			if parsedOK {
+				result.FramesAnalysed++
+			} else {
+				result.FramesUnusable++
+				fmt.Printf(
+					"  [analyze] vision %s: reply was empty or not a "+
+						"JSON findings array; frame NOT counted as analysed\n",
+					base,
+				)
+			}
 			fmt.Printf(
 				"  [analyze] vision %s: "+
 					"%d findings (%v)\n",
@@ -3064,14 +3074,18 @@ func (sp *SessionPipeline) Run(
 						continue
 					}
 					imgData = resizeScreenshot(imgData)
-					findings, err :=
-						va.AnalyzeScreenshot(
+					findings, parsedOK, err :=
+						va.AnalyzeScreenshotChecked(
 							ctx, imgData,
 							filepath.Base(framePath),
 							"video-frame",
 						)
 					if err == nil {
-						result.FramesAnalysed++
+						if parsedOK {
+							result.FramesAnalysed++
+						} else {
+							result.FramesUnusable++
+						}
 						allFindings = append(
 							allFindings,
 							findings...,
@@ -4745,5 +4759,6 @@ func undeterminedNoFrames(r *PipelineResult) string {
 	}
 	return fmt.Sprintf("%s: %d frame(s) captured, %d dropped as blank, 0 analysed; "+
 		"%d test(s) ran but the application was not judged (UNDETERMINED, not a pass)",
-		noFrameReasonPrefix, r.FramesCaptured, r.FramesBlank, r.TestsRun)
+		noFrameReasonPrefix, r.FramesCaptured, r.FramesBlank, r.TestsRun) +
+		fmt.Sprintf(" [%d frame(s) got an empty or non-JSON model reply]", r.FramesUnusable)
 }

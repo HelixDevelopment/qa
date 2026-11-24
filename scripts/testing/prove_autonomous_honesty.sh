@@ -29,7 +29,7 @@ run() { # pkg regexp -> prints go test output, returns its status; SKIP counts a
 }
 fail=0
 echo "== control (unmutated) =="
-for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_"; do
+for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_" "./pkg/analysis TestAnalyzeScreenshotChecked"; do
   set -- $g; run "$1" "$2"; rc=$?
   [ $rc -eq 0 ] && echo "control PASS: $2" || { echo "control FAIL($rc): $2"; [ $rc -eq 2 ] && exit 2; fail=1; }
 done
@@ -50,4 +50,5 @@ mutate 5 pkg/autonomous/pipeline.go 's|if sp.config.BanksExplicit {|if false {|'
 mutate 6 scripts/playwright-bridge-tls.js 's|rejectUnauthorized: true|rejectUnauthorized: false|' ./pkg/navigator 'TestBridge_PrivateCA_WrongCA_Refused'
 mutate 7 scripts/playwright-bridge-tls.js 's|if (!isPrivateHost(host)) {|if (false) {|' ./pkg/navigator 'TestBridge_InsecureTLS_RefusedForPublicHost'
 mutate 8 scripts/playwright-bridge.js 's|\.\.\.tlsExtra,||' ./pkg/navigator 'TestBridge_PrivateCA_WithCAFile_RendersPage'
+mutate 9 pkg/analysis/vision.go 's|return \[\]AnalysisFinding{}, false|return []AnalysisFinding{}, true|' ./pkg/analysis 'TestAnalyzeScreenshotChecked'
 echo "result: fail=$fail"; exit $fail

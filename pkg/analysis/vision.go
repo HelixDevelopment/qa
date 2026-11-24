@@ -79,6 +79,27 @@ func (v *VisionAnalyzer) AnalyzeScreenshot(
 	return v.parseFindings(resp.Content, screen, platform), nil
 }
 
+// AnalyzeScreenshotChecked is AnalyzeScreenshot plus a verdict on whether the
+// model's reply was actually USABLE: parsed is true only when the reply held a
+// well-formed JSON array (an empty "[]" counts: the model judged the frame
+// clean). An empty reply, prose without an array ("I cannot view images") or
+// malformed JSON returns parsed=false, so callers never count such a frame as
+// analysed.
+func (v *VisionAnalyzer) AnalyzeScreenshotChecked(
+	ctx context.Context,
+	imageData []byte,
+	screen, platform string,
+) (findings []AnalysisFinding, parsed bool, err error) {
+	resp, err := v.provider.Vision(ctx, imageData, analyzePrompt)
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"analysis: vision call failed: %w", err,
+		)
+	}
+	f, ok := v.parseFindingsChecked(resp.Content, screen, platform)
+	return f, ok, nil
+}
+
 // CompareScreenshots submits a before/after screenshot
 // pair to the vision LLM with a regression-detection
 // prompt. The two images are composed into a single
@@ -127,9 +148,18 @@ func (v *VisionAnalyzer) CompareScreenshots(
 func (v *VisionAnalyzer) parseFindings(
 	content, screen, platform string,
 ) []AnalysisFinding {
+	f, _ := v.parseFindingsChecked(content, screen, platform)
+	return f
+}
+
+// parseFindingsChecked is parseFindings that also reports whether a JSON
+// array was actually parsed.
+func (v *VisionAnalyzer) parseFindingsChecked(
+	content, screen, platform string,
+) ([]AnalysisFinding, bool) {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return []AnalysisFinding{}
+		return []AnalysisFinding{}, false
 	}
 
 	// Strip common markdown code-fence wrappers that
@@ -141,14 +171,14 @@ func (v *VisionAnalyzer) parseFindings(
 	end := strings.LastIndex(content, "]")
 	if start == -1 || end == -1 || end < start {
 		// No array found — graceful degradation.
-		return []AnalysisFinding{}
+		return []AnalysisFinding{}, false
 	}
 	jsonSlice := content[start : end+1]
 
 	var findings []AnalysisFinding
 	if err := json.Unmarshal([]byte(jsonSlice), &findings); err != nil {
 		// Malformed JSON — graceful degradation.
-		return []AnalysisFinding{}
+		return []AnalysisFinding{}, false
 	}
 
 	// Inject caller-supplied context fields.
@@ -157,7 +187,10 @@ func (v *VisionAnalyzer) parseFindings(
 		findings[i].Platform = platform
 	}
 
-	return findings
+	if findings == nil {
+		findings = []AnalysisFinding{}
+	}
+	return findings, true
 }
 
 // stripMarkdownFence removes leading/trailing markdown

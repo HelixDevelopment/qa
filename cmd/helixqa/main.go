@@ -588,13 +588,6 @@ func cmdAutonomous(args []string) {
 		os.Exit(1)
 	}
 
-	if *webCA != "" {
-		os.Setenv("HELIX_WEB_CA_FILE", *webCA)
-	}
-	if *webInsecure {
-		os.Setenv("HELIX_WEB_INSECURE_TLS", "1")
-	}
-
 	// Load .env file — sets environment variables for LLM
 	// API keys and platform configuration without requiring
 	// the caller to export them manually.
@@ -602,6 +595,14 @@ func cmdAutonomous(args []string) {
 		fmt.Fprintf(os.Stderr,
 			"warning: could not load env file %s: %v\n",
 			*envFile, err)
+	}
+
+	// CLI flags win over a .env value (applied after loadEnvFile).
+	if *webCA != "" {
+		os.Setenv("HELIX_WEB_CA_FILE", *webCA)
+	}
+	if *webInsecure {
+		os.Setenv("HELIX_WEB_INSECURE_TLS", "1")
 	}
 
 	fmt.Println("HelixQA Autonomous QA Session")
