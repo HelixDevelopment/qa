@@ -573,6 +573,17 @@ func cmdAutonomous(args []string) {
 	recordVideo := fs.Bool("record-video", false,
 		"Record the HOST display with ffmpeg x11grab for web/desktop "+
 			"(default off; env HELIX_RECORD_VIDEO=1)")
+	dataVal := fs.Bool("data-validation", false,
+		"Opt in to the API data-validation step: it LOGS IN to the target's "+
+			"backend and probes its API (default off; env HELIX_DATA_VALIDATION=1). "+
+			"There is no built-in credential: name the environment variables that "+
+			"hold them with -data-validation-user-env / -data-validation-pass-env")
+	dataValUserEnv := fs.String("data-validation-user-env", "",
+		"NAME of the environment variable holding the data-validation login "+
+			"user (env HELIX_DATA_VALIDATION_USER_ENV); the value is never printed")
+	dataValPassEnv := fs.String("data-validation-pass-env", "",
+		"NAME of the environment variable holding the data-validation login "+
+			"password (env HELIX_DATA_VALIDATION_PASS_ENV); the value is never printed")
 	banksDir := fs.String("banks", "",
 		"Directory of structured test banks (default <project>/challenges/"+
 			"helixqa-banks; a missing explicit directory is an error, a "+
@@ -624,6 +635,8 @@ func cmdAutonomous(args []string) {
 	fmt.Printf("Hosted providers: %s\n", optState(cloudOK))
 	fmt.Printf("Bridged CLIs:     %s\n", optState(bridgedOK))
 	fmt.Printf("Host video:       %s\n", optState(videoOK))
+	dv := resolveDataValidation(*dataVal, *dataValUserEnv, *dataValPassEnv, os.Getenv)
+	fmt.Printf("Data validation:  %s\n", dv.describe())
 	fmt.Println()
 
 	// Parse platforms.
@@ -730,6 +743,22 @@ func cmdAutonomous(args []string) {
 		os.Exit(1)
 	}
 	if vok {
+		// The endpoint receives every captured frame. The banner says hosted
+		// providers are off unless opted in, so a host that is not this machine
+		// or a private network is refused the same way (host parsed, not
+		// prefix-matched).
+		if !cloudOK && !llm.IsLocalEndpointURL(vcfg.BaseURL) {
+			fmt.Fprintf(os.Stderr, "error: %s refused: its host is not a "+
+				"loopback / private-network address, and captured frames would "+
+				"leave this network. Use a local endpoint, or opt in explicitly "+
+				"with -allow-cloud-providers (the value is not printed).\n",
+				llm.EnvVisionEndpoint)
+			os.Exit(exitCodeNotExecuted)
+		}
+		if !llm.IsLocalEndpointURL(vcfg.BaseURL) {
+			fmt.Printf("Vision endpoint:  NOT a loopback/private host: " +
+				"frames are sent off this network (explicit -allow-cloud-providers opt-in)\n")
+		}
 		providerConfigs = append(providerConfigs, vcfg)
 		visionConfigs = append(visionConfigs, vcfg)
 		fmt.Printf("Vision endpoint:  %s\n", llm.DescribeVisionEndpoint(vcfg))
@@ -871,28 +900,31 @@ func cmdAutonomous(args []string) {
 		IssuesDir: filepath.Join(
 			*project, "docs", "issues",
 		),
-		BanksDir:             banksDirOrDefault(*banksDir, *project),
-		BanksExplicit:        *banksDir != "",
-		RecordVideo:          videoOK,
-		Timeout:              *timeout,
-		PassNumber:           passNumber,
-		AndroidDevice:        os.Getenv("HELIX_ANDROID_DEVICE"),
-		AndroidDevices:       detectADBDevices(*project),
-		AndroidPackage:       os.Getenv("HELIX_ANDROID_PACKAGE"),
-		WebURL:               os.Getenv("HELIX_WEB_URL"),
-		DesktopDisplay:       os.Getenv("HELIX_DESKTOP_DISPLAY"),
-		FFmpegPath:           os.Getenv("HELIX_FFMPEG_PATH"),
-		CuriosityEnabled:     *curiosity,
-		CuriosityTimeout:     *curiosityTimeout,
-		VisionHost:           os.Getenv("HELIX_VISION_HOST"),
-		VisionUser:           os.Getenv("HELIX_VISION_USER"),
-		VisionModel:          os.Getenv("HELIX_VISION_MODEL"),
-		UseLlamaCpp:          os.Getenv("HELIX_LLAMACPP") == "true",
-		LlamaCppModelPath:    os.Getenv("HELIX_LLAMACPP_MODEL"),
-		LlamaCppMMProjPath:   os.Getenv("HELIX_LLAMACPP_MMPROJ"),
-		LlamaCppFreeGPU:      os.Getenv("HELIX_LLAMACPP_FREE_GPU") == "true",
-		VisionMultiUser:      os.Getenv("HELIX_VISION_MULTI_USER"),
-		LlamaCppRPCModelPath: os.Getenv("HELIX_LLAMACPP_RPC_MODEL"),
+		BanksDir:              banksDirOrDefault(*banksDir, *project),
+		BanksExplicit:         *banksDir != "",
+		RecordVideo:           videoOK,
+		DataValidation:        dv.On,
+		DataValidationUserEnv: dv.UserEnv,
+		DataValidationPassEnv: dv.PassEnv,
+		Timeout:               *timeout,
+		PassNumber:            passNumber,
+		AndroidDevice:         os.Getenv("HELIX_ANDROID_DEVICE"),
+		AndroidDevices:        detectADBDevices(*project),
+		AndroidPackage:        os.Getenv("HELIX_ANDROID_PACKAGE"),
+		WebURL:                os.Getenv("HELIX_WEB_URL"),
+		DesktopDisplay:        os.Getenv("HELIX_DESKTOP_DISPLAY"),
+		FFmpegPath:            os.Getenv("HELIX_FFMPEG_PATH"),
+		CuriosityEnabled:      *curiosity,
+		CuriosityTimeout:      *curiosityTimeout,
+		VisionHost:            os.Getenv("HELIX_VISION_HOST"),
+		VisionUser:            os.Getenv("HELIX_VISION_USER"),
+		VisionModel:           os.Getenv("HELIX_VISION_MODEL"),
+		UseLlamaCpp:           os.Getenv("HELIX_LLAMACPP") == "true",
+		LlamaCppModelPath:     os.Getenv("HELIX_LLAMACPP_MODEL"),
+		LlamaCppMMProjPath:    os.Getenv("HELIX_LLAMACPP_MMPROJ"),
+		LlamaCppFreeGPU:       os.Getenv("HELIX_LLAMACPP_FREE_GPU") == "true",
+		VisionMultiUser:       os.Getenv("HELIX_VISION_MULTI_USER"),
+		LlamaCppRPCModelPath:  os.Getenv("HELIX_LLAMACPP_RPC_MODEL"),
 	}
 	// Parse HELIX_VISION_HOSTS (comma-separated).
 	if hostsEnv := os.Getenv("HELIX_VISION_HOSTS"); hostsEnv != "" {

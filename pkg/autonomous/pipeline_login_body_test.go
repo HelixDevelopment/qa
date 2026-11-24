@@ -232,7 +232,7 @@ func TestHXC267_PipelineRaisesFindingOnUndecodableLoginBody(t *testing.T) {
 			defer srv.Close()
 
 			sp := &SessionPipeline{
-				config: &PipelineConfig{WebURL: srv.URL},
+				config: dataValidationTestConfig(t, srv.URL),
 			}
 			findings := sp.validateAPIData(context.Background())
 

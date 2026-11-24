@@ -478,7 +478,7 @@ func TestHXC239_PipelineRaisesFindingOnUnusableToken(t *testing.T) {
 	srv, rec := unusableTokenAPIServer(t)
 	defer srv.Close()
 
-	sp := &SessionPipeline{config: &PipelineConfig{WebURL: srv.URL}}
+	sp := &SessionPipeline{config: dataValidationTestConfig(t, srv.URL)}
 	findings := sp.validateAPIData(context.Background())
 
 	var noBearer []analysis.AnalysisFinding

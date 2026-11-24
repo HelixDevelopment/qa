@@ -16,6 +16,7 @@ import (
 	osexec "os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -150,6 +151,16 @@ type PipelineConfig struct {
 	// running a session. Android recording (adb screenrecord of the device
 	// under test) is not affected.
 	RecordVideo bool
+
+	// DataValidation opts in to the API data-validation step, which logs in to
+	// the target's backend and probes its API. It is OFF by default: sending a
+	// login to the application under test is never implied by running a
+	// session. The credentials are read from the environment variables NAMED by
+	// DataValidationUserEnv / DataValidationPassEnv at the moment of use; there
+	// is no built-in credential, and without both values nothing is sent.
+	DataValidation        bool
+	DataValidationUserEnv string
+	DataValidationPassEnv string
 
 	// BanksExplicit is true when the caller named BanksDir itself
 	// (helixqa autonomous -banks). A missing explicit directory is an error
@@ -292,6 +303,11 @@ type PipelineResult struct {
 	FramesBlank    int `json:"frames_blank"`    // screenshots dropped as blank/uniform
 	FramesAnalysed int `json:"frames_analysed"` // frames whose vision reply parsed as a findings array
 	FramesUnusable int `json:"frames_unusable"` // frames the model answered with an empty / non-JSON reply
+
+	// PartialReason is set when some captured frames were never judged
+	// (unusable model reply) although others were: the session is PARTIAL and
+	// exits 2, never a plain Complete.
+	PartialReason string `json:"partial_reason,omitempty"`
 }
 
 // ExitCode is the process exit status for this session, on the
@@ -318,6 +334,10 @@ func (r *PipelineResult) ExitCode() int {
 		return 2
 	}
 	if r.StructuredError != "" {
+		return 2
+	}
+	if partialFrames(r) != "" {
+		// Some captured frames were never judged (unusable model reply).
 		return 2
 	}
 	return 0
@@ -3287,6 +3307,8 @@ func (sp *SessionPipeline) Run(
 		result.CoveragePct = 0
 	}
 
+	result.PartialReason = partialFrames(result)
+
 	// Attach cost summary to the result.
 	if sp.costTracker != nil {
 		costSummary := sp.costTracker.Summary()
@@ -3295,27 +3317,7 @@ func (sp *SessionPipeline) Run(
 
 	sp.updateSession(sessionID, result)
 
-	if result.Status == StatusBlocked && result.Error != "" &&
-		strings.HasPrefix(result.Error, noFrameReasonPrefix) {
-		fmt.Printf(
-			"[pipeline] UNDETERMINED (exit 2): %s "+
-				"(%d/%d tests ran, %d captured, %d blank, %d analysed, %v total)\n",
-			result.Error, result.TestsRun, result.TestsPlanned,
-			result.FramesCaptured, result.FramesBlank,
-			result.FramesAnalysed,
-			result.Duration.Round(time.Millisecond),
-		)
-	} else {
-		fmt.Printf(
-			"[pipeline] Complete: %d/%d tests, "+
-				"%.1f%% coverage, %d frames analysed, %v total\n",
-			result.TestsRun,
-			result.TestsPlanned,
-			result.CoveragePct,
-			result.FramesAnalysed,
-			result.Duration.Round(time.Millisecond),
-		)
-	}
+	fmt.Print(sessionSummaryLine(result))
 
 	// Log cost summary.
 	if result.Cost != nil && result.Cost.TotalCalls > 0 {
@@ -3354,6 +3356,38 @@ const apiDataTimeout = 10 * time.Second
 func (sp *SessionPipeline) validateAPIData(
 	ctx context.Context,
 ) []analysis.AnalysisFinding {
+	// SECURITY: this step logs in to the target's backend. It never
+	// does so by default, and never with a built-in credential: the
+	// operator opts in (-data-validation) and names the environment
+	// variables holding the credentials. Without both values nothing
+	// is sent at all.
+	if !sp.config.DataValidation {
+		fmt.Println(
+			"[data-validation] OFF: no login or API probe was " +
+				"sent (opt in with -data-validation and supply " +
+				"credentials via -data-validation-user-env / " +
+				"-data-validation-pass-env)",
+		)
+		return nil
+	}
+	dvUser, dvPass := "", ""
+	if n := sp.config.DataValidationUserEnv; n != "" {
+		dvUser = os.Getenv(n)
+	}
+	if n := sp.config.DataValidationPassEnv; n != "" {
+		dvPass = os.Getenv(n)
+	}
+	if dvUser == "" || dvPass == "" {
+		fmt.Println(
+			"[data-validation] SKIPPED: enabled but the " +
+				"credential environment variables are not set " +
+				"(user env " + quoteEnvName(sp.config.DataValidationUserEnv) +
+				", password env " + quoteEnvName(sp.config.DataValidationPassEnv) +
+				"); nothing was sent",
+		)
+		return nil
+	}
+
 	baseURL := "http://localhost:8080"
 	if sp.config.WebURL != "" {
 		baseURL = strings.TrimRight(
@@ -3374,8 +3408,8 @@ func (sp *SessionPipeline) validateAPIData(
 	var authToken string
 	loginURL := baseURL + "/api/v1/auth/login"
 	loginBody, _ := json.Marshal(map[string]string{
-		"username": "admin",
-		"password": "admin123",
+		"username": dvUser,
+		"password": dvPass,
 	})
 	loginReq, err := http.NewRequestWithContext(
 		ctx, http.MethodPost, loginURL,
@@ -4761,4 +4795,60 @@ func undeterminedNoFrames(r *PipelineResult) string {
 		"%d test(s) ran but the application was not judged (UNDETERMINED, not a pass)",
 		noFrameReasonPrefix, r.FramesCaptured, r.FramesBlank, r.TestsRun) +
 		fmt.Sprintf(" [%d frame(s) got an empty or non-JSON model reply]", r.FramesUnusable)
+}
+
+// quoteEnvName renders an environment variable NAME for a log line (never a
+// value); an unset name is shown as "(not configured)".
+func quoteEnvName(n string) string {
+	if n == "" {
+		return "(not configured)"
+	}
+	return strconv.Quote(n)
+}
+
+// sessionSummaryLine renders the one-line verdict printed when a session ends.
+func sessionSummaryLine(result *PipelineResult) string {
+	if result.Status == StatusBlocked && result.Error != "" &&
+		strings.HasPrefix(result.Error, noFrameReasonPrefix) {
+		return fmt.Sprintf(
+			"[pipeline] UNDETERMINED (exit 2): %s "+
+				"(%d/%d tests ran, %d captured, %d blank, %d analysed, %v total)\n",
+			result.Error, result.TestsRun, result.TestsPlanned,
+			result.FramesCaptured, result.FramesBlank,
+			result.FramesAnalysed,
+			result.Duration.Round(time.Millisecond),
+		)
+	}
+	if reason := partialFrames(result); reason != "" {
+		return fmt.Sprintf(
+			"[pipeline] PARTIAL (exit 2): %d of %d frames analysed, "+
+				"%d frame(s) got an unusable model reply and were NOT judged; "+
+				"%d/%d tests ran, %v total\n",
+			result.FramesAnalysed, result.FramesAnalysed+result.FramesUnusable,
+			result.FramesUnusable, result.TestsRun, result.TestsPlanned,
+			result.Duration.Round(time.Millisecond),
+		)
+	}
+	return fmt.Sprintf(
+		"[pipeline] Complete: %d/%d tests, "+
+			"%.1f%% coverage, %d frames analysed, %v total\n",
+		result.TestsRun,
+		result.TestsPlanned,
+		result.CoveragePct,
+		result.FramesAnalysed,
+		result.Duration.Round(time.Millisecond),
+	)
+}
+
+// partialFrames returns a non-empty reason when a session that DID analyse
+// frames also had frames whose model reply was unusable (empty, a refusal, not
+// a findings array): part of what was captured was never judged, so the session
+// is PARTIAL, not a plain Complete.
+func partialFrames(r *PipelineResult) string {
+	if r.Status != StatusComplete || r.FramesAnalysed == 0 || r.FramesUnusable == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d of %d captured frame(s) got an unusable model reply "+
+		"(empty, refusal or not a findings array) and were NOT judged",
+		r.FramesUnusable, r.FramesAnalysed+r.FramesUnusable)
 }

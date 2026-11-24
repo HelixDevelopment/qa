@@ -371,7 +371,7 @@ func TestHXC278_ReplyKeyNamesNeverLeakIntoAFindingOrLog(t *testing.T) {
 			defer srv.Close()
 
 			sp := &SessionPipeline{
-				config: &PipelineConfig{WebURL: srv.URL},
+				config: dataValidationTestConfig(t, srv.URL),
 			}
 
 			var findings []analysis.AnalysisFinding
@@ -887,7 +887,7 @@ func TestHXC278_MissingTokenErrorStaysDiagnostic(t *testing.T) {
 
 	t.Run("pipeline_log_and_finding_sinks", func(t *testing.T) {
 		sp := &SessionPipeline{
-			config: &PipelineConfig{WebURL: srv.URL},
+			config: dataValidationTestConfig(t, srv.URL),
 		}
 		var findings []analysis.AnalysisFinding
 		stdout := hxc270CaptureStdout(t, func() {
