@@ -98,3 +98,46 @@ func TestExpandTestVars(t *testing.T) {
 	assert.Equal(t, "a u1 b ${HELIX_TEST_PASSWORD} c ${HOME}", out, "only HELIX_TEST_* names are ever expanded")
 	assert.Equal(t, []string{"HELIX_TEST_PASSWORD"}, missing)
 }
+
+// The 401 auto-refresh retry re-sends the body: it must carry the RESOLVED
+// credentials, never the ${HELIX_TEST_*} references.
+func TestHTTPExecutor_RetryAfter401_ResendsResolvedBody(t *testing.T) {
+	t.Setenv("HELIX_TEST_USER", "retry-user")
+	t.Setenv("HELIX_TEST_PASSWORD", "retry-pass")
+	var mu sync.Mutex
+	var bodies []string
+	first := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/auth/login" {
+			_, _ = w.Write([]byte(`{"session_token":"t"}`))
+			return
+		}
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		was := first
+		first = false
+		mu.Unlock()
+		if was {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	h := NewHTTPExecutor(srv.URL)
+	h.AdminCreds = Credentials{Username: "a", Password: "b"}
+	res := h.Execute(context.Background(), "POST", "/api/v1/x", testbank.TestStep{
+		AuthMode: "admin", ExpectStatus: 200,
+		Body: map[string]string{"password": "${HELIX_TEST_PASSWORD}"},
+	})
+	require.True(t, res.Success, res.Message)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, bodies, 2)
+	for _, b := range bodies {
+		assert.Contains(t, b, "retry-pass")
+		assert.NotContains(t, b, "${")
+	}
+}

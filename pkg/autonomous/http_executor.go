@@ -212,6 +212,9 @@ func (h *HTTPExecutor) Execute(
 
 	// Build body
 	var bodyReader io.Reader
+	// expandedBody is the body text after ${HELIX_TEST_*} resolution; the 401
+	// retry below re-sends exactly it (never the unresolved references).
+	expandedBody, haveBody := "", false
 	contentType := ""
 	if step.Body != nil {
 		// Credentials in a bank body are ${HELIX_TEST_*} references resolved
@@ -223,10 +226,12 @@ func (h *HTTPExecutor) Execute(
 			var ex string
 			ex, missing = expandTestVars(v)
 			bodyReader = strings.NewReader(ex)
+			expandedBody, haveBody = ex, true
 		case []byte:
 			var ex string
 			ex, missing = expandTestVars(string(v))
 			bodyReader = strings.NewReader(ex)
+			expandedBody, haveBody = ex, true
 		default:
 			b, err := json.Marshal(v)
 			if err != nil {
@@ -235,6 +240,7 @@ func (h *HTTPExecutor) Execute(
 			var ex string
 			ex, missing = expandTestVarsJSON(string(b))
 			bodyReader = strings.NewReader(ex)
+			expandedBody, haveBody = ex, true
 			contentType = "application/json"
 		}
 		if len(missing) > 0 {
@@ -315,17 +321,8 @@ func (h *HTTPExecutor) Execute(
 		h.invalidateCachedToken(step.AuthMode)
 		// Rebuild the request body reader (the original was consumed).
 		var retryBody io.Reader
-		if step.Body != nil {
-			switch v := step.Body.(type) {
-			case string:
-				retryBody = strings.NewReader(v)
-			case []byte:
-				retryBody = bytes.NewReader(v)
-			default:
-				if b, err := json.Marshal(v); err == nil {
-					retryBody = bytes.NewReader(b)
-				}
-			}
+		if haveBody {
+			retryBody = strings.NewReader(expandedBody)
 		}
 		retryReq, retryErr := http.NewRequestWithContext(ctx, method, url, retryBody)
 		if retryErr == nil {

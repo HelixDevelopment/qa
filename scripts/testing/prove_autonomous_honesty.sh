@@ -29,7 +29,7 @@ run() { # pkg regexp -> prints go test output, returns its status; SKIP counts a
 }
 fail=0
 echo "== control (unmutated) =="
-for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo|TestDataValidation_|TestPartialFrames" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_|TestResolveDataValidation" "./pkg/autonomous TestHTTPExecutor_AdminAuth|TestNavigationPrompts_CarryNoCredentials|TestBuildKBContext_Never|TestResolveCredentialPlaceholders|TestShippedFiles_CarryNoDefaultCredential|TestHTTPExecutor_BodyTestVars|TestExpandTestVars" "./pkg/analysis TestAnalyzeScreenshotChecked" "./pkg/llm TestIsLocalEndpointURL"; do
+for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo|TestDataValidation_|TestPartialFrames" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_|TestResolveDataValidation" "./pkg/autonomous TestHTTPExecutor_AdminAuth|TestNavigationPrompts_CarryNoCredentials|TestBuildKBContext_Never|TestResolveCredentialPlaceholders|TestShippedFiles_CarryNoDefaultCredential|TestHTTPExecutor_BodyTestVars|TestHTTPExecutor_RetryAfter401|TestExpandTestVars" "./pkg/analysis TestAnalyzeScreenshotChecked" "./pkg/llm TestIsLocalEndpointURL"; do
   set -- $g; run "$1" "$2"; rc=$?
   [ $rc -eq 0 ] && echo "control PASS: $2" || { echo "control FAIL($rc): $2"; [ $rc -eq 2 ] && exit 2; fail=1; }
 done
@@ -73,4 +73,5 @@ mutate 24 pkg/autonomous/pipeline.go 's|names = append(names, k)|names = append(
 mutate 25 pkg/autonomous/test_vars.go 's|if v == "" {|if false {|' ./pkg/autonomous 'TestHTTPExecutor_BodyTestVarsUnset_BlocksAndSendsNothing|TestExpandTestVars'
 mutate 26 pkg/autonomous/test_vars.go 's|HELIX_TEST_\[A-Z0-9_\]+|[A-Z0-9_]+|' ./pkg/autonomous 'TestExpandTestVars'
 mutate 27 pkg/autonomous/http_executor.go '0,/if len(missing) > 0 {/s//if false {/' ./pkg/autonomous 'TestHTTPExecutor_BodyTestVarsUnset_BlocksAndSendsNothing'
+mutate 28 pkg/autonomous/http_executor.go 's|retryBody = strings.NewReader(expandedBody)|retryBody = strings.NewReader("")|' ./pkg/autonomous 'TestHTTPExecutor_RetryAfter401_ResendsResolvedBody'
 echo "result: fail=$fail"; exit $fail
