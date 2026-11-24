@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING, safety)
+
+- **`helixqa autonomous` is local-only and opt-in by default.** Hosted
+  providers found through API-key environment variables are no longer
+  registered, claude / qwen-coder / opencode CLIs on PATH are no longer
+  bridged, and the ffmpeg x11grab recording of the host display no longer
+  starts, unless asked for: `-allow-cloud-providers` /
+  `HELIX_ALLOW_CLOUD_PROVIDERS=1`, `-allow-bridged-cli` /
+  `HELIX_ALLOW_BRIDGED_CLI=1`, `-record-video` / `HELIX_RECORD_VIDEO=1`.
+  Local providers (a loopback Ollama / llmctl URL and `HELIX_VISION_ENDPOINT`)
+  are always eligible. With no registered provider the command exits 2 and
+  names the opt-ins. Only provider names are printed, never keys or URLs.
+- **A session that analysed zero frames is UNDETERMINED (exit 2)**, not
+  "N/N tests, 100% coverage". The report carries `frames_captured`,
+  `frames_blank` and `frames_analysed`; coverage is reported as 0 over zero
+  analysed frames.
+- **Missing structured bank directory**: the default
+  `<project>/challenges/helixqa-banks` being absent now skips the structured
+  phase with a clear message (`structured_skipped` in the report) instead of
+  exiting 2; an explicit `-banks <dir>` that is missing is an error (exit 2).
+
+### Added
+
+- **Web bridge TLS trust for private-CA targets**: `-web-ca-file` /
+  `HELIX_WEB_CA_FILE` (the bridge verifies the target's chain against the CA
+  bundle itself, then pins the verified leaf for Chromium; a leaf the bundle
+  does not vouch for is refused) and `-web-insecure-tls` /
+  `HELIX_WEB_INSECURE_TLS=1` (ignore TLS errors, refused unless the host is
+  localhost / loopback / private-range). Proof:
+  `scripts/testing/prove_autonomous_honesty.sh` (8 paired mutations).
+
 ### Added
 
 - **No-bluff vision gate** (`pkg/autonomous/vision_gate.go`): bank steps

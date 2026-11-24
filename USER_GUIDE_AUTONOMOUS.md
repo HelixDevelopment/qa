@@ -192,6 +192,24 @@ HELIX_TICKETS_MIN_SEVERITY=low
 
 ---
 
+## Safety defaults: local-only, opt-in capture
+
+`helixqa autonomous` sends screenshots to the providers it registers, so the
+default is **local only**: loopback Ollama / llmctl and `HELIX_VISION_ENDPOINT`.
+
+| Capability | Default | Opt in |
+|---|---|---|
+| Hosted providers from API-key env vars | off | `-allow-cloud-providers` or `HELIX_ALLOW_CLOUD_PROVIDERS=1` |
+| claude / qwen-coder / opencode CLIs on PATH | off | `-allow-bridged-cli` or `HELIX_ALLOW_BRIDGED_CLI=1` |
+| ffmpeg x11grab of the host display (web/desktop) | off | `-record-video` or `HELIX_RECORD_VIDEO=1` |
+| Private-CA HTTPS target in the web bridge | strict | `-web-ca-file <pem>` / `HELIX_WEB_CA_FILE` (preferred) or `-web-insecure-tls` (localhost/private hosts only) |
+| Structured banks | `<project>/challenges/helixqa-banks`; absent = skipped | `-banks <dir>` (missing = exit 2) |
+
+A session in which no frame was analysed exits 2 (UNDETERMINED); the report
+shows `frames_captured`, `frames_blank` and `frames_analysed`. The API-data
+validation step uses Go's HTTP client, which honours `SSL_CERT_FILE` for a
+private CA.
+
 ## Running Your First Session
 
 ### Start the Application Under Test

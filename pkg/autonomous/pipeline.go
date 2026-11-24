@@ -144,6 +144,19 @@ type PipelineConfig struct {
 	// for video post-processing.
 	FFmpegPath string
 
+	// RecordVideo opts in to recording the HOST display with ffmpeg
+	// (x11grab) for the web / desktop / wizard platforms. It is OFF by
+	// default: grabbing the operator's real screen is never implied by
+	// running a session. Android recording (adb screenrecord of the device
+	// under test) is not affected.
+	RecordVideo bool
+
+	// BanksExplicit is true when the caller named BanksDir itself
+	// (helixqa autonomous -banks). A missing explicit directory is an error
+	// (exit 2); a missing DEFAULT directory just means this project carries
+	// no structured banks and the structured phase is reported as not run.
+	BanksExplicit bool
+
 	// CuriosityEnabled controls whether the curiosity-
 	// driven exploration phase is active.
 	CuriosityEnabled bool
@@ -267,6 +280,18 @@ type PipelineResult struct {
 	// StructuredError records why the structured phase could not run
 	// (e.g. banks failed to load).
 	StructuredError string `json:"structured_error,omitempty"`
+
+	// StructuredSkipped records that the structured phase did NOT run
+	// because the project carries no bank directory (default location).
+	// It is a skip, not a pass: no bank case was judged.
+	StructuredSkipped string `json:"structured_skipped,omitempty"`
+
+	// Frame accounting. A session that analysed no frame has judged nothing
+	// about the application, whatever number of tests it "ran".
+	FramesCaptured int `json:"frames_captured"` // non-blank screenshots saved
+	FramesBlank    int `json:"frames_blank"`    // screenshots dropped as blank/uniform
+	FramesAnalysed int `json:"frames_analysed"` // frames whose vision reply parsed as a findings array
+	FramesUnusable int `json:"frames_unusable"` // frames the model answered with an empty / non-JSON reply
 }
 
 // ExitCode is the process exit status for this session, on the
@@ -1468,6 +1493,14 @@ func (sp *SessionPipeline) Run(
 			}
 
 		case "web", "desktop", "wizard":
+			if !sp.config.RecordVideo {
+				fmt.Printf(
+					"  [exec] host-display video recording OFF "+
+						"for %s (opt in with -record-video)\n",
+					platform,
+				)
+				continue
+			}
 			// Use ffmpeg for X11 screen capture
 			rec := video.NewFFmpegRecorder(videoPath)
 			if err := rec.Start(ctx); err == nil {
@@ -1692,6 +1725,7 @@ func (sp *SessionPipeline) Run(
 			}
 			// Check if screenshot is blank/uniform color
 			if IsBlankScreenshot(screenshot) {
+				result.FramesBlank++
 				fmt.Printf(
 					"    [%s] screenshot appears blank/uniform, "+
 						"skipping (%v)\n",
@@ -1727,6 +1761,7 @@ func (sp *SessionPipeline) Run(
 			allScreenshots = append(
 				allScreenshots, fname,
 			)
+			result.FramesCaptured++
 
 			// Check for crashes on Android.
 			if (platform == "android" ||
@@ -2232,6 +2267,7 @@ func (sp *SessionPipeline) Run(
 				}
 				// Check if screenshot is blank/uniform color
 				if IsBlankScreenshot(screenshot) {
+					result.FramesBlank++
 					fmt.Printf(
 						"  [curiosity %s #%d] "+
 							"screenshot appears blank, "+
@@ -2271,6 +2307,7 @@ func (sp *SessionPipeline) Run(
 				allScreenshots = append(
 					allScreenshots, fname,
 				)
+				result.FramesCaptured++
 
 				// ── ScreenDiffer: detect unchanged screens ──
 				if sp.screenDiffer != nil {
@@ -2935,8 +2972,8 @@ func (sp *SessionPipeline) Run(
 			base := filepath.Base(ssPath)
 
 			vStart := time.Now()
-			findings, err :=
-				visionAnalyzer.AnalyzeScreenshot(
+			findings, parsedOK, err :=
+				visionAnalyzer.AnalyzeScreenshotChecked(
 					ctx, imgData, base, "",
 				)
 			vDur := time.Since(vStart)
@@ -2949,6 +2986,16 @@ func (sp *SessionPipeline) Run(
 					), err,
 				)
 				continue
+			}
+			if parsedOK {
+				result.FramesAnalysed++
+			} else {
+				result.FramesUnusable++
+				fmt.Printf(
+					"  [analyze] vision %s: reply was empty or not a "+
+						"JSON findings array; frame NOT counted as analysed\n",
+					base,
+				)
 			}
 			fmt.Printf(
 				"  [analyze] vision %s: "+
@@ -3027,13 +3074,18 @@ func (sp *SessionPipeline) Run(
 						continue
 					}
 					imgData = resizeScreenshot(imgData)
-					findings, err :=
-						va.AnalyzeScreenshot(
+					findings, parsedOK, err :=
+						va.AnalyzeScreenshotChecked(
 							ctx, imgData,
 							filepath.Base(framePath),
 							"video-frame",
 						)
 					if err == nil {
+						if parsedOK {
+							result.FramesAnalysed++
+						} else {
+							result.FramesUnusable++
+						}
 						allFindings = append(
 							allFindings,
 							findings...,
@@ -3227,6 +3279,13 @@ func (sp *SessionPipeline) Run(
 		result.CoveragePct = float64(result.TestsRun) /
 			float64(result.TestsPlanned) * 100.0
 	}
+	// A session that analysed no frame judged nothing about the app. Do
+	// not report a coverage percentage or a complete session over it.
+	if reason := undeterminedNoFrames(result); reason != "" {
+		result.Status = StatusBlocked
+		result.Error = reason
+		result.CoveragePct = 0
+	}
 
 	// Attach cost summary to the result.
 	if sp.costTracker != nil {
@@ -3236,14 +3295,27 @@ func (sp *SessionPipeline) Run(
 
 	sp.updateSession(sessionID, result)
 
-	fmt.Printf(
-		"[pipeline] Complete: %d/%d tests, "+
-			"%.1f%% coverage, %v total\n",
-		result.TestsRun,
-		result.TestsPlanned,
-		result.CoveragePct,
-		result.Duration.Round(time.Millisecond),
-	)
+	if result.Status == StatusBlocked && result.Error != "" &&
+		strings.HasPrefix(result.Error, noFrameReasonPrefix) {
+		fmt.Printf(
+			"[pipeline] UNDETERMINED (exit 2): %s "+
+				"(%d/%d tests ran, %d captured, %d blank, %d analysed, %v total)\n",
+			result.Error, result.TestsRun, result.TestsPlanned,
+			result.FramesCaptured, result.FramesBlank,
+			result.FramesAnalysed,
+			result.Duration.Round(time.Millisecond),
+		)
+	} else {
+		fmt.Printf(
+			"[pipeline] Complete: %d/%d tests, "+
+				"%.1f%% coverage, %d frames analysed, %v total\n",
+			result.TestsRun,
+			result.TestsPlanned,
+			result.CoveragePct,
+			result.FramesAnalysed,
+			result.Duration.Round(time.Millisecond),
+		)
+	}
 
 	// Log cost summary.
 	if result.Cost != nil && result.Cost.TotalCalls > 0 {
@@ -4024,6 +4096,21 @@ func (sp *SessionPipeline) runStructuredPhase(
 	onScreenshot func(platform string, data []byte),
 ) {
 	structuredStart := time.Now()
+	if dir := sp.config.BanksDir; dir != "" {
+		if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+			if sp.config.BanksExplicit {
+				result.StructuredError = fmt.Sprintf(
+					"test bank directory %s (requested with -banks) does not exist", dir)
+				fmt.Printf("  [structured] %s\n", result.StructuredError)
+				return
+			}
+			result.StructuredSkipped = fmt.Sprintf(
+				"no test banks at %s: the structured phase did NOT run and no bank case was judged "+
+					"(this is a skip, not a pass; pass -banks <dir> to run banks)", dir)
+			fmt.Printf("  [structured] %s\n", result.StructuredSkipped)
+			return
+		}
+	}
 	structuredExec := NewStructuredTestExecutor(
 		*sp.config, execFactory, vision, onFinding, onScreenshot,
 	)
@@ -4649,4 +4736,29 @@ func (a *visionRegressionAdapter) SupportsVision() bool {
 
 func joinStrings(ss []string) string {
 	return strings.Join(ss, ",")
+}
+
+// noFrameReasonPrefix starts the Error of a session stopped by
+// undeterminedNoFrames, so the summary line can tell it from other blocks.
+const noFrameReasonPrefix = "no frame was analysed"
+
+// undeterminedNoFrames returns a non-empty reason when the session made a
+// visual claim without any analysed frame: tests "ran" but not one screenshot
+// reached a vision analysis (all blank, none captured, or no vision-capable
+// provider). A session whose structured banks ran cases carries its own
+// verdicts and is judged by those.
+func undeterminedNoFrames(r *PipelineResult) string {
+	if r.Status != StatusComplete || r.FramesAnalysed > 0 {
+		return ""
+	}
+	if r.Structured != nil && r.Structured.TestCasesRun > 0 {
+		return ""
+	}
+	if r.TestsRun == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: %d frame(s) captured, %d dropped as blank, 0 analysed; "+
+		"%d test(s) ran but the application was not judged (UNDETERMINED, not a pass)",
+		noFrameReasonPrefix, r.FramesCaptured, r.FramesBlank, r.TestsRun) +
+		fmt.Sprintf(" [%d frame(s) got an empty or non-JSON model reply]", r.FramesUnusable)
 }
