@@ -301,9 +301,13 @@ func (p *PlaywrightExecutor) Swipe(
 func (p *PlaywrightExecutor) KeyPress(
 	ctx context.Context, key string,
 ) error {
+	name, ok := playwrightKeyName(key)
+	if !ok {
+		return fmt.Errorf("web key press: %q has no Playwright equivalent", key)
+	}
 	_, err := p.runBridgeCmd(ctx, map[string]interface{}{
 		"action": "key",
-		"key":    key,
+		"key":    name,
 	})
 	return err
 }
@@ -336,4 +340,36 @@ func (p *PlaywrightExecutor) Screenshot(
 		return nil, fmt.Errorf("playwright screenshot: %w", err)
 	}
 	return data, nil
+}
+
+// androidToPlaywrightKey maps the Android key names the autonomous loop emits
+// to the names Playwright's keyboard.press understands. Playwright throws
+// "Unknown key" for a KEYCODE_* name, so without this map every "select",
+// "enter", "tab" and coordinate-less "click" action failed on a web target and
+// the page was never driven.
+var androidToPlaywrightKey = map[string]string{
+	"KEYCODE_DPAD_CENTER": "Enter", "KEYCODE_ENTER": "Enter", "ENTER": "Enter",
+	"KEYCODE_NUMPAD_ENTER": "Enter",
+	"KEYCODE_TAB":          "Tab", "TAB": "Tab",
+	"KEYCODE_DPAD_UP": "ArrowUp", "KEYCODE_DPAD_DOWN": "ArrowDown",
+	"KEYCODE_DPAD_LEFT": "ArrowLeft", "KEYCODE_DPAD_RIGHT": "ArrowRight",
+	"KEYCODE_SPACE":  "Space",
+	"KEYCODE_ESCAPE": "Escape", "KEYCODE_BACK": "Escape",
+	"KEYCODE_DEL": "Backspace", "KEYCODE_FORWARD_DEL": "Delete",
+	"KEYCODE_PAGE_UP": "PageUp", "KEYCODE_PAGE_DOWN": "PageDown",
+	"KEYCODE_MOVE_HOME": "Home", "KEYCODE_MOVE_END": "End",
+}
+
+// playwrightKeyName returns the Playwright key name for k. An Android name is
+// translated; a name that is not an Android KEYCODE_* is passed through as the
+// caller's own Playwright name. An unmapped KEYCODE_* is reported as not ok so
+// the caller fails loudly instead of sending a key the browser cannot press.
+func playwrightKeyName(k string) (string, bool) {
+	if v, ok := androidToPlaywrightKey[k]; ok {
+		return v, true
+	}
+	if strings.HasPrefix(k, "KEYCODE_") {
+		return "", false
+	}
+	return k, true
 }
