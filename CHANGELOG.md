@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (web target: root cause of the "blank frames" and of a 100% over one screen)
+
+Reproduced live against the real job_seeker console (HTTPS with its own private CA, `jobseekerd`
+booted locally, headless Chromium, local `qwen2.5vl:3b`, loopback only):
+
+- **Blank frames = Chromium's certificate interstitial.** Without `-web-ca-file` every frame is
+  dropped as blank/uniform (5 of 5, exit 2). With `-web-ca-file <ca>` the real "Sign in" page
+  renders (1920x937, 49 KB) and is analysed. Two operator traps recorded in
+  `USER_GUIDE_AUTONOMOUS.md`: the bridge needs `playwright` resolvable (`NODE_PATH` or
+  `HELIXQA_PLAYWRIGHT_NODE_PATH`; under `env -i` it is not, and every test then "skipped"), and the
+  `api`-platform bank cases need `HELIXQA_HTTP_BASE_URL`.
+- **Android key names reached Playwright.** The autonomous loop's "select", "enter", "tab" and
+  coordinate-less "click" call `KeyPress("KEYCODE_DPAD_CENTER" ...)`; Playwright answered `Unknown
+  key` and the page never received the key. `PlaywrightExecutor.KeyPress` now maps `KEYCODE_*`
+  names to Playwright names (`playwrightKeyName`); an unmapped `KEYCODE_*` stays an error.
+- **A session over one never-changing screen was "Complete, 100%".** Five tests produced five
+  byte-identical frames (one sha256) and printed `Complete: 5/5 tests, 100.0% coverage, 5 frames
+  analysed`, exit 0. The report now carries `frames_distinct`, and several tests over exactly one
+  distinct frame end `UNDETERMINED (exit 2)` ("no interaction observed"); a session whose
+  structured banks ran cases is still judged by those verdicts.
+  Proof: `scripts/testing/prove_web_drive.sh` (8 mutations; the live keycode guards drive the real
+  bridge and Chromium).
+
 ### Changed (BREAKING, safety)
 
 - **No default-credential probing.** The autonomous API data-validation step no
