@@ -116,7 +116,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Platform targets
 HELIX_WEB_URL=http://localhost:3000
-HELIX_ANDROID_DEVICE=192.168.0.214:5555
+HELIX_ANDROID_DEVICE=192.0.2.214:5555
 HELIX_ANDROID_PACKAGE=com.example.myapp
 HELIX_DESKTOP_DISPLAY=:0
 
@@ -342,7 +342,7 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
 **Android**: Connect the device and verify ADB access:
 
 ```bash
-adb connect 192.168.0.214:5555
+adb connect 192.0.2.214:5555
 adb devices  # should list the device
 ```
 

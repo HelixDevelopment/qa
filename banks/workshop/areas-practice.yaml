@@ -204,7 +204,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/areas-practice.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password -- see
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password -- see
 #     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
 #     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
 #     from either submodules/qa/ or workshop/ on their own>' --verbose
@@ -310,7 +310,7 @@
 #     write that may have opened it").
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. FR-009's own
+# spec.md, FR-009 -- workshop-admin/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, workshop-user/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. FR-009's own
 # text states these are already public and must never be relied on as real
 # secrets. Per this task's own instruction and CONST-042/11.4.10, no real
 # password and no real, dynamically-minted bearer token is ever written into
@@ -390,7 +390,7 @@
 # tokens for the SAME account therefore resolve to the SAME progress/session
 # key and the SAME choice-token space -- not a cross-session case at all.
 # Genuine cross-session isolation requires TWO DIFFERENT ACCOUNTS
-# (milosvasic id 1, rami id 2), each producing a distinct `UserProgressKey`.
+# (workshop-admin id 1, workshop-user id 2), each producing a distinct `UserProgressKey`.
 #
 # FINDING, precise, and it is why this case's steps below are `_skip`'d for
 # THREE independent, compounding reasons -- the same three WK-AUTH-005 named,
@@ -410,7 +410,7 @@
 #      the SAME root cause auth-session.yaml's header names,
 #      #BLUFF-HELIXQA-BANKS-VAR-SUBST-001.
 #   3. Even setting 1 and 2 aside: minting a SECOND, genuinely independent,
-#      SUCCESSFUL login for the SECOND account (rami) via an explicit
+#      SUCCESSFUL login for the SECOND account (workshop-user) via an explicit
 #      `http: POST /api/auth/login` step requires a real, working password in
 #      that step's `body:` -- forbidden to embed in a checked-in bank
 #      (CONST-042/11.4.10, and this task's own instruction). And even
@@ -441,14 +441,14 @@
 # with 400 `unknown_choice` when submitted under a DIFFERENT account's
 # session, distinctly from (and only observable once ruled out from) a 403
 # `assessment_locked` refusal -- was independently confirmed LIVE via direct
-# curl in this task's own verification session: two real logins (milosvasic,
-# rami), both accounts' required lessons marked complete on the SAME area
+# curl in this task's own verification session: two real logins (workshop-admin,
+# workshop-user), both accounts' required lessons marked complete on the SAME area
 # (a real, permanent, idempotent progress-store mutation, sanctioned by this
 # sub-project's own design doc for exactly this reason), a real choice token
-# captured from milosvasic's `GET .../assessment` response, and submitted
-# under rami's session both BEFORE (403 assessment_locked) and AFTER (400
-# unknown_choice, plus a positive control: rami's OWN real token for the
-# identical question resolves and grades, 200 `recorded:true`) rami's own
+# captured from workshop-admin's `GET .../assessment` response, and submitted
+# under workshop-user's session both BEFORE (403 assessment_locked) and AFTER (400
+# unknown_choice, plus a positive control: workshop-user's OWN real token for the
+# identical question resolves and grades, 200 `recorded:true`) workshop-user's own
 # gate was unlocked. Full transcript, exact request/response bytes and
 # timestamps: task-1-report.md.
 
@@ -770,7 +770,7 @@ test_cases:
         expected: "200 OK, and THIS SAME POST response's own assessment.availability.available is true -- confirmed live 2026-09-19: this exact area/account pair genuinely transitioned locked->unlocked under this state write. On a re-run of this bank the gate is already unlocked (idempotent: marking an already-complete lesson complete again is a no-op that still reports available:true), so this assertion is stable across repeated runs either way."
     tags: [learning, assessment, lessons, regression, state-write]
     estimated_duration: "10s"
-    expected_result: "The gate's new answer is delivered in the SAME response as the write that opened it, per the design's own idempotency/cleanup expectation for this sub-project's state-writing cases: this bank marks real lessons complete on the shared dev server's milosvasic account for area 01M1GWW49GNKYBEXFFCNRWM1SY, a real, permanent, but fully idempotent progress-store mutation that WK-LEARN-004 below depends on."
+    expected_result: "The gate's new answer is delivered in the SAME response as the write that opened it, per the design's own idempotency/cleanup expectation for this sub-project's state-writing cases: this bank marks real lessons complete on the shared dev server's workshop-admin account for area 01M1GWW49GNKYBEXFFCNRWM1SY, a real, permanent, but fully idempotent progress-store mutation that WK-LEARN-004 below depends on."
 
   - id: WK-LEARN-004
     name: "GET /api/areas/{area}/assessment for an UNLOCKED gate serves real questions with per-session choice tokens"
@@ -843,18 +843,18 @@ test_cases:
       - name: "Log in as a first, independent account"
         action: "http: POST /api/auth/login"
         _skip: true
-        _skip_reason: "SKIP-OK: minting a SECOND, genuinely independent, real account login (rami) via an explicit body requires a real, working password embedded in this checked-in file -- forbidden (CONST-042/11.4.10, and this task's own instruction). See this file's header WK-LEARN-006 INVESTIGATION for the full three-reason analysis (single-slot auth:admin cache; no response-capture/templating to carry a token between steps; no credential-free way to mint a second account's session)."
+        _skip_reason: "SKIP-OK: minting a SECOND, genuinely independent, real account login (workshop-user) via an explicit body requires a real, working password embedded in this checked-in file -- forbidden (CONST-042/11.4.10, and this task's own instruction). See this file's header WK-LEARN-006 INVESTIGATION for the full three-reason analysis (single-slot auth:admin cache; no response-capture/templating to carry a token between steps; no credential-free way to mint a second account's session)."
         expected: "200 OK, a genuinely new session for the first account (verified live via curl -- see task-1-report.md)"
       - name: "Fetch that first session's real assessment, capturing a real per-session choice token"
         action: "http: GET /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment"
         _skip: true
         _skip_reason: "SKIP-OK: depends on the skipped login step above for a session distinct from the shared admin-mode one, and there is no mechanism to carry the captured token forward into a later step's request body even if it were obtained (reason 2 in the header investigation)."
-        expected: "200 OK, real choices[].id tokens scoped to that session (confirmed live via curl: e.g. 4e991164062764590f5b137dfc6b90d0 for question 01M1GWW49GNKYBEXFFCNRWM1SY-q01M1H7WCCW9P4MPPMN19P34PQS under milosvasic's session)"
+        expected: "200 OK, real choices[].id tokens scoped to that session (confirmed live via curl: e.g. 4e991164062764590f5b137dfc6b90d0 for question 01M1GWW49GNKYBEXFFCNRWM1SY-q01M1H7WCCW9P4MPPMN19P34PQS under workshop-admin's session)"
       - name: "Log in as a second, independent, DIFFERENT account and unlock its own gate for the same area"
         action: "http: POST /api/auth/login"
         _skip: true
         _skip_reason: "SKIP-OK: same reason as the first login step -- a second account's real password cannot be embedded here, and this step additionally needs several real lesson-state POSTs under that second identity before its own gate is genuinely unlocked (see the header's fourth finding: a still-locked submitting account masks unknown_choice behind assessment_locked)."
-        expected: "200 OK for a genuinely different account (id 2, rami, per FR-009/FR-010), with its own required lessons for this area marked complete (confirmed live via curl -- see task-1-report.md)"
+        expected: "200 OK for a genuinely different account (id 2, workshop-user, per FR-009/FR-010), with its own required lessons for this area marked complete (confirmed live via curl -- see task-1-report.md)"
       - name: "Submit the FIRST session's real choice token under the SECOND session"
         action: "http: POST /api/areas/01M1GWW49GNKYBEXFFCNRWM1SY/assessment/submit"
         expect_status: 400

@@ -153,7 +153,7 @@ HELIX_ANDROID_PACKAGE=digital.vasic.yole
 For Android TV (with Channels support):
 
 ```bash
-HELIX_ANDROIDTV_DEVICE=192.168.0.214:5555
+HELIX_ANDROIDTV_DEVICE=192.0.2.214:5555
 HELIX_ANDROIDTV_PACKAGE=com.catalogizer.androidtv
 ```
 

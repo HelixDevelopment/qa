@@ -11,7 +11,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/auth-session.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password --
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password --
 #     see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
 #     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
 #     from either submodules/qa/ or workshop/ on their own>' --verbose
@@ -35,7 +35,7 @@
 #     alphabetically on marshal; `user` is a struct, so ITS fields marshal in
 #     declaration order: id, username, role -- authstore.User, id/username/
 #     role, PasswordHash excluded via `json:"-"`). Real seeded rows, live:
-#     milosvasic -> id 1, role "admin"; rami -> id 2, role "user" (FR-010:
+#     workshop-admin -> id 1, role "admin"; workshop-user -> id 2, role "user" (FR-010:
 #     both get full, equal ACCESS on workshop regardless of this role
 #     string). A `Set-Cookie: session=<token>; Path=/; Expires=..;
 #     HttpOnly; SameSite=Strict` is ALSO set (setSessionCookie,
@@ -117,7 +117,7 @@
 #     sat right next to it in the SAME request. See WK-AUTH-007 below.
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. FR-009's OWN
+# spec.md, FR-009 -- workshop-admin/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, workshop-user/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI>. FR-009's OWN
 # text states these are ALREADY PUBLIC (committed in that spec's git history)
 # and MUST NEVER be relied on as real secrets, so the USERNAMES (not
 # secrets) appear literally below where a case genuinely needs to name a
@@ -290,11 +290,11 @@ test_cases:
       - name: "Login with a wrong (deliberately fake) password for a real, known username"
         action: "http: POST /api/auth/login"
         body:
-          username: "milosvasic"
+          username: "workshop-admin"
           password: "wrong-password-deliberately-invalid-not-a-real-secret"
         expect_status: 401
         expect_body_contains: "{\"error\":\"invalid_credentials\",\"message\":\"Invalid username or password\"}"
-        expected: "401, exact body confirmed live -- never reveals that 'milosvasic' is a real account"
+        expected: "401, exact body confirmed live -- never reveals that 'workshop-admin' is a real account"
       - name: "Login with an unknown username"
         action: "http: POST /api/auth/login"
         body:
@@ -317,8 +317,8 @@ test_cases:
         action: "http: GET /api/auth/me"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"user\":{\"id\":1,\"username\":\"milosvasic\",\"role\":\"admin\"}"
-        expected: "200 OK, /me reflects milosvasic's real id/username/role exactly as the seeded row and the earlier login response both show (this specific assertion is milosvasic-shaped and expects this bank's PRIMARY --admin-user=milosvasic invocation, matching chapter-list.yaml's own precedent)"
+        expect_body_contains: "\"user\":{\"id\":1,\"username\":\"workshop-admin\",\"role\":\"admin\"}"
+        expected: "200 OK, /me reflects workshop-admin's real id/username/role exactly as the seeded row and the earlier login response both show (this specific assertion is workshop-admin-shaped and expects this bank's PRIMARY --admin-user=workshop-admin invocation, matching chapter-list.yaml's own precedent)"
     tags: [auth, me, regression]
     estimated_duration: "5s"
     expected_result: "/me correctly identifies the caller"
@@ -333,7 +333,7 @@ test_cases:
         action: "http: GET /api/auth/me"
         auth: "admin"
         expect_status: 200
-        expect_body_contains: "\"user\":{\"id\":1,\"username\":\"milosvasic\",\"role\":\"admin\"}"
+        expect_body_contains: "\"user\":{\"id\":1,\"username\":\"workshop-admin\",\"role\":\"admin\"}"
         expected: "200 OK -- the session this step is about to log out is genuinely live first"
       - name: "Logout (using that same, currently-active session)"
         action: "http: POST /api/auth/logout"
@@ -358,12 +358,12 @@ test_cases:
     priority: high
     platforms: [web]
     steps:
-      - name: "First login as milosvasic"
+      - name: "First login as workshop-admin"
         action: "http: POST /api/auth/login"
         _skip: true
         _skip_reason: "SKIP-OK: creating a SECOND, genuinely independent, SUCCESSFUL login for the same seeded account requires a real, working password in this step's body -- forbidden to embed in a checked-in bank (see header's WK-AUTH-005 investigation, reason 3). The harness's only credential-free login mechanism (`auth: admin`) is a single cached slot (reason 1) and cannot mint two independently-addressable sessions."
         expected: "200 OK, a genuinely new session created (verified live via curl -- see task-1-report.md)"
-      - name: "Second, independent login as milosvasic"
+      - name: "Second, independent login as workshop-admin"
         action: "http: POST /api/auth/login"
         _skip: true
         _skip_reason: "SKIP-OK: same reason as the step above -- a second real password-bearing login cannot be embedded here."
@@ -378,17 +378,17 @@ test_cases:
         _skip: true
         _skip_reason: "SKIP-OK: same addressability gap as the step above, for the second session's token."
         expected: "200 OK (confirmed live via curl)"
-      - name: "Switch to rami using the second session"
+      - name: "Switch to workshop-user using the second session"
         action: "http: POST /api/auth/switch"
         _skip: true
         _skip_reason: "SKIP-OK: depends on addressing 'the second session' specifically as the switch caller's credential, which needs the same unavailable per-session addressing as the two steps above."
-        expected: "200 OK, rami's session shape returned (confirmed live via curl)"
+        expected: "200 OK, workshop-user's session shape returned (confirmed live via curl)"
       - name: "First (pre-switch) session is now revoked"
         action: "http: GET /api/chapters"
         expect_status: 401
         _skip: true
         _skip_reason: "SKIP-OK: same per-session addressing gap, compounded by Execute()'s automatic 401-retry for any cached auth mode (see WK-AUTH-004's third step for the identical retry-masking mechanism)."
-        expected: "Switch mass-revokes the caller's own prior sessions -- CONFIRMED LIVE via direct curl in this task's verification session: two independently-obtained milosvasic session tokens were both genuinely valid (200 on /api/chapters) simultaneously; a switch call authenticated with the second token succeeded (200, rami's session); the FIRST token then returned 401 (invalid or expired token) AND, notably, so did the SECOND (switch-caller's own) token -- RevokeSessionsForUser revokes every session row for that account, not merely the one that issued the switch call. Full request/response transcript in task-1-report.md."
+        expected: "Switch mass-revokes the caller's own prior sessions -- CONFIRMED LIVE via direct curl in this task's verification session: two independently-obtained workshop-admin session tokens were both genuinely valid (200 on /api/chapters) simultaneously; a switch call authenticated with the second token succeeded (200, workshop-user's session); the FIRST token then returned 401 (invalid or expired token) AND, notably, so did the SECOND (switch-caller's own) token -- RevokeSessionsForUser revokes every session row for that account, not merely the one that issued the switch call. Full request/response transcript in task-1-report.md."
     tags: [auth, session, concurrency, regression]
     estimated_duration: "10s"
     expected_result: "Two independent logins coexist; switch revokes prior sessions for that account (verified live via direct curl outside this harness; see the WK-AUTH-005 investigation note at the top of this file and task-1-report.md for why the harness itself cannot exercise this end-to-end, and full evidence)"
@@ -440,7 +440,7 @@ test_cases:
       - name: "POST /api/auth/login with a missing required field (password omitted; username is a real, public, non-secret seeded name)"
         action: "http: POST /api/auth/login"
         body:
-          username: "milosvasic"
+          username: "workshop-admin"
         expect_status: 400
         expect_body_contains: "{\"error\":\"validation_error\",\"message\":\"username and password are required\"}"
         expected: "Clean 400, exact body confirmed live, never a 500 or timeout. This check runs BEFORE the T508 rate limiter is even consulted (authLoginHandler decodes+validates first), so this step never consumes any of the shared login-rate-limit budget."

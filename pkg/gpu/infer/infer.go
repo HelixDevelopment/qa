@@ -37,7 +37,7 @@ import (
 // Client is the Triton KServe v2 inference client.
 type Client struct {
 	// Endpoint is the base URL of the Triton server, e.g.
-	// "http://thinker.local:8000". Required.
+	// "http://host-a.example.com:8000". Required.
 	Endpoint string
 
 	// HTTPClient is the underlying transport; default is a

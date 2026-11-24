@@ -88,7 +88,7 @@ func TestMatchModel(t *testing.T) {
 
 func TestDeviceModel_HappyPath(t *testing.T) {
 	r := &fakeRunner{out: []byte("MiBox  \n")}
-	got, err := DeviceModel(context.Background(), r, "192.168.0.214:5555")
+	got, err := DeviceModel(context.Background(), r, "192.0.2.214:5555")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestDeviceModel_HappyPath(t *testing.T) {
 	if r.last.name != "adb" {
 		t.Errorf("cmd = %q", r.last.name)
 	}
-	want := []string{"-s", "192.168.0.214:5555", "shell", "getprop", "ro.product.model"}
+	want := []string{"-s", "192.0.2.214:5555", "shell", "getprop", "ro.product.model"}
 	if len(r.last.args) != len(want) {
 		t.Fatalf("args = %v", r.last.args)
 	}

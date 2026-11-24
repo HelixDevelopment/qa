@@ -37,7 +37,7 @@ helixqa run --banks <paths> [flags]
 |------|------|---------|----------|-------------|
 | `--banks` | string | -- | Yes | Comma-separated paths to test bank files or directories containing `.yaml` files |
 | `--platform` | string | `all` | No | Target platform: `android`, `web`, `desktop`, `all` |
-| `--device` | string | -- | No | Android device or emulator ID (e.g., `192.168.0.214:5555`) |
+| `--device` | string | -- | No | Android device or emulator ID (e.g., `192.0.2.214:5555`) |
 | `--output` | string | `qa-results` | No | Directory for results, screenshots, and video recordings |
 | `--speed` | string | `normal` | No | Execution pacing: `slow` (2s delay), `normal` (500ms), `fast` (0ms) |
 | `--report` | string | `markdown` | No | Report output format: `markdown`, `html`, `json` |
@@ -74,7 +74,7 @@ helixqa run \
 helixqa run \
   --banks banks/ \
   --platform android \
-  --device 192.168.0.214:5555 \
+  --device 192.0.2.214:5555 \
   --package com.vasicdigital.catalogizer \
   --record=true \
   --output qa-results

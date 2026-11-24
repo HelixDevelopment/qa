@@ -71,12 +71,12 @@ No "sudo" required — user systemd only (per project CLAUDE.md).
 
 ## Acceptance
 
-1. `curl http://thinker.local:18100/v1/models` lists `ui-tars-1.5-7b`.
+1. `curl http://host-a.example.com:18100/v1/models` lists `ui-tars-1.5-7b`.
 2. A bare vision+text chat request (OpenAI-compatible wire; see
    `pkg/agent/uitars/uitars.go` `chatRequest` struct) returns a
    JSON action that passes `action.Validate()`.
 3. `PH3-UITARS-INT-001` passes when the HelixQA orchestrator
-   points `Client.Endpoint` at `http://thinker.local:18100`.
+   points `Client.Endpoint` at `http://host-a.example.com:18100`.
 
 ## Fallback models
 

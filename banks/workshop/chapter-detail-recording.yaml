@@ -13,7 +13,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/chapter-detail-recording.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password — see
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password — see
 #     $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md, where $VASIC_ROOT is
 #     the umbrella project root; this path does NOT resolve from either
 #     submodules/qa/ or workshop/ on their own>' --verbose
@@ -166,7 +166,7 @@ test_cases:
     priority: critical
     platforms: [web]
     steps:
-      - name: "Confirm the session authenticates as the seeded milosvasic account"
+      - name: "Confirm the session authenticates as the seeded workshop-admin account"
         action: "http: GET /api/auth/me"
         auth: "admin"
         expect_status: 200

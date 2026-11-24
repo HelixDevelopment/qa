@@ -33,14 +33,14 @@ import (
 //
 // To run against the deployed thinker stack:
 //
-//	HELIXQA_HTTP_BASE_URL=http://thinker.local:8092 \
+//	HELIXQA_HTTP_BASE_URL=http://host-a.example.com:8092 \
 //	  go test -count=1 -timeout 5m -run TestBankRealBinary ./pkg/autonomous/
 //
 // Anti-bluff verification (Article XI §11.2.5 — fails when
 // feature is removed):
 //
 //  1. Comment out HTTPExecutor.Execute's ExpectStatus assertion.
-//  2. Re-run this test against thinker.local:8092.
+//  2. Re-run this test against host-a.example.com:8092.
 //  3. Test must FAIL because login responses no longer get their
 //     status validated against the bank's expect_status.
 //
@@ -52,7 +52,7 @@ import (
 func TestBankRealBinary_FullQAAPI(t *testing.T) {
 	baseURL := os.Getenv("HELIXQA_HTTP_BASE_URL")
 	if baseURL == "" {
-		t.Skip("SKIP-OK: #BLUFF-HELIXQA-BANKS-REWRITE-001 — set HELIXQA_HTTP_BASE_URL=http://thinker.local:8092 to run against the deployed catalog-api")
+		t.Skip("SKIP-OK: #BLUFF-HELIXQA-BANKS-REWRITE-001 — set HELIXQA_HTTP_BASE_URL=http://host-a.example.com:8092 to run against the deployed catalog-api")
 	}
 
 	// Probe the backend before running the full bank; if /health

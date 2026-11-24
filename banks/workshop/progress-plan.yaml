@@ -11,7 +11,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/progress-plan.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<seeded milosvasic password --
+#     --admin-user workshop-admin --admin-pass '<seeded workshop-admin password --
 #     see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md FR-009, where
 #     $VASIC_ROOT is the umbrella project root; this path does NOT resolve
 #     from either submodules/qa/ or workshop/ on their own>' --verbose
@@ -82,7 +82,7 @@
 #
 #   - SESSION KEYING (spec 007 US3/US4): an authenticated caller's positions
 #     are keyed by `authhttp.UserProgressKey(u.ID)` == `"auth-user:" +
-#     userID` (milosvasic id 1 -> "auth-user:1", rami id 2 -> "auth-user:2"),
+#     userID` (workshop-admin id 1 -> "auth-user:1", workshop-user id 2 -> "auth-user:2"),
 #     which OVERRIDES the `X-Session` header entirely when a valid bearer is
 #     present. The `X-Session` fallback path in ProgressHandler ("session :=
 #     r.Header.Get(SessionHeader)") is DEAD CODE ON THIS DEPLOYMENT --
@@ -198,7 +198,7 @@
 # ordering-dependent comment below assumes exactly that.
 #
 # REAL SEEDED CREDENTIALS: $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- milosvasic/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, rami/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI> -- ALREADY
+# spec.md, FR-009 -- workshop-admin/<seed password: see WORKSHOP_TEST_SEED_PASSWORD>, workshop-user/<seed password: see WORKSHOP_TEST_SEED_PASSWORD_RAMI> -- ALREADY
 # PUBLIC per that spec's own text, and per that same text and CONST-042/
 # 11.4.10, NEVER written into this file as a real, working credential. Every
 # case needing a genuinely successful login uses `auth: admin` (credentials
@@ -222,15 +222,15 @@
 # ONLY from the T574-576 migration flow (`authMigrateProgressHandler`),
 # which needs a real census record id this bank does not have and is
 # explicitly out of scope beyond WK-PROG-011's narrow confirmation below.
-# There is NO way, through this HTTP API, for milosvasic or rami to ever
+# There is NO way, through this HTTP API, for workshop-admin or workshop-user to ever
 # return to a genuinely empty `progress.json` entry once one case has POSTed
 # for them.
 #
 # CONSEQUENCE, MEASURED, NOT GUESSED: at the start of this task's
 # investigation (2026-09-19, BEFORE any POST had been made this session),
 # BOTH seeded accounts were confirmed live to be genuinely fresh --
-# `GET /api/progress` as milosvasic returned 404 `not_found`, and the same
-# for rami. This task's OWN verification work (establishing the real field
+# `GET /api/progress` as workshop-admin returned 404 `not_found`, and the same
+# for workshop-user. This task's OWN verification work (establishing the real field
 # names, the overwrite semantics, the redaction-gap finding, and the
 # cross-account isolation golden-bad control) necessarily POSTed real,
 # QA-labeled entries to BOTH accounts before this bank was ever run through
@@ -278,16 +278,16 @@
 #    (plus dropping the now-unused `strconv` import, a compile-required
 #    second line of the same mutation). THIS ONE WAS NOT BLOCKED --
 #    `bash scripts/restart.sh` succeeded and deployed it. With it live: a
-#    real POST as milosvasic (`chapter_slug: "wk-prog-qa-golden-bad-
+#    real POST as workshop-admin (`chapter_slug: "wk-prog-qa-golden-bad-
 #    isolation"`) landed under the collapsed key `"auth-user:SHARED"`, and a
-#    real, independent GET as rami (a genuinely different, freshly-
+#    real, independent GET as workshop-user (a genuinely different, freshly-
 #    authenticated seeded account) returned 200 with THAT SAME entry --
-#    milosvasic's data, verbatim, served back to rami. A live, real,
+#    workshop-admin's data, verbatim, served back to workshop-user. A live, real,
 #    reproduced cross-account leak, not a hypothetical one. The mutation was
 #    then reverted, rebuilt and redeployed (`source_commit` == `git
 #    rev-parse HEAD`, confirmed), and the SAME two-account check re-run:
-#    rami's GET returned to showing only rami's own pre-existing entry, and
-#    milosvasic's GET showed only milosvasic's own three entries, with no
+#    workshop-user's GET returned to showing only workshop-user's own pre-existing entry, and
+#    workshop-admin's GET showed only workshop-admin's own three entries, with no
 #    trace of the collapsed-key canary. Full request/response transcript,
 #    both FAIL and PASS sides: task-1-report.md.
 #
@@ -295,8 +295,8 @@
 # HelixQA build has the SAME single-identity-per-invocation limitation
 # auth-session.yaml's WK-AUTH-005 investigation already found (one cached
 # `auth: admin` slot per process, no `as:<user>` CLI flag, no cross-step
-# response capture) -- there is no way to address BOTH milosvasic's and
-# rami's authenticated views within ONE `helixqa http` invocation without
+# response capture) -- there is no way to address BOTH workshop-admin's and
+# workshop-user's authenticated views within ONE `helixqa http` invocation without
 # embedding a second real password (forbidden). This build's testbank schema
 # (`pkg/testbank/schema.go`'s `TestStep`) ALSO has no `expect_body_not_
 # contains` field at all -- only `expect_body_contains` exists -- so even a
@@ -350,7 +350,7 @@ test_cases:
         expect_status: 200
         expect_body_contains: "\"module\":\"workshop\""
         _skip: true
-        _skip_reason: "SKIP-OK, NOT a framework limitation this time -- a WRITE-STATE fact about THIS environment, measured precisely rather than assumed. Confirmed live at investigation start (2026-09-19, before any POST this session): GET /api/progress as milosvasic returned 404 {\"status\":\"not_found\",\"message\":\"no reading position is stored for this session\"}, and the same for rami. This task's OWN necessary verification work (establishing the real field-name symmetry, overwrite semantics, the redaction-gap finding, and the WK-PROG-009 golden-bad control) then POSTed real entries to BOTH seeded accounts before this bank was ever run through helixqa http -- and ProgressStore exposes NO DELETE route through this API (see the header's WRITE-STATE WARNING), so neither account can be returned to a genuinely empty state. This specific assertion (len(positions)==0 -> 404) is therefore no longer reproducible against either seeded account in this environment, on this or any later run, though the underlying determined-negative code path (progress.go's `if len(positions) == 0 { ... 404 ... }`) was genuinely exercised and confirmed live by BOTH accounts before that population happened. Full timestamped transcript: task-1-report.md."
+        _skip_reason: "SKIP-OK, NOT a framework limitation this time -- a WRITE-STATE fact about THIS environment, measured precisely rather than assumed. Confirmed live at investigation start (2026-09-19, before any POST this session): GET /api/progress as workshop-admin returned 404 {\"status\":\"not_found\",\"message\":\"no reading position is stored for this session\"}, and the same for workshop-user. This task's OWN necessary verification work (establishing the real field-name symmetry, overwrite semantics, the redaction-gap finding, and the WK-PROG-009 golden-bad control) then POSTed real entries to BOTH seeded accounts before this bank was ever run through helixqa http -- and ProgressStore exposes NO DELETE route through this API (see the header's WRITE-STATE WARNING), so neither account can be returned to a genuinely empty state. This specific assertion (len(positions)==0 -> 404) is therefore no longer reproducible against either seeded account in this environment, on this or any later run, though the underlying determined-negative code path (progress.go's `if len(positions) == 0 { ... 404 ... }`) was genuinely exercised and confirmed live by BOTH accounts before that population happened. Full timestamped transcript: task-1-report.md."
         expected: "200 OK -- included only to keep this case's step numbering self-explanatory; the real assertion is the skip reason above."
     tags: [progress, functional, regression, write-state]
     estimated_duration: "5s"
@@ -544,7 +544,7 @@ test_cases:
     expected_result: "/api/areas is authenticated exactly like every other content route, never a bare 404"
 
   - id: WK-PROG-009
-    name: "Cross-account isolation: milosvasic's /api/progress never reflects rami's stored position, and vice versa"
+    name: "Cross-account isolation: workshop-admin's /api/progress never reflects workshop-user's stored position, and vice versa"
     category: security
     priority: critical
     platforms: [web]
@@ -554,23 +554,23 @@ test_cases:
         auth: "admin"
         expect_status: 200
         expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-roundtrip\""
-        expected: "200 OK; the admin-mode identity's (milosvasic's, for this bank's primary invocation) own positions are present. This is the ONLY assertion this harness can make within a single invocation: this build's testbank schema has no expect_body_not_contains field (confirmed: grep -n expect_body_not_contains pkg/testbank/schema.go matches nothing), so a positive check on one identity's own data is the strongest mechanically-expressible step here -- it cannot, by itself, prove the absence of a SECOND identity's data, only its own presence."
-      - name: "The second identity's (rami's) own, independent GET"
+        expected: "200 OK; the admin-mode identity's (workshop-admin's, for this bank's primary invocation) own positions are present. This is the ONLY assertion this harness can make within a single invocation: this build's testbank schema has no expect_body_not_contains field (confirmed: grep -n expect_body_not_contains pkg/testbank/schema.go matches nothing), so a positive check on one identity's own data is the strongest mechanically-expressible step here -- it cannot, by itself, prove the absence of a SECOND identity's data, only its own presence."
+      - name: "The second identity's (workshop-user's) own, independent GET"
         action: "http: GET /api/progress"
         _skip: true
-        _skip_reason: "SKIP-OK: same single-identity-per-invocation limitation auth-session.yaml's WK-AUTH-005 investigation already established for this exact HelixQA build -- `auth: admin` is bound to whichever --admin-user/--admin-pass the WHOLE invocation was started with (one cached slot per process, keyed by the literal string \"admin\"); there is no `as:<user>` CLI flag wired (cmd/helixqa/http.go's flag set has no flag populating HTTPExecutor.UserCredentials), and no cross-step response-capture mechanism exists to carry a second, dynamically-obtained token into this step even if one were minted via an explicit http: POST /api/auth/login step (which would additionally require embedding rami's real password, forbidden by CONST-042/11.4.10). CONFIRMED LIVE via direct curl with TWO real, independently-authenticated seeded accounts in this task's own verification session (not merely a same-account concurrency case like WK-AUTH-005 -- this is a genuinely different named identity): after milosvasic POSTed wk-prog-qa-roundtrip/wk-prog-qa-zero/wk-prog-qa-redaction-canary, a fresh, independent rami login's GET /api/progress returned ONLY rami's own prior entry (wk-prog-qa-rami-canary) and none of milosvasic's three -- real, live, two-account isolation confirmed with no shared-slot limitation at all, because direct curl needs no single-slot cache. Full transcript: task-1-report.md."
-        expected: "200 OK, rami's own view, containing ONLY rami's own entries and none of milosvasic's -- confirmed live via curl, not via this harness."
+        _skip_reason: "SKIP-OK: same single-identity-per-invocation limitation auth-session.yaml's WK-AUTH-005 investigation already established for this exact HelixQA build -- `auth: admin` is bound to whichever --admin-user/--admin-pass the WHOLE invocation was started with (one cached slot per process, keyed by the literal string \"admin\"); there is no `as:<user>` CLI flag wired (cmd/helixqa/http.go's flag set has no flag populating HTTPExecutor.UserCredentials), and no cross-step response-capture mechanism exists to carry a second, dynamically-obtained token into this step even if one were minted via an explicit http: POST /api/auth/login step (which would additionally require embedding workshop-user's real password, forbidden by CONST-042/11.4.10). CONFIRMED LIVE via direct curl with TWO real, independently-authenticated seeded accounts in this task's own verification session (not merely a same-account concurrency case like WK-AUTH-005 -- this is a genuinely different named identity): after workshop-admin POSTed wk-prog-qa-roundtrip/wk-prog-qa-zero/wk-prog-qa-redaction-canary, a fresh, independent workshop-user login's GET /api/progress returned ONLY workshop-user's own prior entry (wk-prog-qa-workshop-user-canary) and none of workshop-admin's three -- real, live, two-account isolation confirmed with no shared-slot limitation at all, because direct curl needs no single-slot cache. Full transcript: task-1-report.md."
+        expected: "200 OK, workshop-user's own view, containing ONLY workshop-user's own entries and none of workshop-admin's -- confirmed live via curl, not via this harness."
       - name: "GOLDEN-BAD CONTROL, LIVE, BOTH DIRECTIONS -- session-key collapse genuinely leaks; the real code genuinely does not"
         action: "http: GET /api/progress"
         auth: "admin"
         expect_status: 200
         expect_body_contains: "\"chapter_slug\": \"wk-prog-qa-roundtrip\""
         _skip: true
-        _skip_reason: "SKIP-OK: this step exists only to carry the golden-bad control's own record inline; the actual mutation, FAIL, revert and PASS were all performed and verified via direct curl outside this harness (this build's single-identity-per-invocation limit applies here too -- see the two skip reasons above). MUTATION: authhttp.UserProgressKey changed from `ProgressKeyPrefix + strconv.FormatInt(userID, 10)` to `ProgressKeyPrefix + \"SHARED\"` (collapsing every authenticated user's progress key onto one literal string), plus dropping the then-unused strconv import (a compile-required second line of the same change). `git diff` confirmed exactly these two lines; `bash scripts/build.sh` built clean. UNLIKE THE WK-PROG-005 CONTROL, `bash scripts/restart.sh` was NOT blocked this time and deployed the mutated binary live (source_commit == git rev-parse HEAD at the mutated commit, confirmed via /api/health). FAIL, confirmed live: a real POST as milosvasic (chapter_slug wk-prog-qa-golden-bad-isolation) landed under the collapsed key auth-user:SHARED, and a real, independently-authenticated GET as rami returned 200 WITH THAT EXACT ENTRY -- milosvasic's data served back to rami, a genuine, reproduced cross-account leak. The mutation was then reverted (git diff empty, confirmed), rebuilt, and redeployed (source_commit == git rev-parse HEAD again, confirmed). PASS, confirmed live: the SAME two-account check re-run showed rami's GET back to only rami's own pre-existing entry (wk-prog-qa-rami-canary), with no trace of the collapsed-key canary, and milosvasic's GET back to showing only milosvasic's own three entries. Full request/response transcript for both the FAIL and PASS sides: task-1-report.md."
+        _skip_reason: "SKIP-OK: this step exists only to carry the golden-bad control's own record inline; the actual mutation, FAIL, revert and PASS were all performed and verified via direct curl outside this harness (this build's single-identity-per-invocation limit applies here too -- see the two skip reasons above). MUTATION: authhttp.UserProgressKey changed from `ProgressKeyPrefix + strconv.FormatInt(userID, 10)` to `ProgressKeyPrefix + \"SHARED\"` (collapsing every authenticated user's progress key onto one literal string), plus dropping the then-unused strconv import (a compile-required second line of the same change). `git diff` confirmed exactly these two lines; `bash scripts/build.sh` built clean. UNLIKE THE WK-PROG-005 CONTROL, `bash scripts/restart.sh` was NOT blocked this time and deployed the mutated binary live (source_commit == git rev-parse HEAD at the mutated commit, confirmed via /api/health). FAIL, confirmed live: a real POST as workshop-admin (chapter_slug wk-prog-qa-golden-bad-isolation) landed under the collapsed key auth-user:SHARED, and a real, independently-authenticated GET as workshop-user returned 200 WITH THAT EXACT ENTRY -- workshop-admin's data served back to workshop-user, a genuine, reproduced cross-account leak. The mutation was then reverted (git diff empty, confirmed), rebuilt, and redeployed (source_commit == git rev-parse HEAD again, confirmed). PASS, confirmed live: the SAME two-account check re-run showed workshop-user's GET back to only workshop-user's own pre-existing entry (wk-prog-qa-workshop-user-canary), with no trace of the collapsed-key canary, and workshop-admin's GET back to showing only workshop-admin's own three entries. Full request/response transcript for both the FAIL and PASS sides: task-1-report.md."
         expected: "The mutated build genuinely leaks across accounts (FAIL, confirmed live); the reverted, real code genuinely does not (PASS, confirmed live) -- see the skip reason for the full live transcript reference."
     tags: [progress, security, isolation, regression, golden-bad]
     estimated_duration: "10s"
-    expected_result: "Two full-access seeded accounts (FR-010: milosvasic and rami both get full, equal access; no authorization difference between them) have completely disjoint, independently-keyed progress stores -- confirmed live over HTTP with two real, independently-authenticated accounts, and confirmed by a live, reproduced golden-bad mutation showing exactly what a broken version of this property looks like."
+    expected_result: "Two full-access seeded accounts (FR-010: workshop-admin and workshop-user both get full, equal access; no authorization difference between them) have completely disjoint, independently-keyed progress stores -- confirmed live over HTTP with two real, independently-authenticated accounts, and confirmed by a live, reproduced golden-bad mutation showing exactly what a broken version of this property looks like."
 
   - id: WK-PROG-010
     name: "A stored position referencing a since-redacted pid is now withheld from GET, matching GET /api/passages/{pid} for the SAME pid"

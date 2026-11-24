@@ -95,7 +95,7 @@ podman run --rm \
   --network host \
   --device /dev/bus/usb \
   -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY}" \
-  -e HELIX_ANDROID_DEVICE="192.168.0.214:5555" \
+  -e HELIX_ANDROID_DEVICE="192.0.2.214:5555" \
   -e HELIX_ANDROID_PACKAGE="com.your.app" \
   -v $(pwd):/project:ro \
   -v $(pwd)/qa-results:/output \

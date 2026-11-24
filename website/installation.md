@@ -85,10 +85,10 @@ See [LLM Providers](/providers) for the complete list of 40+ supported providers
 
 ```bash
 # Connect over network (Wi-Fi ADB)
-adb connect 192.168.0.214:5555
+adb connect 192.0.2.214:5555
 
 # Configure HelixQA
-export HELIX_ANDROID_DEVICE="192.168.0.214:5555"
+export HELIX_ANDROID_DEVICE="192.0.2.214:5555"
 export HELIX_ANDROID_PACKAGE="com.your.app"
 ```
 
@@ -128,7 +128,7 @@ For persistent configuration, create a `.env` file in the project root or in `he
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
 HELIX_WEB_URL=http://localhost:3000
-HELIX_ANDROID_DEVICE=192.168.0.214:5555
+HELIX_ANDROID_DEVICE=192.0.2.214:5555
 HELIX_ANDROID_PACKAGE=com.example.myapp
 ```
 

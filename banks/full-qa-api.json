@@ -1097,11 +1097,11 @@
           "body": {
             "name": "Synology NAS",
             "protocol": "smb",
-            "host": "synology.local",
+            "host": "nas.example.com",
             "share": "media",
             "path": "/"
           },
-          "_original_action": "POST /api/v1/storage/roots with body {\"name\":\"Synology NAS\",\"protocol\":\"smb\",\"host\":\"synology.local\",\"share\":\"media\",\"path\":\"/\"}",
+          "_original_action": "POST /api/v1/storage/roots with body {\"name\":\"Synology NAS\",\"protocol\":\"smb\",\"host\":\"nas.example.com\",\"share\":\"media\",\"path\":\"/\"}",
           "expect_status": 201,
           "auth": "admin",
           "_skip": true,
@@ -1411,12 +1411,12 @@
           "action": "http: POST /api/v1/smb/test",
           "expected": "200 OK with connection test result (success or failure details)",
           "body": {
-            "host": "synology.local",
+            "host": "nas.example.com",
             "share": "media",
             "username": "test",
             "password": "test"
           },
-          "_original_action": "POST /api/v1/smb/test with body {\"host\":\"synology.local\",\"share\":\"media\",\"username\":\"test\",\"password\":\"test\"}",
+          "_original_action": "POST /api/v1/smb/test with body {\"host\":\"nas.example.com\",\"share\":\"media\",\"username\":\"test\",\"password\":\"test\"}",
           "expect_status": 200,
           "auth": "admin"
         }
@@ -1443,11 +1443,11 @@
           "action": "http: POST /api/v1/smb/discover",
           "expected": "200 OK with list of available shares",
           "body": {
-            "host": "synology.local",
+            "host": "nas.example.com",
             "username": "qa_smb_user",
             "password": "qa_smb_password"
           },
-          "_original_action": "POST /api/v1/smb/discover with body {\"host\":\"synology.local\"}",
+          "_original_action": "POST /api/v1/smb/discover with body {\"host\":\"nas.example.com\"}",
           "expect_status": 200,
           "auth": "admin",
           "_skip": true,
@@ -1477,13 +1477,13 @@
           "action": "http: POST /api/v1/smb/browse",
           "expected": "200 OK with directory listing",
           "body": {
-            "host": "synology.local",
+            "host": "nas.example.com",
             "share": "media",
             "path": "/",
             "username": "qa_smb_user",
             "password": "qa_smb_password"
           },
-          "_original_action": "POST /api/v1/smb/browse with body {\"host\":\"synology.local\",\"share\":\"media\",\"path\":\"/\"}",
+          "_original_action": "POST /api/v1/smb/browse with body {\"host\":\"nas.example.com\",\"share\":\"media\",\"path\":\"/\"}",
           "expect_status": 200,
           "auth": "admin",
           "_skip": true,
@@ -1705,9 +1705,9 @@
       "steps": [
         {
           "name": "Test SMB connection via GET",
-          "action": "http: GET /api/v1/smb/test?host=synology.local&share=media",
+          "action": "http: GET /api/v1/smb/test?host=nas.example.com&share=media",
           "expected": "200 OK with connection test result",
-          "_original_action": "GET /api/v1/smb/test?host=synology.local&share=media",
+          "_original_action": "GET /api/v1/smb/test?host=nas.example.com&share=media",
           "expect_status": 200,
           "auth": "admin",
           "_skip": true,
@@ -1734,9 +1734,9 @@
       "steps": [
         {
           "name": "Discover via GET",
-          "action": "http: GET /api/v1/smb/discover?host=synology.local",
+          "action": "http: GET /api/v1/smb/discover?host=nas.example.com",
           "expected": "200 OK with discovered shares",
-          "_original_action": "GET /api/v1/smb/discover?host=synology.local",
+          "_original_action": "GET /api/v1/smb/discover?host=nas.example.com",
           "expect_status": 200,
           "auth": "admin",
           "_skip": true,

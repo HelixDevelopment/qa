@@ -23,7 +23,7 @@ const (
 	// VisionRemoteCompute — time the remote CUDA worker spends
 	// executing, excluding network RTT.
 	VisionRemoteCompute = 8 * time.Millisecond
-	// VisionRemoteRTT — network RTT orchestrator ↔ thinker.local.
+	// VisionRemoteRTT — network RTT orchestrator ↔ host-a.example.com.
 	VisionRemoteRTT = 3 * time.Millisecond
 	// InteractVerified — action dispatch + post-action verification.
 	InteractVerified = 20 * time.Millisecond
@@ -42,7 +42,7 @@ const (
 	// recording buffers, which are measured separately).
 	MaxHostRSSMB uint64 = 1_500
 	// MaxSidecarRSSMB is the RSS ceiling for the CUDA sidecar
-	// container on thinker.local.
+	// container on host-a.example.com.
 	MaxSidecarRSSMB uint64 = 4_096
 	// MaxSidecarVRAMMB is the VRAM ceiling for the CUDA sidecar.
 	MaxSidecarVRAMMB uint64 = 4_096

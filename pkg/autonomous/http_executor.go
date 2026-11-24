@@ -39,7 +39,7 @@ import (
 // executable per Article XI §11.5.
 type HTTPExecutor struct {
 	// BaseURL is the root URL prepended to every step's path
-	// (e.g. http://thinker.local:8092). Required.
+	// (e.g. http://host-a.example.com:8092). Required.
 	BaseURL string
 	// HTTPClient is the underlying *http.Client. Defaults to a
 	// 30-second-timeout client if nil.

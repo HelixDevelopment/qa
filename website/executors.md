@@ -20,11 +20,11 @@ The ADB executor controls Android and Android TV devices over the Android Debug 
 
 ```bash
 # Connect a device over Wi-Fi
-adb connect 192.168.0.214:5555
+adb connect 192.0.2.214:5555
 adb devices   # confirm connection
 
 # Set environment variables
-export HELIX_ANDROID_DEVICE="192.168.0.214:5555"
+export HELIX_ANDROID_DEVICE="192.0.2.214:5555"
 export HELIX_ANDROID_PACKAGE="com.your.app"
 ```
 

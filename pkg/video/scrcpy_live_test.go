@@ -21,7 +21,7 @@ import (
 // paths.
 //
 // Build tag `live_device` keeps this out of the default test run.
-// Prerequisite: MIBOX4 at 192.168.0.214:5555 is ADB-reachable,
+// Prerequisite: MIBOX4 at 192.0.2.214:5555 is ADB-reachable,
 // ffmpeg is on PATH.
 //
 // Run with:
@@ -31,7 +31,7 @@ import (
 //	    -run TestScrcpyRecorder_LiveSegmentLoop_MIBOX4 -v \
 //	    -timeout 60s ./pkg/video/...
 func TestScrcpyRecorder_LiveSegmentLoop_MIBOX4(t *testing.T) {
-	const device = "192.168.0.214:5555"
+	const device = "192.0.2.214:5555"
 	if out, err := exec.Command("adb", "-s", device, "shell", "echo", "alive").CombinedOutput(); err != nil {
 		t.Skipf("device %s unreachable: %v (out: %s)", device, err, strings.TrimSpace(string(out))) // SKIP-OK: #env-device-unreachable
 	}

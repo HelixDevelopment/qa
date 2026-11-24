@@ -11,11 +11,11 @@ acceptance criteria.
 
 | Sidecar | Language | Host | Go client | Live integration test |
 |---|---|---|---|---|
-| [`helixqa-omniparser`](./helixqa-omniparser/README.md) | Python | GPU (thinker.local) | ✅ `pkg/agent/omniparser` | `PH3-OMNIPARSER-INT-001` |
+| [`helixqa-omniparser`](./helixqa-omniparser/README.md) | Python | GPU (host-a.example.com) | ✅ `pkg/agent/omniparser` | `PH3-OMNIPARSER-INT-001` |
 | [`helixqa-text`](./helixqa-text/README.md) | Python | GPU / CPU | ✅ `pkg/vision/text` | `PH2-TEXT-INT-001` |
-| [`helixqa-dreamsim`](./helixqa-dreamsim/README.md) | Python / Triton | GPU (thinker.local) | ✅ `pkg/vision/perceptual/dreamsim` | `PH2-DREAMSIM-INT-001` |
+| [`helixqa-dreamsim`](./helixqa-dreamsim/README.md) | Python / Triton | GPU (host-a.example.com) | ✅ `pkg/vision/perceptual/dreamsim` | `PH2-DREAMSIM-INT-001` |
 | [`helixqa-lpips`](./helixqa-lpips/README.md) | Python / Triton | GPU | ✅ `pkg/vision/perceptual/lpips` | (same Triton instance) |
-| [`helixqa-uitars`](./helixqa-uitars/README.md) | llama.cpp | GPU (thinker.local:18100) | ✅ `pkg/agent/uitars` | `PH3-UITARS-INT-001` |
+| [`helixqa-uitars`](./helixqa-uitars/README.md) | llama.cpp | GPU (host-a.example.com:18100) | ✅ `pkg/agent/uitars` | `PH3-UITARS-INT-001` |
 | [`helixqa-frida-bridge`](./helixqa-frida-bridge/README.md) | Python | Dev host + USB device | ✅ `pkg/observe/frida` | (manual) |
 | [`helixqa-axtree-darwin`](./helixqa-axtree-darwin/README.md) | Swift | macOS | ✅ `pkg/nexus/observe/axtree/darwin.go` | `PH6-AXTREE-DARWIN-INT-001` |
 | [`helixqa-axtree-windows`](./helixqa-axtree-windows/README.md) | Go (go-ole) / C# | Windows | ✅ `pkg/nexus/observe/axtree/windows.go` | `PH6-AXTREE-WINDOWS-INT-001` |

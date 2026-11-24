@@ -97,7 +97,7 @@ helixqa report --input qa-results/session-* --format html
 
 | Variable | Purpose |
 |----------|---------|
-| `HELIX_ANDROID_DEVICE` | ADB device ID (e.g., `192.168.0.214:5555`) |
+| `HELIX_ANDROID_DEVICE` | ADB device ID (e.g., `192.0.2.214:5555`) |
 | `HELIX_ANDROID_PACKAGE` | Android app package (e.g., `com.app.name`) |
 | `HELIX_WEB_URL` | Web app URL (e.g., `http://localhost:3000`) |
 | `HELIX_DESKTOP_DISPLAY` | X11 display (default `:0`) |

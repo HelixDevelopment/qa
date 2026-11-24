@@ -31,7 +31,7 @@ import (
 // conventions and distance→similarity mapping.
 type DreamSim struct {
 	// Endpoint is the Triton server URL, e.g.
-	// "http://thinker.local:8000". Required.
+	// "http://host-a.example.com:8000". Required.
 	Endpoint string
 
 	// Model is the Triton model name. Default: "dreamsim".

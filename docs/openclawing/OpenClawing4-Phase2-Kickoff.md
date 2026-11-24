@@ -156,7 +156,7 @@ Reference: `OpenClawing4.md` §5.8 tier-1 primitive.
       hosts (READMEs in each directory).
 - [ ] Run `scripts/fetch-scrcpy-server.sh` after setting the real
       SCRCPY_SHA256 value in the script.
-- [ ] Deploy DreamSim ONNX to the Triton instance on thinker.local.
+- [ ] Deploy DreamSim ONNX to the Triton instance on host-a.example.com.
 - [ ] Install `ruptures` Python package + expose via a small gRPC
       sidecar.
 - [ ] `cargo install reis` on a Rust-capable build host (or pull the

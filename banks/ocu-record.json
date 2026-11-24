@@ -120,7 +120,7 @@
       ],
       "tags": ["ocu", "record", "encoder", "nvenc", "edge"],
       "estimated_duration": "5s",
-      "expected_result": "nvenc Encode() returns ErrNotWired; remote dispatch to thinker.local deferred to P5.5"
+      "expected_result": "nvenc Encode() returns ErrNotWired; remote dispatch to host-a.example.com deferred to P5.5"
     },
     {
       "id": "OCU-RECORD-030",

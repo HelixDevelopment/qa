@@ -49,7 +49,7 @@ Content-Type: multipart/form-data; boundary=...
 
 ## Deployment target
 
-Per `OpenClawing4-Phase2-Kickoff.md §8`, OmniParser v2 runs on the GPU host (thinker.local).
+Per `OpenClawing4-Phase2-Kickoff.md §8`, OmniParser v2 runs on the GPU host (host-a.example.com).
 
 ## Build recipe (reference)
 

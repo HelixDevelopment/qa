@@ -11,7 +11,7 @@
 #
 #   bin/helixqa http --banks banks/workshop/search.yaml \
 #     --base-url http://127.0.0.1:8087 --login-path /api/auth/login \
-#     --admin-user milosvasic --admin-pass '<the real, seeded milosvasic
+#     --admin-user workshop-admin --admin-pass '<the real, seeded workshop-admin
 #     password -- see $VASIC_ROOT/specs/007-decouple-modules-auth/spec.md
 #     FR-009, where $VASIC_ROOT is the umbrella project root; this path does
 #     NOT resolve from either submodules/qa/ or workshop/ on their own; the
@@ -252,7 +252,7 @@
 # live-fault-injects every one of their own cases either.
 #
 # REAL SEEDED CREDENTIALS live at $VASIC_ROOT/specs/007-decouple-modules-auth/
-# spec.md, FR-009 -- two seeded accounts, milosvasic (admin role) and rami
+# spec.md, FR-009 -- two seeded accounts, workshop-admin (admin role) and workshop-user
 # (user role), both granted equal, full workshop access per that spec's
 # FR-010. Per this task's own explicit instruction and per credential-
 # handling policy (CONST-042/11.4.10), the REAL PASSWORD VALUES ARE NEVER

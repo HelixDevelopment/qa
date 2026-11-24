@@ -170,7 +170,7 @@ func TestProviderConfig_Validation(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -run TestVisionResult`
+Run: `cd $WORKSPACE/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -run TestVisionResult`
 Expected: FAIL — package does not exist
 
 - [ ] **Step 3: Implement provider.go**
@@ -247,13 +247,13 @@ type ProviderConfig struct {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -count=1`
+Run: `cd $WORKSPACE/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -count=1`
 Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA
+cd $WORKSPACE/Catalogizer/HelixQA
 git add pkg/vision/cheaper/provider.go pkg/vision/cheaper/provider_test.go
 git commit -m "feat(vision/cheaper): add VisionProvider interface and core types"
 ```
@@ -380,7 +380,7 @@ func TestRegistry_NilFactoryPanics(t *testing.T) {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -run TestRegistry`
+Run: `cd $WORKSPACE/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -run TestRegistry`
 Expected: FAIL — NewRegistry not defined
 
 - [ ] **Step 3: Implement registry.go**
@@ -468,13 +468,13 @@ func (r *Registry) Unregister(name string) {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -count=1 -race`
+Run: `cd $WORKSPACE/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/ -v -count=1 -race`
 Expected: PASS (all registry tests including race detector)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA
+cd $WORKSPACE/Catalogizer/HelixQA
 git add pkg/vision/cheaper/registry.go pkg/vision/cheaper/registry_test.go
 git commit -m "feat(vision/cheaper): add thread-safe provider registry"
 ```
@@ -536,7 +536,7 @@ func TestImageToBase64_SinglePixel(t *testing.T) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/adapters/ -v`
+Run: `cd $WORKSPACE/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/adapters/ -v`
 Expected: FAIL — ImageToBase64 not defined
 
 - [ ] **Step 3: Implement encoding.go**
@@ -568,13 +568,13 @@ func ImageToBase64(img image.Image) (string, error) {
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/adapters/ -v -count=1`
+Run: `cd $WORKSPACE/Catalogizer/HelixQA && go test ./pkg/vision/cheaper/adapters/ -v -count=1`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA
+cd $WORKSPACE/Catalogizer/HelixQA
 git add pkg/vision/cheaper/adapters/
 git commit -m "feat(vision/cheaper): add shared image encoding utility"
 ```
@@ -644,7 +644,7 @@ Test file at `pkg/vision/cheaper/adapters/uitars/uitars_test.go` — tests NewUI
 - [ ] **Step 1: Add dependency**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA
+cd $WORKSPACE/Catalogizer/HelixQA
 go get github.com/failsafe-go/failsafe-go@latest
 go mod tidy
 ```
@@ -961,7 +961,7 @@ go test ./pkg/vision/cheaper/ -fuzz=FuzzImageHash -fuzztime=30s
 - [ ] **Step 1: Run all tests with race detector**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA
+cd $WORKSPACE/Catalogizer/HelixQA
 go test ./pkg/vision/cheaper/... -v -count=1 -race
 go test ./internal/visionserver/... -v -count=1 -race
 go vet ./pkg/vision/cheaper/... ./internal/visionserver/...
@@ -985,7 +985,7 @@ go vet ./...
 - [ ] **Step 2: Push HelixQA to all remotes**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA
+cd $WORKSPACE/Catalogizer/HelixQA
 for remote in $(git remote); do
   GIT_SSH_COMMAND="ssh -o BatchMode=yes" git push $remote main 2>&1
 done
@@ -994,7 +994,7 @@ done
 - [ ] **Step 3: Update and push main repo**
 
 ```bash
-cd /run/media/milosvasic/DATA4TB/Projects/Catalogizer
+cd $WORKSPACE/Catalogizer
 git add HelixQA
 git commit -m "chore: update HelixQA submodule — cheaper vision integration"
 GIT_SSH_COMMAND="ssh -o BatchMode=yes" git push origin main

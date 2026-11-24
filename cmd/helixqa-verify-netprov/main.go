@@ -34,7 +34,7 @@
 // Usage:
 //
 //	helixqa-verify-netprov \
-//	  --endpoint http://10.6.100.221:18434/v1/chat/completions \
+//	  --endpoint http://198.51.100.221:18434/v1/chat/completions \
 //	  --model /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf \
 //	  --prompt "reply with only the word OK" \
 //	  --expect "ok" \
@@ -84,7 +84,7 @@ const (
 // deliberately distinct from cmd/helixqa-verify-vision's multimodal
 // content-part array: this analyzer targets the llama.cpp server's
 // standard /v1/chat/completions text endpoint, confirmed live via
-// `curl -X POST http://10.6.100.221:18434/v1/chat/completions` during
+// `curl -X POST http://198.51.100.221:18434/v1/chat/completions` during
 // authoring (2026-07-08).
 type chatMessage struct {
 	Role    string `json:"role"`

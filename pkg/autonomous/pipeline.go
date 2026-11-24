@@ -74,7 +74,7 @@ type PipelineConfig struct {
 
 	// HTTPBaseURL is the root URL the structured executor
 	// uses for ActionTypeHTTP steps (e.g.
-	// "http://thinker.local:8092"). When empty, the executor
+	// "http://host-a.example.com:8092"). When empty, the executor
 	// falls back to the HELIXQA_HTTP_BASE_URL env var. When
 	// both are empty, ActionTypeHTTP steps fail with a clear
 	// configuration error rather than silently no-op.
@@ -105,7 +105,7 @@ type PipelineConfig struct {
 	PassNumber int
 
 	// AndroidDevice is the ADB device/emulator serial
-	// (e.g. "emulator-5554" or "192.168.0.214:5555").
+	// (e.g. "emulator-5554" or "192.0.2.214:5555").
 	// For single-device mode.
 	AndroidDevice string
 
@@ -154,7 +154,7 @@ type PipelineConfig struct {
 
 	// VisionHost is the hostname of the remote machine
 	// running Ollama for vision inference (e.g.
-	// "thinker.local"). Empty disables auto-deploy.
+	// "host-a.example.com"). Empty disables auto-deploy.
 	VisionHost string
 
 	// VisionUser is the SSH user for the vision host.

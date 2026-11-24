@@ -90,6 +90,6 @@ podman run --rm -d \
 
 ## Acceptance
 
-1. `GET http://thinker.local:8000/v2/models/dreamsim` returns `{"name":"dreamsim","ready":true}`.
+1. `GET http://host-a.example.com:8000/v2/models/dreamsim` returns `{"name":"dreamsim","ready":true}`.
 2. Identical images → similarity ≥ 0.95 (client maps to canonical ≥ 0.9).
 3. `PH2-DREAMSIM-INT-001` passes.

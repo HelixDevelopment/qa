@@ -8,7 +8,7 @@
 
 **Spec reference:** program design §1.1 (package tree), §2.1 (capture contract), §4.4 budgets (local 15ms, remote 8ms).
 
-**Working dir:** `/run/media/milosvasic/DATA4TB/Projects/Catalogizer/HelixQA` (absolute paths elsewhere noted)
+**Working dir:** `$WORKSPACE/Catalogizer/HelixQA` (absolute paths elsewhere noted)
 
 **Invariants:**
 - SPDX header every new `.go`

@@ -27,7 +27,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # Target platform configuration
 HELIX_WEB_URL=http://localhost:3000
-HELIX_ANDROID_DEVICE=192.168.0.214:5555
+HELIX_ANDROID_DEVICE=192.0.2.214:5555
 HELIX_ANDROID_PACKAGE=com.example.myapp
 
 # Optional tuning
@@ -85,7 +85,7 @@ See [LLM Providers](/providers) for the complete list of 40+ supported providers
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
-| `HELIX_ANDROID_DEVICE` | ADB device or emulator ID | `192.168.0.214:5555` |
+| `HELIX_ANDROID_DEVICE` | ADB device or emulator ID | `192.0.2.214:5555` |
 | `HELIX_ANDROID_PACKAGE` | Android application package name | `com.example.myapp` |
 | `HELIX_WEB_URL` | Web application base URL | `http://localhost:3000` |
 | `HELIX_DESKTOP_DISPLAY` | X11 display for desktop executor | `:0` |
@@ -196,7 +196,7 @@ HELIX_WEB_URL=http://localhost:3000
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
-HELIX_ANDROID_DEVICE=192.168.0.214:5555
+HELIX_ANDROID_DEVICE=192.0.2.214:5555
 HELIX_ANDROID_PACKAGE=com.example.myapp
 ```
 
@@ -205,7 +205,7 @@ HELIX_ANDROID_PACKAGE=com.example.myapp
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
 HELIX_WEB_URL=http://localhost:3000
-HELIX_ANDROID_DEVICE=192.168.0.214:5555
+HELIX_ANDROID_DEVICE=192.0.2.214:5555
 HELIX_ANDROID_PACKAGE=com.example.myapp
 HELIX_DESKTOP_DISPLAY=:0
 HELIX_FFMPEG_PATH=/usr/bin/ffmpeg

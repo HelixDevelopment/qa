@@ -3,7 +3,7 @@
 //
 // P5.6 schema — NOT compiled in P5.5. In P5.5 the Go encoder sends
 // google.protobuf.Empty as a placeholder. Replace with real generated
-// bindings once thinker.local sidecar (P5.6) is wired.
+// bindings once host-a.example.com sidecar (P5.6) is wired.
 //
 // To generate Go bindings (P5.6 operator step):
 //   protoc --go_out=. --go-grpc_out=. nvenc.proto
@@ -16,7 +16,7 @@ import "google/protobuf/empty.proto";
 
 option go_package = "digital.vasic.helixqa/pkg/nexus/record/encoder/nvenc/proto;nvencpb";
 
-// NVENCRequest carries one raw BGRA frame to the thinker.local sidecar.
+// NVENCRequest carries one raw BGRA frame to the host-a.example.com sidecar.
 // Width * Height * 4 == len(bgra_data).
 message NVENCRequest {
   uint64 seq        = 1; // monotonic frame counter
@@ -33,7 +33,7 @@ message NVENCResponse {
   string error    = 2; // non-empty when accepted == false
 }
 
-// NVENCService is the gRPC service implemented by the thinker.local sidecar.
+// NVENCService is the gRPC service implemented by the host-a.example.com sidecar.
 // P5.6 implements this; P5.5 sends google.protobuf.Empty as a placeholder.
 service NVENCService {
   rpc Encode(NVENCRequest) returns (NVENCResponse);

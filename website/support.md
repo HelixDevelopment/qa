@@ -38,7 +38,7 @@ The Android executor cannot connect to a device via ADB.
 adb devices
 
 # If empty, connect over Wi-Fi
-adb connect 192.168.0.214:5555
+adb connect 192.0.2.214:5555
 
 # Verify the connection
 adb shell echo "connected"

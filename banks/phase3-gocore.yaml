@@ -15,7 +15,7 @@
 # Toolchain / operator-action dependencies (tracked in
 # docs/OPEN_POINTS_CLOSURE.md §10.3):
 #
-#   - UI-TARS-1.5-7B GGUF deployed on thinker.local with llama-server
+#   - UI-TARS-1.5-7B GGUF deployed on host-a.example.com with llama-server
 #     + --mmproj (needed to turn unit tests into live smoke tests).
 #   - OmniParser v2 Python sidecar built in cmd/helixqa-omniparser/
 #     container (needed for OmniParser client integration).
@@ -158,7 +158,7 @@ test_cases:
     tags: [phase3, agent, uitars, parser, util]
 
   # Production llama-server integration (blocked on operator action per
-  # OPEN_POINTS_CLOSURE.md §10.3 — UI-TARS-1.5-7B GGUF deploy to thinker.local).
+  # OPEN_POINTS_CLOSURE.md §10.3 — UI-TARS-1.5-7B GGUF deploy to host-a.example.com).
   - id: PH3-UITARS-INT-001
     name: "pkg/agent/uitars — live llama-server smoke test"
     category: integration
@@ -166,8 +166,8 @@ test_cases:
     platforms: [linux]
     requires: [llama-server-uitars-thinker-local]
     steps:
-      - name: "Client connects to thinker.local:18100 and receives a parseable Action"
-        action: "Client{Endpoint: 'http://thinker.local:18100'}.Act(screenshot, 'tap Sign In')"
+      - name: "Client connects to host-a.example.com:18100 and receives a parseable Action"
+        action: "Client{Endpoint: 'http://host-a.example.com:18100'}.Act(screenshot, 'tap Sign In')"
         expected: "Returned Action passes Validate(), Kind ∈ {click, type, key, scroll, done}"
       - name: "End-to-end latency is within the Phase-3 budget"
         action: "Time 3 consecutive Acts on 1080p screenshots"
@@ -264,7 +264,7 @@ test_cases:
     requires: [omniparser-sidecar-running]
     steps:
       - name: "Live sidecar returns ≥ 3 elements for a busy screenshot"
-        action: "Client{Endpoint: 'http://thinker.local:7860'}.Parse(1080p screenshot)"
+        action: "Client{Endpoint: 'http://host-a.example.com:7860'}.Parse(1080p screenshot)"
         expected: "len(Result.Elements) ≥ 3, at least one Interactive=true"
       - name: "FindInteractiveContaining resolves a click target to the right element"
         action: "Cross-check a UI-TARS-proposed click coordinate against the live element grid"
