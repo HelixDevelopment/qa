@@ -16,6 +16,7 @@ const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const net = require('net');
 const { tlsArgs } = require('./playwright-bridge-tls');
 const { loadCookies } = require('./playwright-bridge-cookies');
 
@@ -24,7 +25,40 @@ const STATE_FILE = path.join(
   '.helix-browser-state.json'
 );
 
-const CDP_PORT = 9223;
+// The CDP port is chosen per launch (an OS-assigned free port) and recorded in the state
+// file as cdpURL: a fixed port collided with any other browser or HelixQA session on the host
+// and let killExisting() kill a process this bridge never started.
+let CDP_PORT = 0;
+
+// freePort asks the OS for a free loopback port.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const p = s.address().port;
+      s.close(() => resolve(p));
+    });
+  });
+}
+
+// killBrowser kills the browser this bridge spawned (its own process group, since it is
+// launched detached), and nothing else.
+function killBrowser(pid) {
+  if (!pid || pid <= 1) return;
+  try { process.kill(-pid, 'SIGKILL'); } catch (_) {
+    try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+  }
+}
+
+// failLaunch aborts a launch that already spawned a browser: the browser is killed and the
+// state file removed, so a refused launch never leaves an orphaned Chromium behind.
+function failLaunch(proc, message) {
+  killBrowser(proc && proc.pid);
+  try { fs.unlinkSync(STATE_FILE); } catch (_) {}
+  process.stderr.write('error: ' + message + '\n');
+  process.exit(1);
+}
 
 async function main() {
   const input = fs.readFileSync(0, 'utf-8').trim();
@@ -70,23 +104,16 @@ function findChromium() {
   return 'chromium';
 }
 
-// killExisting silently kills any previously launched browser
-// without writing to stdout. Kills by port to handle stale
-// processes not tracked by the state file.
+// killExisting silently kills the browser a previous launch recorded in the state file.
+// It does not pattern-match other processes: only a pid this bridge recorded is signalled.
 function killExisting() {
-  // Kill by state file PID.
   if (fs.existsSync(STATE_FILE)) {
     try {
       const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-      process.kill(state.pid, 'SIGKILL');
+      killBrowser(state.pid);
     } catch (_) {}
     try { fs.unlinkSync(STATE_FILE); } catch (_) {}
   }
-  // Kill ALL chromium instances on our CDP port.
-  try {
-    execFileSync('pkill', ['-9', '-f',
-      'remote-debugging-port=' + CDP_PORT], { stdio: 'ignore' });
-  } catch (_) {}
 }
 
 // waitForCDP polls the CDP endpoint until it responds.
@@ -175,6 +202,7 @@ async function handleLaunch(cmd) {
   }
 
   const chromiumPath = findChromium();
+  CDP_PORT = await freePort();
   const cdpURL = 'http://127.0.0.1:' + CDP_PORT;
 
   // Launch headless chromium with CDP.
@@ -194,12 +222,14 @@ async function handleLaunch(cmd) {
   });
   proc.unref();
 
+  // Record the browser immediately so any later failure (or the next launch) can find and kill it.
+  fs.writeFileSync(STATE_FILE, JSON.stringify({ pid: proc.pid, cdpURL, url: cmd.url }));
+
   // Wait for CDP to be ready.
   try {
     await waitForCDP(cdpURL, 40);
   } catch (e) {
-    process.stderr.write('error: ' + e.message + '\n');
-    process.exit(1);
+    failLaunch(proc, e.message);
   }
 
   if (sessionCookies) {
@@ -215,8 +245,7 @@ async function handleLaunch(cmd) {
       await pg.goto(cmd.url, { waitUntil: 'load', timeout: 30000 });
       process.stderr.write('session cookies installed: ' + sessionCookies.length + '\n');
     } catch (e) {
-      process.stderr.write('error: HELIX_WEB_COOKIE_FILE: could not install the cookies in the browser (' + (e && e.name || 'Error') + ')\n');
-      process.exit(1);
+      failLaunch(proc, 'HELIX_WEB_COOKIE_FILE: could not install the cookies in the browser (' + (e && e.name || 'Error') + ')');
     }
   }
 

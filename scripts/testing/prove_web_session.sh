@@ -18,7 +18,7 @@ run() { out="$(go test "$1" -run "$2" -count=1 -v 2>&1)"; rc=$?
   if printf '%s' "$out" | grep -q -- '--- SKIP'; then echo "SKIP in guard $2" >&2; return 2; fi; return $rc; }
 fail=0
 echo "== control (unmutated) =="
-run ./pkg/navigator 'TestBridge_NoCookieFile|TestBridge_CookieFile'; rc=$?
+run ./pkg/navigator 'TestBridge_NoCookieFile|TestBridge_CookieFile|TestBridge_CookieInstallFailure'; rc=$?
 [ $rc -eq 0 ] && echo "control PASS" || { echo "control FAIL($rc)"; exit $([ $rc -eq 2 ] && echo 2 || echo 1); }
 mutate() { local id="$1" f="$2" expr="$3" pkg="$4" re="$5"
   save "$f"; sed -i "$expr" "$f"
@@ -32,5 +32,8 @@ mutate 3 $C "s|if (!ALLOWED.has(k))|if (false)|" $T 'TestBridge_CookieFile_Malfo
 mutate 4 $C "s|if (!Array.isArray(list) \|\| list.length === 0)|if (false)|" $T 'TestBridge_CookieFile_MalformedRefused'
 mutate 5 $J 's|sessionCookies = loadCookies(process.env, cmd.url \|\| .*);|sessionCookies = null;|' $T 'TestBridge_CookieFile_EstablishesSession'
 mutate 6 $C "s|has unsupported key \"' + k + '\"|has unsupported key \"' + k + '\" in ' + JSON.stringify(c) + '|" $T 'TestBridge_CookieFile_ValueNeverInError'
+# bridge lifecycle: a refused launch must not orphan its browser; the CDP port must not be the fixed 9223
+mutate 7 $J 's|  killBrowser(proc \&\& proc.pid);|  void 0;|' $T 'TestBridge_CookieInstallFailure_LeavesNoBrowser'
+mutate 8 $J 's|CDP_PORT = await freePort();|CDP_PORT = 9223;|' $T 'TestBridge_CDPPort_IsNotTheFixedPort'
 [ $fail -eq 0 ] && echo "ALL MUTATIONS CAUGHT" || echo "FAIL=$fail"
 exit $fail
