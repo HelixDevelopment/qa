@@ -36,14 +36,19 @@ func IsBlankScreenshot(data []byte) bool {
 		return true
 	}
 
-	// Sample pixels across a dense 9x9 grid (81 points) so we catch
-	// UI widgets even on dark-themed login screens where most of the
-	// background is near-black. Reference-to-first sampling gave false
-	// "uniform" verdicts when the reference pixel and most samples hit
-	// the background; we now compute the per-channel range (max - min)
-	// across all samples, which is robust to uniform backgrounds with
-	// small bright UI elements.
-	const gridN = 9
+	// A coarse 9x9 grid first (cheap, catches widgets on a dark login
+	// screen). A text-light, background-dominated page (a settings or empty
+	// state page whose few glyphs miss all 81 points) then gets a dense
+	// 128x128 pass: judging such a page "blank" would BLOCK a verdict on a
+	// frame that plainly shows content.
+	return sampledRange(img, 9) < 20 && sampledRange(img, 128) < 20
+}
+
+// sampledRange returns the largest per-channel range (max - min) over a
+// gridN x gridN lattice of sample points.
+func sampledRange(img image.Image, gridN int) uint32 {
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 	var rMin, gMin, bMin uint32 = 255, 255, 255
 	var rMax, gMax, bMax uint32
 	for iy := 1; iy <= gridN; iy++ {
@@ -52,31 +57,11 @@ func IsBlankScreenshot(data []byte) bool {
 			y := bounds.Min.Y + height*iy/(gridN+1)
 			r, g, b, _ := img.At(x, y).RGBA()
 			r, g, b = r>>8, g>>8, b>>8
-			if r < rMin {
-				rMin = r
-			}
-			if r > rMax {
-				rMax = r
-			}
-			if g < gMin {
-				gMin = g
-			}
-			if g > gMax {
-				gMax = g
-			}
-			if b < bMin {
-				bMin = b
-			}
-			if b > bMax {
-				bMax = b
-			}
+			rMin, rMax = min(rMin, r), max(rMax, r)
+			gMin, gMax = min(gMin, g), max(gMax, g)
+			bMin, bMax = min(bMin, b), max(bMax, b)
 		}
 	}
-
-	// If any single channel shows >= 20 levels of variation across
-	// the grid, there is real content on screen. The 20-level
-	// threshold catches faint widgets (input borders, subtle
-	// gradients) while still rejecting truly blank frames.
 	maxRange := rMax - rMin
 	if gMax-gMin > maxRange {
 		maxRange = gMax - gMin
@@ -84,7 +69,7 @@ func IsBlankScreenshot(data []byte) bool {
 	if bMax-bMin > maxRange {
 		maxRange = bMax - bMin
 	}
-	return maxRange < 20
+	return maxRange
 }
 
 // absDiff returns absolute difference
