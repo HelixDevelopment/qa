@@ -222,7 +222,7 @@
       "steps": [
         {
           "name": "Log in fresh",
-          "action": "Launch app, log in with admin/admin123 via form",
+          "action": "Launch app, log in with {{QA_USERNAME}}/{{QA_PASSWORD}} via form",
           "expected": "Home screen loads with library items"
         },
         {
@@ -279,7 +279,7 @@
         },
         {
           "name": "Playwright: log in and land on Dashboard",
-          "action": "Start catalog-api + catalog-web, open http://localhost:3000, log in as admin/admin123",
+          "action": "Start catalog-api + catalog-web, open http://localhost:3000, log in as {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard renders stats cards without error boundary firing, no 'Something went wrong' message"
         },
         {
@@ -314,7 +314,7 @@
       "steps": [
         {
           "name": "Launch app + log in",
-          "action": "Launch com.catalogizer.androidtv cleanly, log in with admin/admin123",
+          "action": "Launch com.catalogizer.androidtv cleanly, log in with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Login success \u2192 immediate transition to home"
         },
         {

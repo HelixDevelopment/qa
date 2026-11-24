@@ -46,8 +46,9 @@ type HTTPExecutor struct {
 	HTTPClient *http.Client
 	// AdminCreds holds the admin login credentials used by
 	// AuthMode="admin" steps. Only populated when at least one
-	// step's AuthMode requires login. Empty struct means
-	// "admin/admin123" defaults are used.
+	// step's AuthMode requires login. There is NO built-in default:
+	// an empty struct makes auth:admin steps fail without sending any
+	// request (credentials are strictly explicit).
 	AdminCreds Credentials
 	// UserCredentials maps username → credentials for AuthMode
 	// "as:<user>" steps. Empty by default.
@@ -126,8 +127,8 @@ type Credentials struct {
 }
 
 // NewHTTPExecutor constructs an HTTPExecutor with sensible
-// defaults. baseURL is required; admin defaults to admin/admin123
-// if zero.
+// defaults. baseURL is required; AdminCreds has no default and must be
+// supplied by the caller for auth:admin steps.
 func NewHTTPExecutor(baseURL string) *HTTPExecutor {
 	return &HTTPExecutor{
 		BaseURL:                 strings.TrimRight(baseURL, "/"),
@@ -213,18 +214,33 @@ func (h *HTTPExecutor) Execute(
 	var bodyReader io.Reader
 	contentType := ""
 	if step.Body != nil {
+		// Credentials in a bank body are ${HELIX_TEST_*} references resolved
+		// from the environment here; an unset one blocks the step before any
+		// request is built (there is no default credential).
+		var missing []string
 		switch v := step.Body.(type) {
 		case string:
-			bodyReader = strings.NewReader(v)
+			var ex string
+			ex, missing = expandTestVars(v)
+			bodyReader = strings.NewReader(ex)
 		case []byte:
-			bodyReader = bytes.NewReader(v)
+			var ex string
+			ex, missing = expandTestVars(string(v))
+			bodyReader = strings.NewReader(ex)
 		default:
 			b, err := json.Marshal(v)
 			if err != nil {
 				return ActionResult{Success: false, Message: fmt.Sprintf("http: body marshal failed: %v", err)}
 			}
-			bodyReader = bytes.NewReader(b)
+			var ex string
+			ex, missing = expandTestVarsJSON(string(b))
+			bodyReader = strings.NewReader(ex)
 			contentType = "application/json"
+		}
+		if len(missing) > 0 {
+			return ActionResult{Blocked: true, Message: fmt.Sprintf(
+				"http: step needs credential variable(s) %s which are not set; nothing was sent (could not determine, not a pass)",
+				strings.Join(missing, ", "))}
 		}
 	}
 
@@ -470,8 +486,8 @@ func (h *HTTPExecutor) resolveCreds(mode string) (Credentials, string, error) {
 	switch {
 	case strings.EqualFold(mode, "admin"):
 		creds := h.AdminCreds
-		if creds.Username == "" {
-			creds = Credentials{Username: "admin", Password: "admin123"}
+		if creds.Username == "" || creds.Password == "" {
+			return Credentials{}, "", fmt.Errorf("auth admin — credentials not supplied (there is no built-in default; pass -admin-user/-admin-pass or their -env variants)")
 		}
 		return creds, credsKey, nil
 	case strings.HasPrefix(mode, "as:"):

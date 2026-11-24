@@ -200,6 +200,10 @@ func TestHXC243_PreFixStepsWouldHaveBluffPassed(t *testing.T) {
 // httptest.Server instances that exist only for the duration of each
 // subtest.
 func TestHXC243_EveryAssignedCheckIsFalsifiableAndSatisfiable(t *testing.T) {
+	// Bank bodies reference credentials by variable name; the replay server
+	// accepts any value, so inert fixture values are supplied here.
+	t.Setenv("HELIX_TEST_USER", "fixture-user")
+	t.Setenv("HELIX_TEST_PASSWORD", "fixture-pass")
 	require.NotEmpty(t, hxc243AssignedChecks, "the generated check table must not be empty")
 
 	for _, chk := range hxc243AssignedChecks {

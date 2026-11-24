@@ -49,7 +49,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Measure 50 login requests"
-        action: "Send 50 POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}, record each response time"
+        action: "Send 50 POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}, record each response time"
         expected: "All return 200 OK with JWT token"
       - name: "Calculate p95 latency"
         action: "Sort response times, take 95th percentile"
@@ -71,7 +71,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Measure short query search"
         action: "Send 50 GET /api/v1/entities?search=matrix requests, record response times"
@@ -96,7 +96,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Measure paginated entity listing (page 1)"
         action: "Send 50 GET /api/v1/entities?per_page=20&page=1 requests, record response times"
@@ -121,7 +121,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Identify a streamable file"
         action: "GET /api/v1/entities?media_type=movie&per_page=1 to get a media item with files"
@@ -148,7 +148,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Run 60-second sustained load test"
         action: "k6 run with 10 VUs sending GET /api/v1/health for 60 seconds, targeting 100+ rps"
@@ -192,7 +192,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Create 10 small storage roots"
         action: "Create or verify existence of 10 storage roots pointing to different paths"
@@ -241,7 +241,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Generate sustained load for 5 minutes"
         action: "k6 run with 20 VUs for 5 minutes: mixed search, browse, entity CRUD operations"
@@ -263,7 +263,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Record initial memory baseline"
         action: "Measure RSS after 5-minute warm-up period"
@@ -339,7 +339,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Measure entity listing queries"
         action: "Send 100 GET /api/v1/entities?per_page=20 requests, measure response time (proxy for DB query time)"
@@ -364,7 +364,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Measure entity creation writes"
         action: "Send 50 POST /api/v1/entities with unique titles, measure each response time"

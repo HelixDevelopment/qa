@@ -18,13 +18,20 @@ async function startRecording() {
     });
     const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 
-    // Authenticate
+    // Authenticate with operator-supplied credentials only (no built-in default).
+    const LOGIN_USER = process.env.HELIX_TEST_USER || '';
+    const LOGIN_PASS = process.env.HELIX_TEST_PASSWORD || '';
+    if (!LOGIN_USER || !LOGIN_PASS) {
+        console.error('error: set HELIX_TEST_USER and HELIX_TEST_PASSWORD (no default credentials exist)');
+        await browser.close();
+        process.exit(2);
+    }
     await page.goto(BASE + '/login', { waitUntil: 'domcontentloaded', timeout: 15000 });
-    const token = await page.evaluate(async () => {
+    const token = await page.evaluate(async ([u, p]) => {
         const r = await fetch('/api/v1/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: 'admin@helix.test', password: 'admin123!testadmin' })
+            body: JSON.stringify({ email: u, password: p })
         });
         const d = await r.json();
         return d.access_token || d.token || '';

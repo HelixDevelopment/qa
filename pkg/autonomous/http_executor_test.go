@@ -129,6 +129,7 @@ func TestHTTPExecutor_AdminAuthCachesToken(t *testing.T) {
 	defer srv.Close()
 
 	h := NewHTTPExecutor(srv.URL)
+	h.AdminCreds = Credentials{Username: "u-test", Password: "p-test"}
 	for i := 0; i < 3; i++ {
 		res := h.Execute(context.Background(), "GET", "/api/v1/users", testbank.TestStep{
 			AuthMode:     "admin",
@@ -583,6 +584,7 @@ func TestHTTPExecutor_AutoRefreshOnInvalidatedToken(t *testing.T) {
 	defer srv.Close()
 
 	h := NewHTTPExecutor(srv.URL)
+	h.AdminCreds = Credentials{Username: "u-test", Password: "p-test"}
 	// First call mints token-1 and gets 200.
 	res1 := h.Execute(context.Background(), "GET", "/api/v1/auth/me",
 		testbank.TestStep{ExpectStatus: 200, AuthMode: "admin"})

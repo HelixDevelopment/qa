@@ -16,6 +16,7 @@ import (
 	osexec "os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1297,49 +1298,7 @@ func (sp *SessionPipeline) Run(
 	// This injects project-specific details (credentials,
 	// screens, constraints) discovered by the Learn phase
 	// into the generic navigation prompts.
-	var kbParts []string
-	// Credentials from .env — most important for login.
-	if len(kb.Credentials) > 0 {
-		kbParts = append(kbParts,
-			"LOGIN CREDENTIALS (from project .env):")
-		for k, v := range kb.Credentials {
-			kbParts = append(kbParts,
-				fmt.Sprintf("  %s = %s", k, v))
-		}
-		// Make it explicit for the LLM.
-		user := kb.Credentials["ADMIN_USERNAME"]
-		if user == "" {
-			user = kb.Credentials["USERNAME"]
-		}
-		pass := kb.Credentials["ADMIN_PASSWORD"]
-		if pass == "" {
-			pass = kb.Credentials["PASSWORD"]
-		}
-		if user != "" && pass != "" {
-			kbParts = append(kbParts,
-				fmt.Sprintf(
-					"USE THESE CREDENTIALS: "+
-						"username='%s' password='%s'",
-					user, pass))
-		}
-	}
-	if len(kb.Constraints) > 0 {
-		kbParts = append(kbParts,
-			"PROJECT CONSTRAINTS:")
-		for _, c := range kb.Constraints {
-			kbParts = append(kbParts, "- "+c)
-		}
-	}
-	if len(kb.Screens) > 0 {
-		var screenNames []string
-		for _, s := range kb.Screens {
-			screenNames = append(screenNames, s.Name)
-		}
-		kbParts = append(kbParts,
-			"KNOWN SCREENS: "+strings.Join(
-				screenNames, ", "))
-	}
-	sp.kbContext = strings.Join(kbParts, "\n")
+	sp.kbContext = buildKBContext(kb)
 	// Store credentials in config for app auto-login.
 	if len(kb.Credentials) > 0 {
 		sp.config.QACredentials = kb.Credentials
@@ -2419,13 +2378,17 @@ func (sp *SessionPipeline) Run(
 							seq.SuccessCount,
 						)
 						for _, a := range seq.Actions {
+							ra, rerr := sp.resolveCredentialPlaceholders(
+								llmAction{Type: a.Type, Value: a.Value},
+							)
+							if rerr != nil {
+								fmt.Printf("  [curiosity %s #%d] action %q refused: %v\n", platform, i+1, a.Type, rerr)
+								continue
+							}
 							_ = executeAction(
 								stepCtx,
 								executor,
-								llmAction{
-									Type:  a.Type,
-									Value: a.Value,
-								},
+								ra,
 							)
 							time.Sleep(
 								500 * time.Millisecond,
@@ -2625,11 +2588,14 @@ func (sp *SessionPipeline) Run(
 					if stepCtx.Err() != nil {
 						break
 					}
-					execErr := executeAction(
-						stepCtx,
-						executor,
-						action,
-					)
+					resolved, execErr := sp.resolveCredentialPlaceholders(action)
+					if execErr == nil {
+						execErr = executeAction(
+							stepCtx,
+							executor,
+							resolved,
+						)
+					}
 					if execErr != nil {
 						fmt.Printf(
 							"  [curiosity %s #%d] "+
@@ -4272,12 +4238,12 @@ ANDROID TV CONTROLS:
 
 LOGIN (only when you see a login screen):
 1. dpad_down to username field, dpad_center to activate
-2. clear, then type the username
-3. tab to password, clear, type the password
+2. clear, then type the placeholder {{QA_USERNAME}} (the harness substitutes the real value)
+3. tab to password, clear, type the placeholder {{QA_PASSWORD}} (the harness substitutes the real value)
 4. dpad_down to Sign In, dpad_center to click
 
 QA TESTING PRIORITY (follow this order):
-1. LOGIN first if on login screen (try admin/admin123)
+1. LOGIN first if on login screen, only with the credentials supplied by the harness (never guess or invent credentials)
 2. BROWSE the home screen — scroll down and right through ALL content rows
 3. OPEN detail screens — select items to see their detail/info page
 4. PLAY media — find and activate play buttons for video/audio content
@@ -4335,9 +4301,10 @@ WEB CONTROLS:
 - wait — pause 3 seconds
 
 LOGIN (only on login page):
-1. Click username field, type "admin"
-2. Click password field, type "admin123"
+1. Click username field, type the placeholder {{QA_USERNAME}} (the harness substitutes the real value)
+2. Click password field, type the placeholder {{QA_PASSWORD}} (the harness substitutes the real value)
 3. Click Sign In button
+If the harness supplies no credentials the placeholder is refused: do NOT guess or invent credentials, do not retry login; test only what is reachable without logging in.
 
 QA TESTING PRIORITY (follow this order):
 1. LOGIN first if on login page
@@ -4526,6 +4493,45 @@ func (sp *SessionPipeline) llmNavigate(
 	}
 
 	return actions
+}
+
+// buildKBContext renders the Learn-phase knowledge into the text appended to
+// the navigation prompts.
+func buildKBContext(kb *learning.KnowledgeBase) string {
+	var kbParts []string
+	// Credentials from .env: NAMES only. A credential value is never written
+	// into a prompt sent to an LLM provider; the harness substitutes the
+	// operator-supplied values for the {{QA_USERNAME}} / {{QA_PASSWORD}}
+	// placeholders at action time, and only with the data-validation opt-in.
+	if len(kb.Credentials) > 0 {
+		names := make([]string, 0, len(kb.Credentials))
+		for k := range kb.Credentials {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		kbParts = append(kbParts,
+			"LOGIN CREDENTIALS exist for this project ("+
+				strings.Join(names, ", ")+"); their values are never "+
+				"shown to you. On a login screen type the placeholders "+
+				QAUsernamePlaceholder+" and "+QAPasswordPlaceholder+".")
+	}
+	if len(kb.Constraints) > 0 {
+		kbParts = append(kbParts,
+			"PROJECT CONSTRAINTS:")
+		for _, c := range kb.Constraints {
+			kbParts = append(kbParts, "- "+c)
+		}
+	}
+	if len(kb.Screens) > 0 {
+		var screenNames []string
+		for _, s := range kb.Screens {
+			screenNames = append(screenNames, s.Name)
+		}
+		kbParts = append(kbParts,
+			"KNOWN SCREENS: "+strings.Join(
+				screenNames, ", "))
+	}
+	return strings.Join(kbParts, "\n")
 }
 
 // executeAction translates an llmAction into an
@@ -4851,4 +4857,39 @@ func partialFrames(r *PipelineResult) string {
 	return fmt.Sprintf("%d of %d captured frame(s) got an unusable model reply "+
 		"(empty, refusal or not a findings array) and were NOT judged",
 		r.FramesUnusable, r.FramesAnalysed+r.FramesUnusable)
+}
+
+// Placeholders the navigation prompts tell the model to type on a login screen.
+const (
+	QAUsernamePlaceholder = "{{QA_USERNAME}}"
+	QAPasswordPlaceholder = "{{QA_PASSWORD}}"
+)
+
+// resolveCredentialPlaceholders substitutes the login placeholders in a type
+// action with the operator-supplied values. It is refused (error, nothing
+// typed) unless the operator opted in with -data-validation AND the environment
+// variables named by the data-validation flags are set: there is no built-in or
+// discovered credential, and the value never appears in a prompt or a log.
+func (sp *SessionPipeline) resolveCredentialPlaceholders(a llmAction) (llmAction, error) {
+	hasUser := strings.Contains(a.Value, QAUsernamePlaceholder)
+	hasPass := strings.Contains(a.Value, QAPasswordPlaceholder)
+	if !hasUser && !hasPass {
+		return a, nil
+	}
+	if sp.config == nil || !sp.config.DataValidation {
+		return a, fmt.Errorf("login placeholder refused: no credentials opt-in (-data-validation)")
+	}
+	user, pass := "", ""
+	if n := sp.config.DataValidationUserEnv; n != "" {
+		user = os.Getenv(n)
+	}
+	if n := sp.config.DataValidationPassEnv; n != "" {
+		pass = os.Getenv(n)
+	}
+	if (hasUser && user == "") || (hasPass && pass == "") {
+		return a, fmt.Errorf("login placeholder refused: the credential environment variables are not set")
+	}
+	a.Value = strings.ReplaceAll(a.Value, QAUsernamePlaceholder, user)
+	a.Value = strings.ReplaceAll(a.Value, QAPasswordPlaceholder, pass)
+	return a, nil
 }

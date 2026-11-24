@@ -82,7 +82,7 @@ test_cases:
         action: "Launch the application"
         expected: "Login screen displayed"
       - name: "Enter credentials and submit"
-        action: "Type 'admin' into username, 'admin123' into password, tap Login"
+        action: "Type '{{QA_USERNAME}}' into username, '{{QA_PASSWORD}}' into password, tap Login"
         expected: "Dashboard screen displayed"
 ```
 
@@ -101,7 +101,7 @@ test_cases:
         action: "Launch the application"
         expected: "Login screen displayed with username and password fields"
       - name: "Enter credentials"
-        action: "Type 'admin' into the username field and 'admin123' into the password field"
+        action: "Type '{{QA_USERNAME}}' into the username field and '{{QA_PASSWORD}}' into the password field"
         expected: "Both fields populated, Login button enabled"
       - name: "Submit login"
         action: "Tap/click the Login button"

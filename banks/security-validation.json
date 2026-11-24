@@ -261,8 +261,8 @@
           "_original_action": "POST /api/v1/auth/login",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -676,8 +676,8 @@
           "_original_action": "POST /api/v1/auth/login 20 times in 10 seconds with wrong password",
           "expect_status": 429,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -984,8 +984,8 @@
           "_original_action": "POST /api/v1/auth/login",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -1029,8 +1029,8 @@
           "expected": "Token A issued",
           "_original_action": "POST /api/v1/auth/login",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "expect_status": 200
         },
@@ -1040,8 +1040,8 @@
           "expected": "Token B issued",
           "_original_action": "POST /api/v1/auth/login (same user)",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "expect_status": 200
         },
@@ -1694,8 +1694,8 @@
           "expected": "Response time noted",
           "_original_action": "POST /api/v1/auth/login with valid username, wrong password, measure response time",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "expect_status": 200
         },
@@ -1908,8 +1908,8 @@
           "expected": "Set-Cookie header present",
           "_original_action": "POST /api/v1/auth/login from browser",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "expect_status": 200
         },

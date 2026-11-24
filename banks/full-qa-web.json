@@ -61,7 +61,7 @@
           "name": "Enter admin credentials",
           "action": "playwright: fill input[name=username] admin",
           "expected": "Credentials are entered in the form fields",
-          "_original_action": "Type 'admin' in username field, 'admin123' in password field",
+          "_original_action": "Type '{{QA_USERNAME}}' in username field, '{{QA_PASSWORD}}' in password field",
           "_conversion_note": "manual-review-required"
         },
         {
@@ -145,7 +145,7 @@
         },
         {
           "name": "Leave username empty",
-          "action": "Click into password field, type 'admin123', leave username empty",
+          "action": "Click into password field, type '{{QA_PASSWORD}}', leave username empty",
           "expected": "Password entered, username empty",
           "_conversion_note": "manual-review-required"
         },
@@ -250,7 +250,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123 credentials",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} credentials",
           "expected": "Redirected to dashboard",
           "_conversion_note": "manual-review-required"
         },
@@ -287,7 +287,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123 credentials",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} credentials",
           "expected": "Redirected to dashboard",
           "_conversion_note": "manual-review-required"
         },
@@ -651,7 +651,7 @@
           "name": "Enter credentials",
           "action": "playwright: fill input[name=username] admin",
           "expected": "Credentials entered",
-          "_original_action": "Type 'admin' in username, 'admin123' in password",
+          "_original_action": "Type '{{QA_USERNAME}}' in username, '{{QA_PASSWORD}}' in password",
           "_conversion_note": "manual-review-required"
         },
         {
@@ -707,7 +707,7 @@
         },
         {
           "name": "Successful attempt",
-          "action": "Submit with 'admin' / 'admin123'",
+          "action": "Submit with '{{QA_USERNAME}}' / '{{QA_PASSWORD}}'",
           "expected": "Login succeeds and user is redirected to dashboard",
           "_conversion_note": "manual-review-required"
         }
@@ -732,7 +732,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard displayed",
           "_conversion_note": "manual-review-required"
         },
@@ -764,7 +764,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123 credentials",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} credentials",
           "expected": "Redirected to /dashboard",
           "_conversion_note": "manual-review-required"
         },
@@ -946,7 +946,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard displayed",
           "_conversion_note": "manual-review-required"
         },
@@ -988,7 +988,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard displayed",
           "_conversion_note": "manual-review-required"
         },
@@ -1078,7 +1078,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard displayed",
           "_conversion_note": "manual-review-required"
         },
@@ -6962,7 +6962,7 @@
       "steps": [
         {
           "name": "Login as admin",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard displayed",
           "_conversion_note": "manual-review-required"
         },
@@ -8491,7 +8491,7 @@
       "steps": [
         {
           "name": "Login in first tab",
-          "action": "Login with admin/admin123 in first tab",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} in first tab",
           "expected": "Dashboard displayed",
           "_conversion_note": "manual-review-required"
         },
@@ -8610,7 +8610,7 @@
       "steps": [
         {
           "name": "Login",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Logged in",
           "_conversion_note": "manual-review-required"
         },
@@ -8671,7 +8671,7 @@
       "steps": [
         {
           "name": "Login and navigate to dashboard",
-          "action": "Login with admin/admin123",
+          "action": "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Dashboard loads, multiple API requests fire in parallel",
           "_conversion_note": "manual-review-required"
         },

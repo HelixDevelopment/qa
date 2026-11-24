@@ -253,7 +253,7 @@ test_cases:
         action: "Open the application and wait for the login screen to appear"
         expected: "Login screen displayed with username field, password field, and submit button"
       - name: "Enter credentials"
-        action: "Type 'admin' into the username field and 'admin123' into the password field"
+        action: "Type '{{QA_USERNAME}}' into the username field and '{{QA_PASSWORD}}' into the password field"
         expected: "Username and password fields populated, submit button enabled"
       - name: "Submit login form"
         action: "Tap/click the 'Login' or 'Sign In' button"

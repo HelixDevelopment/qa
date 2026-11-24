@@ -29,8 +29,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -123,8 +123,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -163,8 +163,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -382,8 +382,8 @@
           "_original_action": "POST /api/v1/auth/login with updated credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
@@ -393,8 +393,8 @@
           "_original_action": "POST /api/v1/auth/login with old credentials",
           "expect_status": 401,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_skip": true,
           "_skip_reason": "paired with skipped change-password step (admin password not actually changed); test premise no longer holds"

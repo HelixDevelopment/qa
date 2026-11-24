@@ -661,6 +661,16 @@ func (ste *StructuredTestExecutor) performAction(
 	step testbank.TestStep,
 ) ActionResult {
 	actionType, actionValue := step.ParseAction()
+	rawActionValue := actionValue // logged/reported form: never the resolved credential
+	// ${HELIX_TEST_*} references (credentials) resolve from the environment;
+	// an unset one blocks the step before anything is typed or run.
+	if ex, missing := expandTestVars(actionValue); len(missing) > 0 {
+		return ActionResult{Blocked: true, Message: fmt.Sprintf(
+			"action needs credential variable(s) %s which are not set; nothing was executed (could not determine, not a pass)",
+			strings.Join(missing, ", "))}
+	} else {
+		actionValue = ex
+	}
 
 	switch actionType {
 	case testbank.ActionTypeADBShell:
@@ -669,7 +679,7 @@ func (ste *StructuredTestExecutor) performAction(
 		// without actually invoking the command, so every test that
 		// relied on adb_shell: silently no-oped. Fix: route through
 		// ADBExecutor.Shell so the device actually runs the command.
-		fmt.Printf("      [action] adb shell: %s\n", actionValue)
+		fmt.Printf("      [action] adb shell: %s\n", rawActionValue)
 		adbExec, ok := executor.(*navigator.ADBExecutor)
 		if !ok {
 			return ActionResult{Blocked: true, Message: "adb_shell requires an Android executor (environment / platform mismatch, not an app defect)"}
@@ -678,7 +688,7 @@ func (ste *StructuredTestExecutor) performAction(
 		if err != nil {
 			return ActionResult{Success: false, Message: fmt.Sprintf("adb shell error: %v (out: %s)", err, truncateOutput(out, 200))}
 		}
-		return ActionResult{Success: true, Message: fmt.Sprintf("Executed: %s", actionValue)}
+		return ActionResult{Success: true, Message: fmt.Sprintf("Executed: %s", rawActionValue)}
 
 	case testbank.ActionTypeShell:
 		// Execute a host shell command via os/exec — the SAME real-execution
@@ -691,7 +701,7 @@ func (ste *StructuredTestExecutor) performAction(
 		// anti-bluff defect (a report claiming failure for a command it never
 		// ran). The command itself encodes the assertion (e.g. piping stdout
 		// through grep), so exit 0 == the asserted output was present.
-		fmt.Printf("      [action] shell: %s\n", actionValue)
+		fmt.Printf("      [action] shell: %s\n", rawActionValue)
 		shCtx := ctx
 		if step.Timeout > 0 {
 			var cancel context.CancelFunc
@@ -759,7 +769,7 @@ func (ste *StructuredTestExecutor) performAction(
 
 	case testbank.ActionTypeText:
 		// Enter text
-		fmt.Printf("      [action] text: %s\n", actionValue)
+		fmt.Printf("      [action] text: %s\n", rawActionValue)
 		if typeExecutor, ok := executor.(interface {
 			Type(context.Context, string) error
 		}); ok {
@@ -768,7 +778,7 @@ func (ste *StructuredTestExecutor) performAction(
 				return ActionResult{Success: false, Message: fmt.Sprintf("Type failed: %v", err)}
 			}
 		}
-		return ActionResult{Success: true, Message: fmt.Sprintf("Typed: %s", actionValue)}
+		return ActionResult{Success: true, Message: fmt.Sprintf("Typed: %s", rawActionValue)}
 
 	case testbank.ActionTypeTap:
 		// Tap at coordinates

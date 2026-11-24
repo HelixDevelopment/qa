@@ -79,7 +79,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Log in to the web app as admin"
-        action: "browser.login(admin/admin123)"
+        action: "browser.login({{QA_USERNAME}}/{{QA_PASSWORD}})"
         expected: "Landing at /browse"
       - name: "Wait for the cover grid to populate"
         action: "browser.wait_for('img[data-role=cover]', count>=20)"

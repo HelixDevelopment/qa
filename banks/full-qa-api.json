@@ -24,10 +24,10 @@
           "action": "http: POST /api/v1/auth/login",
           "expected": "200 OK with JSON containing token field",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
-          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}",
+          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}",
           "expect_status": 200,
           "expect_json_path": "$.session_token"
         },
@@ -193,10 +193,10 @@
           "action": "http: POST /api/v1/auth/login",
           "expected": "200 OK with access token and refresh token",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
-          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}",
+          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}",
           "expect_status": 200
         },
         {
@@ -248,8 +248,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -366,8 +366,8 @@
           "_original_action": "POST /api/v1/auth/login with regular user credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -455,22 +455,22 @@
           "action": "http: POST /api/v1/auth/login",
           "expected": "200 OK with token",
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
-          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}",
+          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}",
           "expect_status": 200
         },
         {
           "name": "Change password",
           "action": "http: POST /api/v1/auth/change-password",
           "expected": "200 OK",
-          "_original_action": "POST /api/v1/auth/change-password with token and body {\"current_password\":\"admin123\",\"new_password\":\"NewAdmin456!\"}",
+          "_original_action": "POST /api/v1/auth/change-password with token and body {\"current_password\":\"${HELIX_TEST_PASSWORD}\",\"new_password\":\"NewAdmin456!\"}",
           "expect_status": 200,
           "auth": "admin",
           "body": {
             "new_password": "NewAdmin!23",
-            "current_password": "admin123"
+            "current_password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -497,9 +497,9 @@
           "expected": "200 OK (cleanup)",
           "body": {
             "current_password": "NewAdmin456!",
-            "new_password": "admin123"
+            "new_password": "${HELIX_TEST_PASSWORD}"
           },
-          "_original_action": "POST /api/v1/auth/change-password with body {\"current_password\":\"NewAdmin456!\",\"new_password\":\"admin123\"}",
+          "_original_action": "POST /api/v1/auth/change-password with body {\"current_password\":\"NewAdmin456!\",\"new_password\":\"${HELIX_TEST_PASSWORD}\"}",
           "expect_status": 200,
           "auth": "admin",
           "_skip": true,
@@ -530,8 +530,8 @@
           "_original_action": "POST /api/v1/auth/login with wrong password 6 times in under 10 seconds",
           "expect_status": 429,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -574,8 +574,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -642,8 +642,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -713,11 +713,11 @@
           "action": "http: POST /api/v1/auth/login",
           "expected": "200 OK (extra fields ignored, login succeeds)",
           "body": {
-            "username": "admin",
-            "password": "admin123",
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}",
             "evil_field": "hack"
           },
-          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\",\"evil_field\":\"hack\"}",
+          "_original_action": "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\",\"evil_field\":\"hack\"}",
           "expect_status": 200,
           "_skip": true,
           "_skip_reason": "rate-limit pollution from prior /auth/login attempts; test runs in sequence on shared executor"
@@ -1083,8 +1083,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -1135,8 +1135,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -1185,8 +1185,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -1801,8 +1801,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -7542,8 +7542,8 @@
           "_original_action": "POST /api/v1/auth/login with admin credentials",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"
@@ -7836,8 +7836,8 @@
           "_original_action": "POST /api/v1/auth/login with locked user credentials",
           "expect_status": 403,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_patched_by": [
             "bank-patch-default-bodies"

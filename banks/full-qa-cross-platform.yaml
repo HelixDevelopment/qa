@@ -21,16 +21,16 @@ test_cases:
     platforms: [api, web, androidtv, android]
     steps:
       - name: "Login via API"
-        action: "POST /api/v1/auth/login with admin/admin123"
+        action: "POST /api/v1/auth/login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "200 OK with session token"
       - name: "Login via Web"
-        action: "Navigate to login page, enter admin/admin123, click Login"
+        action: "Navigate to login page, enter {{QA_USERNAME}}/{{QA_PASSWORD}}, click Login"
         expected: "Redirects to dashboard"
       - name: "Login via Android TV"
-        action: "Launch app, configure server, enter admin/admin123"
+        action: "Launch app, configure server, enter {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Navigates to home screen"
       - name: "Login via Android Phone"
-        action: "Launch app, configure server, enter admin/admin123"
+        action: "Launch app, configure server, enter {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Navigates to home screen"
     tags: [cross-platform, auth, login]
     estimated_duration: "60s"

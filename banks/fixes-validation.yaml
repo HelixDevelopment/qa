@@ -146,7 +146,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Log in fresh"
-        action: "Launch app, log in with admin/admin123 via form"
+        action: "Launch app, log in with {{QA_USERNAME}}/{{QA_PASSWORD}} via form"
         expected: "Home screen loads with library items"
       - name: "Force-stop app"
         action: "adb shell am force-stop com.catalogizer.androidtv"
@@ -181,7 +181,7 @@ test_cases:
         action: "cd catalog-web && npx vitest run src/components/dashboard/__tests__/DashboardStats.test.tsx"
         expected: "15 tests pass — including 3 partial-payload regressions"
       - name: "Playwright: log in and land on Dashboard"
-        action: "Start catalog-api + catalog-web, open http://localhost:3000, log in as admin/admin123"
+        action: "Start catalog-api + catalog-web, open http://localhost:3000, log in as {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard renders stats cards without error boundary firing, no 'Something went wrong' message"
       - name: "Verify even with empty backend payload"
         action: "Stub /api/v1/media/stats to return empty {} and reload /"
@@ -202,7 +202,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Launch app + log in"
-        action: "Launch com.catalogizer.androidtv cleanly, log in with admin/admin123"
+        action: "Launch com.catalogizer.androidtv cleanly, log in with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Login success → immediate transition to home"
       - name: "Capture first post-login screenshot at <500ms"
         action: "screencap 200ms after login submit"
@@ -557,7 +557,7 @@ test_cases:
     platforms: [android, androidtv]
     steps:
       - name: "Login to Android app"
-        action: "Launch app, login with admin/admin123"
+        action: "Launch app, login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Home screen loads, SyncManager starts background sync"
       - name: "Logout"
         action: "Navigate to Settings, tap Logout"
@@ -583,7 +583,7 @@ test_cases:
     platforms: [android, androidtv]
     steps:
       - name: "Login to Android app"
-        action: "Launch app, login with admin/admin123"
+        action: "Launch app, login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Home screen loads"
       - name: "Navigate to entity detail with slow network"
         action: "Open any media detail screen while simulating slow network (200ms+ latency)"
@@ -609,7 +609,7 @@ test_cases:
     platforms: [android, androidtv]
     steps:
       - name: "Login from main activity"
-        action: "Launch app, login with admin/admin123"
+        action: "Launch app, login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Token stored in DataStore"
       - name: "Read auth state from two ViewModels simultaneously"
         action: "Navigate to a screen where both HomeViewModel and ProfileViewModel read auth state"
@@ -664,7 +664,7 @@ test_cases:
     platforms: [api, web, androidtv, android]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Find a TV show with multiple episodes"
         action: "GET /api/v1/entities?media_type=tv_episode&per_page=5"
@@ -748,7 +748,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Request media conversion status"
         action: "GET /api/v1/conversion/status"
