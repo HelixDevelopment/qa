@@ -591,6 +591,9 @@ func cmdAutonomous(args []string) {
 	webCA := fs.String("web-ca-file", "",
 		"PEM CA bundle the web bridge trusts for a private-CA HTTPS target "+
 			"(sets HELIX_WEB_CA_FILE)")
+	webCookies := fs.String("web-cookie-file", "",
+		"JSON file (mode 0600) of session cookies for the web bridge, bound to the "+
+			"target origin (sets HELIX_WEB_COOKIE_FILE); the values are never printed")
 	webInsecure := fs.Bool("web-insecure-tls", false,
 		"Ignore TLS errors in the web bridge, ONLY for localhost/private "+
 			"hosts (sets HELIX_WEB_INSECURE_TLS=1)")
@@ -611,6 +614,9 @@ func cmdAutonomous(args []string) {
 	// CLI flags win over a .env value (applied after loadEnvFile).
 	if *webCA != "" {
 		os.Setenv("HELIX_WEB_CA_FILE", *webCA)
+	}
+	if *webCookies != "" {
+		os.Setenv("HELIX_WEB_COOKIE_FILE", *webCookies)
 	}
 	if *webInsecure {
 		os.Setenv("HELIX_WEB_INSECURE_TLS", "1")

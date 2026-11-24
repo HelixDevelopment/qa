@@ -675,5 +675,6 @@ If a session fails partway through, partial results are still saved. Check the o
 4. Read the verdict, not the percentage: `frames_distinct` in `pipeline-report.json` counts the
    byte-distinct frames. Several tests over one distinct frame is `UNDETERMINED (exit 2)`: the
    application was never driven past one screen. A console behind a passkey login cannot be driven
-   by the curiosity phase (it has no credential and no authenticator); use a bank or a journey that
-   performs the login.
+   by the curiosity phase (it has no credential and no authenticator); use `-web-cookie-file <json, mode 0600>` with a session you established yourself (for example a
+   passkey ceremony with a software authenticator, then dump the session cookie), or a bank or a
+   journey that performs the login.

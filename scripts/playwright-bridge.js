@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { tlsArgs } = require('./playwright-bridge-tls');
+const { loadCookies } = require('./playwright-bridge-cookies');
 
 const STATE_FILE = path.join(
   process.env.HELIX_OUTPUT_DIR || '/tmp',
@@ -163,6 +164,16 @@ async function handleLaunch(cmd) {
     process.exit(1);
   }
 
+  // Operator-supplied session cookies (HELIX_WEB_COOKIE_FILE); validated BEFORE
+  // the browser starts, an invalid file aborts the launch.
+  let sessionCookies;
+  try {
+    sessionCookies = loadCookies(process.env, cmd.url || '');
+  } catch (e) {
+    process.stderr.write('error: ' + e.message + '\n');
+    process.exit(1);
+  }
+
   const chromiumPath = findChromium();
   const cdpURL = 'http://127.0.0.1:' + CDP_PORT;
 
@@ -189,6 +200,24 @@ async function handleLaunch(cmd) {
   } catch (e) {
     process.stderr.write('error: ' + e.message + '\n');
     process.exit(1);
+  }
+
+  if (sessionCookies) {
+    try {
+      const b = await chromium.connectOverCDP(cdpURL);
+      const ctx = b.contexts()[0];
+      const pg = ctx.pages()[0];
+      if (!pg) throw new Error('no page');
+      // The startup tab does not see cookies added through ctx.addCookies
+      // (measured: document.cookie stays empty); the tab's own CDP session does.
+      const cdp = await ctx.newCDPSession(pg);
+      await cdp.send('Network.setCookies', { cookies: sessionCookies });
+      await pg.goto(cmd.url, { waitUntil: 'load', timeout: 30000 });
+      process.stderr.write('session cookies installed: ' + sessionCookies.length + '\n');
+    } catch (e) {
+      process.stderr.write('error: HELIX_WEB_COOKIE_FILE: could not install the cookies in the browser (' + (e && e.name || 'Error') + ')\n');
+      process.exit(1);
+    }
   }
 
   // Pre-login: authenticate via API and inject token into browser.

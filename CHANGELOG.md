@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`-web-cookie-file` / `HELIX_WEB_COOKIE_FILE`: drive a login-gated web target.** A console behind
+  a passkey login cannot be driven by the autonomous loop (no credential, no authenticator), so it
+  only ever saw the sign-in page. The operator can now hand the browser an already-established
+  session: a JSON array of cookies (`name`, `value`, optional `path`/`httpOnly`/`secure`/`sameSite`/
+  `expires`), bound to the TARGET origin (a `domain` or `url` key is refused), file mode must be
+  0600, values never appear in an error or log, and any problem aborts the launch (no silent
+  anonymous fall-back). Measured: Playwright's `ctx.addCookies` does not reach the startup tab
+  (`document.cookie` stays empty), so the cookies are installed through the tab's own CDP session
+  (`Network.setCookies`). Live: with the cookie file the real job_seeker inbox renders (before:
+  Sign-in page). Proof: `scripts/testing/prove_web_session.sh` (6 mutations).
+
 ### Fixed (web target: root cause of the "blank frames" and of a 100% over one screen)
 
 Reproduced live against the real job_seeker console (HTTPS with its own private CA, `jobseekerd`

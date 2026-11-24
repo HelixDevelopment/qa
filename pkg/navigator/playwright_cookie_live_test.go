@@ -118,15 +118,3 @@ func TestBridge_CookieFile_ValueNeverInError(t *testing.T) {
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "TOPSECRETVALUE")
 }
-
-func keycodeExecutor(t *testing.T, url string) *PlaywrightExecutor {
-	t.Helper()
-	t.Setenv("HELIX_OUTPUT_DIR", t.TempDir())
-	wd, _ := filepath.Abs(".")
-	pe := NewPlaywrightExecutor(url, nil)
-	pe.bridgePath = filepath.Join(wd, "..", "..", "scripts", "playwright-bridge.js")
-	t.Cleanup(func() {
-		_, _ = pe.runBridgeCmd(context.Background(), map[string]interface{}{"action": "close"})
-	})
-	return pe
-}
