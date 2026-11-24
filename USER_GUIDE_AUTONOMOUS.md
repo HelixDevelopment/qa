@@ -662,3 +662,18 @@ helixqa autonomous \
 ### Partial Results
 
 If a session fails partway through, partial results are still saved. Check the output directory for whatever was collected before the failure. The report phase runs even after phase failures to capture as much evidence as possible.
+
+
+## Driving a private-CA web target (checklist)
+
+1. `-web-ca-file <ca.pem>` (or `HELIX_WEB_CA_FILE`): without it Chromium shows a certificate
+   interstitial and every frame is dropped as blank (exit 2).
+2. `playwright` must be resolvable by the bridge: set `HELIXQA_PLAYWRIGHT_NODE_PATH` (or
+   `NODE_PATH`) to a `node_modules` directory that holds it. A bare environment (`env -i`) has none.
+3. `HELIX_WEB_URL=<https url of the first page>`; for bank cases with `platforms: [api]` also set
+   `HELIXQA_HTTP_BASE_URL` and pass `-platforms web,api`.
+4. Read the verdict, not the percentage: `frames_distinct` in `pipeline-report.json` counts the
+   byte-distinct frames. Several tests over one distinct frame is `UNDETERMINED (exit 2)`: the
+   application was never driven past one screen. A console behind a passkey login cannot be driven
+   by the curiosity phase (it has no credential and no authenticator); use a bank or a journey that
+   performs the login.

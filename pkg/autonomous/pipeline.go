@@ -6,6 +6,7 @@ package autonomous
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -304,6 +305,7 @@ type PipelineResult struct {
 	FramesBlank    int `json:"frames_blank"`    // screenshots dropped as blank/uniform
 	FramesAnalysed int `json:"frames_analysed"` // frames whose vision reply parsed as a findings array
 	FramesUnusable int `json:"frames_unusable"` // frames the model answered with an empty / non-JSON reply
+	FramesDistinct int `json:"frames_distinct"` // byte-distinct captured frames (sha256); a screen that never changes was never driven
 
 	// PartialReason is set when some captured frames were never judged
 	// (unusable model reply) although others were: the session is PARTIAL and
@@ -2920,6 +2922,7 @@ func (sp *SessionPipeline) Run(
 	sp.setPhase("analyze")
 	phaseStart = time.Now()
 	conduit.PhaseComplete(sp.sink(), "execute", 0)
+	result.FramesDistinct = distinctFrameCount(allScreenshots)
 	fmt.Println("[pipeline] Phase 4/4: Analyze")
 	conduit.PhaseStart(sp.sink(), "analyze", "")
 
@@ -3265,13 +3268,7 @@ func (sp *SessionPipeline) Run(
 		result.CoveragePct = float64(result.TestsRun) /
 			float64(result.TestsPlanned) * 100.0
 	}
-	// A session that analysed no frame judged nothing about the app. Do
-	// not report a coverage percentage or a complete session over it.
-	if reason := undeterminedNoFrames(result); reason != "" {
-		result.Status = StatusBlocked
-		result.Error = reason
-		result.CoveragePct = 0
-	}
+	applyFrameVerdicts(result)
 
 	result.PartialReason = partialFrames(result)
 
@@ -4815,6 +4812,17 @@ func quoteEnvName(n string) string {
 // sessionSummaryLine renders the one-line verdict printed when a session ends.
 func sessionSummaryLine(result *PipelineResult) string {
 	if result.Status == StatusBlocked && result.Error != "" &&
+		strings.HasPrefix(result.Error, noInteractionReasonPrefix) {
+		return fmt.Sprintf(
+			"[pipeline] UNDETERMINED (exit 2): %s "+
+				"(%d/%d tests ran, %d captured, %d distinct, %d analysed, %v total)\n",
+			result.Error, result.TestsRun, result.TestsPlanned,
+			result.FramesCaptured, result.FramesDistinct,
+			result.FramesAnalysed,
+			result.Duration.Round(time.Millisecond),
+		)
+	}
+	if result.Status == StatusBlocked && result.Error != "" &&
 		strings.HasPrefix(result.Error, noFrameReasonPrefix) {
 		return fmt.Sprintf(
 			"[pipeline] UNDETERMINED (exit 2): %s "+
@@ -4892,4 +4900,65 @@ func (sp *SessionPipeline) resolveCredentialPlaceholders(a llmAction) (llmAction
 	a.Value = strings.ReplaceAll(a.Value, QAUsernamePlaceholder, user)
 	a.Value = strings.ReplaceAll(a.Value, QAPasswordPlaceholder, pass)
 	return a, nil
+}
+
+// noInteractionReasonPrefix starts the Error of a session stopped by
+// undeterminedNoInteraction.
+const noInteractionReasonPrefix = "no interaction observed"
+
+// distinctFrameCount returns how many byte-distinct frames the listed files
+// hold (sha256 of the content). An entry that is not a readable regular file is
+// not a frame and is ignored: the list also carries structured-phase platform
+// placeholders.
+func distinctFrameCount(paths []string) int {
+	seen := make(map[[32]byte]struct{}, len(paths))
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil || len(b) == 0 {
+			continue
+		}
+		seen[sha256.Sum256(b)] = struct{}{}
+	}
+	return len(seen)
+}
+
+// undeterminedNoInteraction returns a non-empty reason when a session that
+// ran several tests and analysed their frames captured only ONE distinct
+// frame: the screen never changed, so no test drove the application and the
+// "N/N tests, 100% coverage" figure would claim a journey that never happened.
+// Found live against the real job_seeker console: five tests, five
+// byte-identical login frames, a plain Complete and exit 0.
+// A session whose structured banks ran cases is judged by those verdicts, and a
+// session already blocked keeps its own reason.
+func undeterminedNoInteraction(r *PipelineResult) string {
+	if r.Status != StatusComplete || r.FramesAnalysed == 0 {
+		return ""
+	}
+	if r.Structured != nil && r.Structured.TestCasesRun > 0 {
+		return ""
+	}
+	if r.TestsRun < 2 || r.FramesCaptured < 2 || r.FramesDistinct != 1 {
+		return ""
+	}
+	return fmt.Sprintf("%s: %d frame(s) captured across %d test(s) but only %d distinct "+
+		"(byte-identical): the application was never driven past one screen, so the tests "+
+		"were not exercised (UNDETERMINED, not a pass)",
+		noInteractionReasonPrefix, r.FramesCaptured, r.TestsRun, r.FramesDistinct)
+}
+
+// applyFrameVerdicts downgrades a session whose frames do not support the
+// "complete" claim: no analysed frame (undeterminedNoFrames), or analysed frames
+// that never changed across several tests (undeterminedNoInteraction). Both end
+// BLOCKED with the evidence in Error, no coverage percentage, exit 2.
+func applyFrameVerdicts(result *PipelineResult) {
+	if reason := undeterminedNoFrames(result); reason != "" {
+		result.Status = StatusBlocked
+		result.Error = reason
+		result.CoveragePct = 0
+	}
+	if reason := undeterminedNoInteraction(result); reason != "" {
+		result.Status = StatusBlocked
+		result.Error = reason
+		result.CoveragePct = 0
+	}
 }
