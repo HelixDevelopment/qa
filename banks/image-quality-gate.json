@@ -132,7 +132,7 @@
       "steps": [
         {
           "name": "Log in to the web app as admin",
-          "action": "browser.login(admin/admin123)",
+          "action": "browser.login({{QA_USERNAME}}/{{QA_PASSWORD}})",
           "expected": "Landing at /browse"
         },
         {

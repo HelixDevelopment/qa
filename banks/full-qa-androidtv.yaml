@@ -197,13 +197,13 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Enter username"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Username field shows admin"
       - name: "Navigate to password"
         action: "keypress: KEYCODE_TAB"
         expected: "Password field receives focus"
       - name: "Enter password"
-        action: "text: admin123"
+        action: "text: ${HELIX_TEST_PASSWORD}"
         expected: "Password field shows masked characters"
       - name: "Submit login"
         action: "keypress: KEYCODE_DPAD_DOWN"
@@ -257,7 +257,7 @@ test_cases:
         action: "keypress: KEYCODE_DPAD_CENTER"
         expected: "Keyboard active"
       - name: "Type username"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Username field displays admin in white text"
     tags: [login, text-input, keyboard]
     estimated_duration: "15s"
@@ -270,7 +270,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Enter username"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Username populated"
       - name: "Tab to password"
         action: "keypress: KEYCODE_TAB"
@@ -289,7 +289,7 @@ test_cases:
         action: "keypress: KEYCODE_TAB"
         expected: "Password field focused"
       - name: "Enter password"
-        action: "text: admin123"
+        action: "text: ${HELIX_TEST_PASSWORD}"
         expected: "Password field displays masked dots, not plaintext"
       - name: "Verify masking"
         action: "screenshot"
@@ -305,7 +305,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Fill credentials"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Both fields populated"
       - name: "Navigate to Sign In"
         action: "keypress: KEYCODE_DPAD_DOWN"
@@ -343,7 +343,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Enter valid username"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Username populated"
       - name: "Enter wrong password"
         action: "text: wrongpassword"
@@ -368,7 +368,7 @@ test_cases:
         action: "screenshot"
         expected: "Username field blank"
       - name: "Enter password"
-        action: "text: admin123"
+        action: "text: ${HELIX_TEST_PASSWORD}"
         expected: "Password populated"
       - name: "Submit login"
         action: "keypress: KEYCODE_DPAD_CENTER"
@@ -384,7 +384,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Enter username"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Username populated"
       - name: "Leave password empty"
         action: "screenshot"
@@ -406,7 +406,7 @@ test_cases:
         action: "text: a"
         expected: "Username contains single character"
       - name: "Enter valid password"
-        action: "text: admin123"
+        action: "text: ${HELIX_TEST_PASSWORD}"
         expected: "Password populated"
       - name: "Submit login"
         action: "keypress: KEYCODE_DPAD_CENTER"
@@ -422,7 +422,7 @@ test_cases:
     platforms: [androidtv]
     steps:
       - name: "Enter valid username"
-        action: "text: admin"
+        action: "text: ${HELIX_TEST_USER}"
         expected: "Username populated"
       - name: "Enter short password"
         action: "text: abc"
@@ -4251,7 +4251,7 @@ test_cases:
         expected: "App launches"
       - name: "Verify auto-login"
         action: "screenshot"
-        expected: "After 500ms delay, validateAndLogin called with admin/admin123, navigates to home"
+        expected: "After 500ms delay, validateAndLogin called with {{QA_USERNAME}}/{{QA_PASSWORD}}, navigates to home"
     tags: [edge-case, adb, auto-login, qa-testing]
     estimated_duration: "15s"
     expected_result: "ADB intent extras trigger automatic login for QA testing"

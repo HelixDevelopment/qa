@@ -869,6 +869,7 @@ func TestHXC278_MissingTokenErrorStaysDiagnostic(t *testing.T) {
 
 	t.Run("action_result_sink", func(t *testing.T) {
 		h := NewHTTPExecutor(srv.URL)
+		h.AdminCreds = Credentials{Username: "u-test", Password: "p-test"}
 		res := h.Execute(
 			context.Background(), http.MethodGet,
 			"/api/v1/entities/stats",

@@ -49,9 +49,13 @@ func cmdHTTP(args []string) {
 	baseURL := fs.String("base-url", "",
 		"Base URL of the live HTTP server (e.g. http://127.0.0.1:8080)")
 	adminUser := fs.String("admin-user", "",
-		"Username for auth:admin steps (default admin/admin123 inside executor)")
+		"Username for auth:admin steps (no built-in default; prefer -admin-user-env)")
 	adminPass := fs.String("admin-pass", "",
-		"Password for auth:admin steps")
+		"Password for auth:admin steps (no built-in default; prefer -admin-pass-env)")
+	adminUserEnv := fs.String("admin-user-env", "",
+		"NAME of the environment variable holding the auth:admin username")
+	adminPassEnv := fs.String("admin-pass-env", "",
+		"NAME of the environment variable holding the auth:admin password")
 	loginPath := fs.String("login-path", "",
 		"Override the login endpoint (default /api/v1/auth/login)")
 	tokenField := fs.String("token-field", "",
@@ -126,10 +130,17 @@ func cmdHTTP(args []string) {
 
 	exec := autonomous.NewHTTPExecutor(*baseURL)
 	exec.HTTPClient.Timeout = *timeout
-	if *adminUser != "" || *adminPass != "" {
+	au, ap := *adminUser, *adminPass
+	if au == "" && *adminUserEnv != "" {
+		au = os.Getenv(*adminUserEnv)
+	}
+	if ap == "" && *adminPassEnv != "" {
+		ap = os.Getenv(*adminPassEnv)
+	}
+	if au != "" || ap != "" {
 		exec.AdminCreds = autonomous.Credentials{
-			Username: *adminUser,
-			Password: *adminPass,
+			Username: au,
+			Password: ap,
 		}
 	}
 	if *loginPath != "" {

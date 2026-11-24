@@ -27,28 +27,28 @@
           "action": "http: POST /api/v1/auth/login",
           "expected": "200 OK with session token",
           "auth": "admin",
-          "_original_action": "POST /api/v1/auth/login with admin/admin123",
+          "_original_action": "POST /api/v1/auth/login with {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expect_status": 200,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           }
         },
         {
           "name": "Login via Web",
-          "action": "Navigate to login page, enter admin/admin123, click Login",
+          "action": "Navigate to login page, enter {{QA_USERNAME}}/{{QA_PASSWORD}}, click Login",
           "expected": "Redirects to dashboard",
           "_conversion_note": "manual-review-required"
         },
         {
           "name": "Login via Android TV",
-          "action": "Launch app, configure server, enter admin/admin123",
+          "action": "Launch app, configure server, enter {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Navigates to home screen",
           "_conversion_note": "manual-review-required"
         },
         {
           "name": "Login via Android Phone",
-          "action": "Launch app, configure server, enter admin/admin123",
+          "action": "Launch app, configure server, enter {{QA_USERNAME}}/{{QA_PASSWORD}}",
           "expected": "Navigates to home screen",
           "_conversion_note": "manual-review-required"
         }
@@ -666,8 +666,8 @@
           "_original_action": "POST /api/v1/auth/login 6 times in 1 second",
           "expect_status": 429,
           "body": {
-            "username": "admin",
-            "password": "admin123"
+            "username": "${HELIX_TEST_USER}",
+            "password": "${HELIX_TEST_PASSWORD}"
           },
           "_skip": true,
           "_skip_reason": "rate-limit-loop test: ActionTypeHTTP fires single request, not 6; converter limitation"

@@ -67,7 +67,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login and get token"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send mixed flood: GET + POST + PUT + DELETE"
         action: "300 requests in 15 seconds: 40% GET /api/v1/entities, 30% POST /api/v1/entities, 20% PUT /api/v1/entities/1, 10% DELETE /api/v1/entities/999"
@@ -110,7 +110,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send requests at sustained rate below limit"
         action: "Send 50 GET /api/v1/entities requests over 30 seconds (well below 2000/min)"
@@ -132,7 +132,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send initial burst of 20 requests"
         action: "Send 20 GET /api/v1/entities in 1 second"
@@ -154,7 +154,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Send request and check rate limit headers"
         action: "GET /api/v1/entities with Authorization header, inspect response headers"
@@ -271,7 +271,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Trigger errors on storage endpoint (invalid storage root)"
         action: "Send 20 POST /api/v1/scan requests with non-existent storage root ID"
@@ -293,7 +293,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Trip circuit breaker via repeated failures"
         action: "Send 20 requests to a failing upstream (e.g., SMB browse on unreachable NAS)"
@@ -315,7 +315,7 @@ test_cases:
     platforms: [api]
     steps:
       - name: "Login as admin"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with JWT token"
       - name: "Verify normal operation before any failures"
         action: "GET /api/v1/entities"
@@ -386,7 +386,7 @@ test_cases:
         action: "Wait for rate limit window to fully expire (check Retry-After)"
         expected: "Rate limit window expires"
       - name: "Login with correct credentials"
-        action: "POST /api/v1/auth/login with body {\"username\":\"admin\",\"password\":\"admin123\"}"
+        action: "POST /api/v1/auth/login with body {\"username\":\"${HELIX_TEST_USER}\",\"password\":\"${HELIX_TEST_PASSWORD}\"}"
         expected: "200 OK with valid JWT token"
       - name: "Verify full functionality restored"
         action: "GET /api/v1/entities using the new token"

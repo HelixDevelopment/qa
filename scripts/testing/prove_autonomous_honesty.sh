@@ -29,7 +29,7 @@ run() { # pkg regexp -> prints go test output, returns its status; SKIP counts a
 }
 fail=0
 echo "== control (unmutated) =="
-for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo|TestDataValidation_|TestPartialFrames" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_|TestResolveDataValidation" "./pkg/analysis TestAnalyzeScreenshotChecked" "./pkg/llm TestIsLocalEndpointURL"; do
+for g in "./pkg/navigator TestBridge_" "./pkg/autonomous TestSessionPipeline_ZeroFrames|TestUndeterminedNoFrames|TestStructuredPhase_Missing|TestSessionPipeline_HostVideo|TestDataValidation_|TestPartialFrames" "./cmd/helixqa TestSelectEnvProviders|TestAutonomous_|TestResolveDataValidation" "./pkg/autonomous TestHTTPExecutor_AdminAuth|TestNavigationPrompts_CarryNoCredentials|TestBuildKBContext_Never|TestResolveCredentialPlaceholders|TestShippedFiles_CarryNoDefaultCredential|TestHTTPExecutor_BodyTestVars|TestHTTPExecutor_RetryAfter401|TestExpandTestVars" "./pkg/analysis TestAnalyzeScreenshotChecked" "./pkg/llm TestIsLocalEndpointURL"; do
   set -- $g; run "$1" "$2"; rc=$?
   [ $rc -eq 0 ] && echo "control PASS: $2" || { echo "control FAIL($rc): $2"; [ $rc -eq 2 ] && exit 2; fail=1; }
 done
@@ -64,4 +64,14 @@ mutate 17 pkg/autonomous/pipeline.go 's|if partialFrames(r) != "" {|if false {|'
 mutate 18 pkg/autonomous/pipeline.go 's|if reason := partialFrames(result); reason != "" {|if false {|' ./pkg/autonomous 'TestPartialFrames'
 mutate 19 scripts/playwright-bridge-tls.js "s|args.push('--ignore-certificate-errors-spki-list=' + spki.join(','));|args.push('--ignore-certificate-errors');|" ./pkg/navigator 'TestBridge_InsecureTLS_DoesNotExtendToOtherOrigins'
 mutate 20 scripts/playwright-bridge.js 's|if (!username \|\| !password) {|if (false) {|' ./pkg/navigator 'TestBridge_Launch_SendsNoDefaultCredentialLogin'
+# Explicit-credentials fixes: no built-in admin pair, no credential in a prompt,
+# placeholders resolved only with the opt-in, bank credentials by variable name.
+mutate 21 pkg/autonomous/http_executor.go 's|if creds.Username == "" \|\| creds.Password == "" {|if false {|' ./pkg/autonomous 'TestHTTPExecutor_AdminAuth_NoBuiltInCredentials'
+mutate 22 pkg/autonomous/pipeline.go 's|type the placeholder {{QA_PASSWORD}}|type "hunter2"|' ./pkg/autonomous 'TestNavigationPrompts_CarryNoCredentials'
+mutate 23 pkg/autonomous/pipeline.go 's|if sp.config == nil \|\| !sp.config.DataValidation {|if false {|' ./pkg/autonomous 'TestResolveCredentialPlaceholders'
+mutate 24 pkg/autonomous/pipeline.go 's|names = append(names, k)|names = append(names, k+"="+kb.Credentials[k])|' ./pkg/autonomous 'TestBuildKBContext_NeverEmbedsCredentialValues'
+mutate 25 pkg/autonomous/test_vars.go 's|if v == "" {|if false {|' ./pkg/autonomous 'TestHTTPExecutor_BodyTestVarsUnset_BlocksAndSendsNothing|TestExpandTestVars'
+mutate 26 pkg/autonomous/test_vars.go 's|HELIX_TEST_\[A-Z0-9_\]+|[A-Z0-9_]+|' ./pkg/autonomous 'TestExpandTestVars'
+mutate 27 pkg/autonomous/http_executor.go '0,/if len(missing) > 0 {/s//if false {/' ./pkg/autonomous 'TestHTTPExecutor_BodyTestVarsUnset_BlocksAndSendsNothing'
+mutate 28 pkg/autonomous/http_executor.go 's|retryBody = strings.NewReader(expandedBody)|retryBody = strings.NewReader("")|' ./pkg/autonomous 'TestHTTPExecutor_RetryAfter401_ResendsResolvedBody'
 echo "result: fail=$fail"; exit $fail

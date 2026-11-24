@@ -17,7 +17,7 @@ test_cases:
   - api
   steps:
   - name: Send login request
-    action: POST /api/v1/auth/login with body {"username":"admin","password":"admin123"}
+    action: POST /api/v1/auth/login with body {"username":"${HELIX_TEST_USER}","password":"${HELIX_TEST_PASSWORD}"}
     expected: 200 OK with JSON containing token field
   - name: Verify token is a valid JWT
     action: Decode the returned token and inspect header and payload
@@ -113,7 +113,7 @@ test_cases:
   - api
   steps:
   - name: Login to obtain tokens
-    action: POST /api/v1/auth/login with body {"username":"admin","password":"admin123"}
+    action: POST /api/v1/auth/login with body {"username":"${HELIX_TEST_USER}","password":"${HELIX_TEST_PASSWORD}"}
     expected: 200 OK with access token and refresh token
   - name: Refresh the token
     action: POST /api/v1/auth/refresh with the refresh token from login
@@ -238,16 +238,16 @@ test_cases:
   - api
   steps:
   - name: Login with current password
-    action: POST /api/v1/auth/login with body {"username":"admin","password":"admin123"}
+    action: POST /api/v1/auth/login with body {"username":"${HELIX_TEST_USER}","password":"${HELIX_TEST_PASSWORD}"}
     expected: 200 OK with token
   - name: Change password
-    action: POST /api/v1/auth/change-password with token and body {"current_password":"admin123","new_password":"NewAdmin456!"}
+    action: POST /api/v1/auth/change-password with token and body {"current_password":"${HELIX_TEST_PASSWORD}","new_password":"NewAdmin456!"}
     expected: 200 OK
   - name: Login with new password
     action: POST /api/v1/auth/login with body {"username":"admin","password":"NewAdmin456!"}
     expected: 200 OK
   - name: Restore original password
-    action: POST /api/v1/auth/change-password with body {"current_password":"NewAdmin456!","new_password":"admin123"}
+    action: POST /api/v1/auth/change-password with body {"current_password":"NewAdmin456!","new_password":"${HELIX_TEST_PASSWORD}"}
     expected: 200 OK (cleanup)
   tags:
   - auth
@@ -356,7 +356,7 @@ test_cases:
   - api
   steps:
   - name: Login with extra fields
-    action: POST /api/v1/auth/login with body {"username":"admin","password":"admin123","evil_field":"hack"}
+    action: POST /api/v1/auth/login with body {"username":"${HELIX_TEST_USER}","password":"${HELIX_TEST_PASSWORD}","evil_field":"hack"}
     expected: 200 OK (extra fields ignored, login succeeds)
   tags:
   - auth

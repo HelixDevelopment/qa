@@ -43,7 +43,7 @@ test_cases:
         action: "Open http://localhost:3000/login"
         expected: "Login form is displayed"
       - name: "Enter admin credentials"
-        action: "Type 'admin' in username field, 'admin123' in password field"
+        action: "Type '{{QA_USERNAME}}' in username field, '{{QA_PASSWORD}}' in password field"
         expected: "Credentials are entered in the form fields"
       - name: "Submit login form"
         action: "Click Sign In button"
@@ -84,7 +84,7 @@ test_cases:
         action: "Open http://localhost:3000/login"
         expected: "Login form displayed"
       - name: "Leave username empty"
-        action: "Click into password field, type 'admin123', leave username empty"
+        action: "Click into password field, type '{{QA_PASSWORD}}', leave username empty"
         expected: "Password entered, username empty"
       - name: "Submit form"
         action: "Click Sign In button"
@@ -135,7 +135,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123 credentials"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} credentials"
         expected: "Redirected to dashboard"
       - name: "Click logout"
         action: "Click the logout button in the header or user menu"
@@ -154,7 +154,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123 credentials"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} credentials"
         expected: "Redirected to dashboard"
       - name: "Refresh the page"
         action: "Press F5 or click browser refresh"
@@ -332,7 +332,7 @@ test_cases:
         action: "Open http://localhost:3000/login"
         expected: "Login form displayed"
       - name: "Enter credentials"
-        action: "Type 'admin' in username, 'admin123' in password"
+        action: "Type '{{QA_USERNAME}}' in username, '{{QA_PASSWORD}}' in password"
         expected: "Credentials entered"
       - name: "Press Enter"
         action: "Press Enter key while focused on password field"
@@ -360,7 +360,7 @@ test_cases:
         action: "Submit with 'admin' / 'wrong3'"
         expected: "Error message shown, app still responsive"
       - name: "Successful attempt"
-        action: "Submit with 'admin' / 'admin123'"
+        action: "Submit with '{{QA_USERNAME}}' / '{{QA_PASSWORD}}'"
         expected: "Login succeeds and user is redirected to dashboard"
     tags: [auth, login, resilience, rate-limiting]
     estimated_duration: "30s"
@@ -373,7 +373,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard displayed"
       - name: "Check connection status"
         action: "Look for WebSocket connection status indicator in the UI"
@@ -390,7 +390,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123 credentials"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} credentials"
         expected: "Redirected to /dashboard"
       - name: "Verify dashboard content"
         action: "Check that dashboard page is rendered with heading and widgets"
@@ -486,7 +486,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard displayed"
       - name: "Click Media in sidebar"
         action: "Click 'Media' link in sidebar"
@@ -508,7 +508,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard displayed"
       - name: "Check header"
         action: "Look at the header/top bar for user information"
@@ -556,7 +556,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard displayed"
       - name: "Navigate to root"
         action: "Open http://localhost:3000/"
@@ -3631,7 +3631,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login as admin"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard displayed"
       - name: "Navigate to admin"
         action: "Navigate to /admin"
@@ -4421,7 +4421,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login in first tab"
-        action: "Login with admin/admin123 in first tab"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}} in first tab"
         expected: "Dashboard displayed"
       - name: "Open second tab"
         action: "Open http://localhost:3000/media in a new tab"
@@ -4481,7 +4481,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Logged in"
       - name: "Manually expire token"
         action: "Modify JWT token in localStorage to be expired"
@@ -4513,7 +4513,7 @@ test_cases:
     platforms: [web]
     steps:
       - name: "Login and navigate to dashboard"
-        action: "Login with admin/admin123"
+        action: "Login with {{QA_USERNAME}}/{{QA_PASSWORD}}"
         expected: "Dashboard loads, multiple API requests fire in parallel"
       - name: "Verify parallel requests"
         action: "Check Network tab for concurrent API calls"

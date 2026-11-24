@@ -4798,7 +4798,7 @@
           "expect_status": 200,
           "auth": "admin",
           "body": {
-            "old_password": "admin123",
+            "old_password": "${HELIX_TEST_PASSWORD}",
             "new_password": "NewAdmin!23"
           },
           "_patched_by": [

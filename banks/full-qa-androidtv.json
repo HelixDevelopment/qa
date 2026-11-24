@@ -319,7 +319,7 @@
       "steps": [
         {
           "name": "Enter username",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Username field shows admin"
         },
         {
@@ -329,7 +329,7 @@
         },
         {
           "name": "Enter password",
-          "action": "text: admin123",
+          "action": "text: ${HELIX_TEST_PASSWORD}",
           "expected": "Password field shows masked characters"
         },
         {
@@ -426,7 +426,7 @@
         },
         {
           "name": "Type username",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Username field displays admin in white text"
         }
       ],
@@ -449,7 +449,7 @@
       "steps": [
         {
           "name": "Enter username",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Username populated"
         },
         {
@@ -483,7 +483,7 @@
         },
         {
           "name": "Enter password",
-          "action": "text: admin123",
+          "action": "text: ${HELIX_TEST_PASSWORD}",
           "expected": "Password field displays masked dots, not plaintext"
         },
         {
@@ -512,7 +512,7 @@
       "steps": [
         {
           "name": "Fill credentials",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Both fields populated"
         },
         {
@@ -580,7 +580,7 @@
       "steps": [
         {
           "name": "Enter valid username",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Username populated"
         },
         {
@@ -624,7 +624,7 @@
         },
         {
           "name": "Enter password",
-          "action": "text: admin123",
+          "action": "text: ${HELIX_TEST_PASSWORD}",
           "expected": "Password populated"
         },
         {
@@ -653,7 +653,7 @@
       "steps": [
         {
           "name": "Enter username",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Username populated"
         },
         {
@@ -692,7 +692,7 @@
         },
         {
           "name": "Enter valid password",
-          "action": "text: admin123",
+          "action": "text: ${HELIX_TEST_PASSWORD}",
           "expected": "Password populated"
         },
         {
@@ -721,7 +721,7 @@
       "steps": [
         {
           "name": "Enter valid username",
-          "action": "text: admin",
+          "action": "text: ${HELIX_TEST_USER}",
           "expected": "Username populated"
         },
         {
@@ -7532,7 +7532,7 @@
         {
           "name": "Verify auto-login",
           "action": "screenshot",
-          "expected": "After 500ms delay, validateAndLogin called with admin/admin123, navigates to home"
+          "expected": "After 500ms delay, validateAndLogin called with {{QA_USERNAME}}/{{QA_PASSWORD}}, navigates to home"
         }
       ],
       "tags": [

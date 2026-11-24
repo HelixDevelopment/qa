@@ -66,7 +66,7 @@ capture
 click:at=640,400
 type:text="admin"
 key:key=tab
-type:text="admin123"
+type:text="${HELIX_TEST_PASSWORD}"
 key:key=enter
 analyze
 scroll:at=640,500:dx=0:dy=-200
