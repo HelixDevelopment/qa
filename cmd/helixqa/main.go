@@ -563,9 +563,36 @@ func cmdAutonomous(args []string) {
 	curiosityTimeout := fs.Duration("curiosity-timeout",
 		30*time.Minute,
 		"Timeout for curiosity-driven phase")
+	allowCloud := fs.Bool("allow-cloud-providers", false,
+		"Register hosted LLM providers found via API-key env vars "+
+			"(default: only local providers and HELIX_VISION_ENDPOINT; "+
+			"env HELIX_ALLOW_CLOUD_PROVIDERS=1)")
+	allowBridged := fs.Bool("allow-bridged-cli", false,
+		"Register claude / qwen-coder / opencode CLIs found on PATH as "+
+			"providers (default off; env HELIX_ALLOW_BRIDGED_CLI=1)")
+	recordVideo := fs.Bool("record-video", false,
+		"Record the HOST display with ffmpeg x11grab for web/desktop "+
+			"(default off; env HELIX_RECORD_VIDEO=1)")
+	banksDir := fs.String("banks", "",
+		"Directory of structured test banks (default <project>/challenges/"+
+			"helixqa-banks; a missing explicit directory is an error, a "+
+			"missing default only skips the structured phase)")
+	webCA := fs.String("web-ca-file", "",
+		"PEM CA bundle the web bridge trusts for a private-CA HTTPS target "+
+			"(sets HELIX_WEB_CA_FILE)")
+	webInsecure := fs.Bool("web-insecure-tls", false,
+		"Ignore TLS errors in the web bridge, ONLY for localhost/private "+
+			"hosts (sets HELIX_WEB_INSECURE_TLS=1)")
 
 	if err := fs.Parse(args); err != nil {
 		os.Exit(1)
+	}
+
+	if *webCA != "" {
+		os.Setenv("HELIX_WEB_CA_FILE", *webCA)
+	}
+	if *webInsecure {
+		os.Setenv("HELIX_WEB_INSECURE_TLS", "1")
 	}
 
 	// Load .env file — sets environment variables for LLM
@@ -590,6 +617,12 @@ func cmdAutonomous(args []string) {
 	fmt.Printf("Curiosity:        %v (timeout: %v)\n",
 		*curiosity, *curiosityTimeout)
 	fmt.Printf("Verbose:          %v\n", *verbose)
+	cloudOK := *allowCloud || envEnabled(os.Getenv, "HELIX_ALLOW_CLOUD_PROVIDERS")
+	bridgedOK := *allowBridged || envEnabled(os.Getenv, "HELIX_ALLOW_BRIDGED_CLI")
+	videoOK := *recordVideo || envEnabled(os.Getenv, "HELIX_RECORD_VIDEO")
+	fmt.Printf("Hosted providers: %s\n", optState(cloudOK))
+	fmt.Printf("Bridged CLIs:     %s\n", optState(bridgedOK))
+	fmt.Printf("Host video:       %s\n", optState(videoOK))
 	fmt.Println()
 
 	// Parse platforms.
@@ -635,6 +668,7 @@ func cmdAutonomous(args []string) {
 
 	// Auto-discover all LLM providers from environment variables.
 	// Supports 40+ providers via the registry in pkg/llm.
+	var envCands []llm.ProviderConfig
 	for providerName, envKey := range llm.ProviderEnvKeys {
 		val := os.Getenv(envKey)
 		if val == "" {
@@ -663,10 +697,19 @@ func cmdAutonomous(args []string) {
 				APIKey: val,
 			}
 		}
+		envCands = append(envCands, cfg)
+	}
+	// Opt-in policy (provider_policy.go): hosted providers are registered
+	// only when asked for; names of the skipped ones are listed, never keys.
+	allowedEnv, skippedEnv := selectEnvProviders(envCands, cloudOK)
+	if len(skippedEnv) > 0 {
+		fmt.Printf("Hosted providers NOT registered (no opt-in; -allow-cloud-providers): %s\n",
+			strings.Join(skippedEnv, ", "))
+	}
+	for _, cfg := range allowedEnv {
 		providerConfigs = append(providerConfigs, cfg)
-
 		// Classify into vision and chat pools.
-		if visionProviders[providerName] {
+		if visionProviders[cfg.Name] {
 			visionConfigs = append(visionConfigs, cfg)
 		}
 		// All providers can do chat.
@@ -710,6 +753,10 @@ func cmdAutonomous(args []string) {
 		if lookErr != nil {
 			continue
 		}
+		if !bridgedOK {
+			fmt.Printf("Bridged CLI:      %s found but NOT registered (no opt-in; -allow-bridged-cli)\n", cli.name)
+			continue
+		}
 		bp := llm.NewBridgedCLIProvider(
 			cliPath, cli.name, cli.model,
 		)
@@ -738,11 +785,14 @@ func cmdAutonomous(args []string) {
 	if len(providerConfigs) == 0 &&
 		len(bridgedProviders) == 0 {
 		fmt.Fprintln(os.Stderr,
-			"error: no LLM providers configured — set at least one "+
-				"API key env var (e.g., ANTHROPIC_API_KEY, OPENAI_API_KEY, "+
-				"OPENROUTER_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, etc.) "+
-				"or install a CLI tool (claude, qwen-coder, opencode)")
-		os.Exit(1)
+			"error: no LLM provider is registered (exit 2, nothing ran). "+
+				"The default is LOCAL only: set HELIX_VISION_ENDPOINT to a "+
+				"local OpenAI-compatible vision endpoint, or a loopback "+
+				"HELIX_OLLAMA_URL / LLMCTL_VISION_URL. To use hosted "+
+				"providers (API-key env vars) or bridged CLIs "+
+				"(claude, qwen-coder, opencode) opt in explicitly with "+
+				"-allow-cloud-providers / -allow-bridged-cli.")
+		os.Exit(exitCodeNotExecuted)
 	}
 
 	// Build the shared provider from all discovered configs.
@@ -820,9 +870,9 @@ func cmdAutonomous(args []string) {
 		IssuesDir: filepath.Join(
 			*project, "docs", "issues",
 		),
-		BanksDir: filepath.Join(
-			*project, "challenges", "helixqa-banks",
-		),
+		BanksDir:             banksDirOrDefault(*banksDir, *project),
+		BanksExplicit:        *banksDir != "",
+		RecordVideo:          videoOK,
 		Timeout:              *timeout,
 		PassNumber:           passNumber,
 		AndroidDevice:        os.Getenv("HELIX_ANDROID_DEVICE"),
@@ -1225,4 +1275,20 @@ func cmdSignoff(args []string) {
 
 	fmt.Println("RELEASE GATE: OPEN")
 	fmt.Println("HelixQA signoff granted.")
+}
+
+// optState renders an opt-in state for the session banner.
+func optState(on bool) string {
+	if on {
+		return "ON (explicit opt-in)"
+	}
+	return "off (opt-in)"
+}
+
+// banksDirOrDefault resolves the structured bank directory.
+func banksDirOrDefault(explicit, project string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return filepath.Join(project, "challenges", "helixqa-banks")
 }

@@ -84,13 +84,18 @@ func TestSessionPipeline_Run(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	assert.Equal(t, StatusComplete, result.Status)
+	// The stub provider has no vision and no target is reachable, so not one
+	// frame is analysed: the session is UNDETERMINED (it used to be reported
+	// as complete at 100% coverage, a bluff).
+	assert.Equal(t, StatusBlocked, result.Status)
+	assert.Equal(t, 2, result.ExitCode())
+	assert.Equal(t, 0, result.FramesAnalysed)
 	assert.NotEmpty(t, result.SessionID)
 	assert.Equal(t, 1, result.TestsPlanned)
 	assert.Equal(t, 1, result.TestsRun)
 	assert.Equal(t, 0, result.IssuesFound)
 	assert.Greater(t, result.Duration, time.Duration(0))
-	assert.InDelta(t, 100.0, result.CoveragePct, 0.1)
+	assert.InDelta(t, 0.0, result.CoveragePct, 0.1)
 
 	// WriteReport should succeed.
 	require.NoError(t, pipeline.WriteReport(result))
@@ -103,8 +108,9 @@ func TestSessionPipeline_Run(t *testing.T) {
 
 	var decoded PipelineResult
 	require.NoError(t, json.Unmarshal(data, &decoded))
-	assert.Equal(t, StatusComplete, decoded.Status)
+	assert.Equal(t, StatusBlocked, decoded.Status)
 	assert.Equal(t, 1, decoded.TestsPlanned)
+	assert.Equal(t, 0, decoded.FramesAnalysed)
 }
 
 func TestSessionPipeline_Run_CostTracking(t *testing.T) {
@@ -141,7 +147,8 @@ func TestSessionPipeline_Run_CostTracking(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	assert.Equal(t, StatusComplete, result.Status)
+	// (no frame analysed: UNDETERMINED, see TestSessionPipeline_Run)
+	assert.Equal(t, StatusBlocked, result.Status)
 
 	// Cost should be present (even if zero for stub).
 	require.NotNil(t, result.Cost)
@@ -225,9 +232,9 @@ func TestSessionPipeline_EmptyProject(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Should complete without error even on an empty
-	// project.
-	assert.Equal(t, StatusComplete, result.Status)
-	assert.Empty(t, result.Error)
+	// Should finish without a Go error even on an empty project; with no
+	// frame analysed the verdict is UNDETERMINED (blocked, exit 2).
+	assert.Equal(t, StatusBlocked, result.Status)
+	assert.Contains(t, result.Error, noFrameReasonPrefix)
 	assert.NotEmpty(t, result.SessionID)
 }

@@ -16,6 +16,7 @@ const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const { tlsArgs } = require('./playwright-bridge-tls');
 
 const STATE_FILE = path.join(
   process.env.HELIX_OUTPUT_DIR || '/tmp',
@@ -116,13 +117,17 @@ function apiLogin(baseUrl, username, password) {
     const url = new URL('/api/v1/auth/login', baseUrl);
     const body = JSON.stringify({ username, password });
     const proto = url.protocol === 'https:' ? require('https') : http;
-    const req = proto.request(url, {
+    const reqOpts = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
       },
-    }, (res) => {
+    };
+    if (url.protocol === 'https:' && process.env.HELIX_WEB_CA_FILE) {
+      try { reqOpts.ca = fs.readFileSync(process.env.HELIX_WEB_CA_FILE); } catch (_) { /* reported at launch */ }
+    }
+    const req = proto.request(url, reqOpts, (res) => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
@@ -148,6 +153,16 @@ async function handleLaunch(cmd) {
   // Kill any existing browser silently.
   killExisting();
 
+  // Explicit TLS trust options (HELIX_WEB_CA_FILE / HELIX_WEB_INSECURE_TLS);
+  // an invalid or refused option aborts the launch instead of degrading.
+  let tlsExtra;
+  try {
+    tlsExtra = await tlsArgs(process.env, cmd.url || '');
+  } catch (e) {
+    process.stderr.write('error: ' + e.message + '\n');
+    process.exit(1);
+  }
+
   const chromiumPath = findChromium();
   const cdpURL = 'http://127.0.0.1:' + CDP_PORT;
 
@@ -160,6 +175,7 @@ async function handleLaunch(cmd) {
     '--remote-debugging-port=' + CDP_PORT,
     '--window-size=1920,1080',
     '--hide-scrollbars',
+    ...tlsExtra,
     cmd.url || 'about:blank',
   ], {
     stdio: 'ignore',
