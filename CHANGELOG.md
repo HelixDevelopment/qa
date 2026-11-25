@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`-web-video-dir` / `HELIX_WEB_VIDEO_DIR`: window-scoped video of the web bridge's own page.** `-record-video` grabs the HOST
+  display (x11grab) and fails without an X authorization; this records only the bridge's one page, from its CDP screencast
+  (`Page.startScreencast`), by a detached recorder (`scripts/playwright-bridge-video.js`) that the bridge starts at launch and
+  stops (SIGTERM) before it closes the browser; frames are assembled with ffmpeg using their real timestamps (variable frame rate,
+  2 threads) into `<dir>/web-<time>.webm`. A recorder that cannot start aborts the launch (no silent unrecorded session). Nothing
+  else closed the bridge browser, so `helixqa autonomous` now calls `navigator.CloseBridge` after the pipeline when the variable is
+  set, which finalizes the video; the bridge's close waits for the recorder (up to 10 minutes). Live: a real session over the
+  job_seeker console produced a 608-frame webm. Proof: `scripts/testing/prove_web_video.sh` (5 mutations) over
+  `pkg/navigator/playwright_video_live_test.go` (real bridge, Chromium, ffmpeg, a page that changes colour while recorded).
+  Known limit: the bridge state file is still the fixed `/tmp/.helix-browser-state.json`, so two concurrent sessions on one host share it.
 - **`-web-cookie-file` / `HELIX_WEB_COOKIE_FILE`: drive a login-gated web target.** A console behind
   a passkey login cannot be driven by the autonomous loop (no credential, no authenticator), so it
   only ever saw the sign-in page. The operator can now hand the browser an already-established

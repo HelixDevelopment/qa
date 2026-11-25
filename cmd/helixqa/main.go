@@ -38,6 +38,7 @@ import (
 	qainfra "digital.vasic.helixqa/pkg/infra"
 	"digital.vasic.helixqa/pkg/llm"
 	"digital.vasic.helixqa/pkg/memory"
+	"digital.vasic.helixqa/pkg/navigator"
 	"digital.vasic.helixqa/pkg/orchestrator"
 	"digital.vasic.helixqa/pkg/reporter"
 	"digital.vasic.helixqa/pkg/testbank"
@@ -594,6 +595,9 @@ func cmdAutonomous(args []string) {
 	webCookies := fs.String("web-cookie-file", "",
 		"JSON file (mode 0600) of session cookies for the web bridge, bound to the "+
 			"target origin (sets HELIX_WEB_COOKIE_FILE); the values are never printed")
+	webVideo := fs.String("web-video-dir", "",
+		"Directory for a window-scoped WEBM of the web bridge's own page (its CDP screencast, not the "+
+			"host display); sets HELIX_WEB_VIDEO_DIR. Needs ffmpeg; a recorder that cannot start aborts the launch")
 	webInsecure := fs.Bool("web-insecure-tls", false,
 		"Ignore TLS errors in the web bridge, ONLY for localhost/private "+
 			"hosts (sets HELIX_WEB_INSECURE_TLS=1)")
@@ -617,6 +621,9 @@ func cmdAutonomous(args []string) {
 	}
 	if *webCookies != "" {
 		os.Setenv("HELIX_WEB_COOKIE_FILE", *webCookies)
+	}
+	if *webVideo != "" {
+		os.Setenv("HELIX_WEB_VIDEO_DIR", *webVideo)
 	}
 	if *webInsecure {
 		os.Setenv("HELIX_WEB_INSECURE_TLS", "1")
@@ -1077,6 +1084,14 @@ func cmdAutonomous(args []string) {
 
 	fmt.Println()
 	result, err := pipeline.Run(context.Background())
+	if os.Getenv("HELIX_WEB_VIDEO_DIR") != "" {
+		// nothing else closes the web bridge's browser: close it so the page recorder finalizes its video
+		if out, cerr := navigator.CloseBridge(context.Background()); cerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: web video not finalized: %v\n", cerr)
+		} else {
+			fmt.Printf("Web video:        %s\n", strings.TrimSpace(string(out)))
+		}
+	}
 	if err != nil {
 		// The session could not start (its memory store): nothing about
 		// the app was judged — exit 2, never 1.
