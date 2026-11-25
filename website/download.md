@@ -8,7 +8,7 @@ The recommended method for development and customization.
 
 ```bash
 # Clone the repository
-git clone https://github.com/HelixDevelopment/HelixQA.git
+git clone https://github.com/HelixDevelopment/qa.git
 cd HelixQA
 
 # Initialize submodules (Challenges, Containers)
