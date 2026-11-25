@@ -67,13 +67,20 @@ function assemble(frames, outFile) {
     const page = browser.contexts()[0].pages()[0];
     const cdp = await browser.contexts()[0].newCDPSession(page);
     let n = 0;
+    // bounded capture: frames closer than 100 ms are acked and dropped, and the recording finalizes by itself at MAX_FRAMES
+    const MAX_FRAMES = 6000;
+    let lastT = 0;
     cdp.on('Page.screencastFrame', async (ev) => {
+      const t0 = ev.metadata && ev.metadata.timestamp ? ev.metadata.timestamp : Date.now() / 1000;
+      if (t0 - lastT < 0.1) { try { await cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch (_) {} return; }
+      lastT = t0;
+      if (frames.length >= MAX_FRAMES) { finish('frame-cap'); return; }
       const file = path.join(tmp, 'f' + String(n++).padStart(6, '0') + '.jpg');
       fs.writeFileSync(file, Buffer.from(ev.data, 'base64'));
       frames.push({ file, t: ev.metadata && ev.metadata.timestamp ? ev.metadata.timestamp : Date.now() / 1000 });
       try { await cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch (_) {}
     });
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, everyNthFrame: 1 });
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, everyNthFrame: 1, maxWidth: 1280, maxHeight: 720 });
     // a screencast only emits on visual change: nudge once so even a static first page has a frame
     await page.evaluate(() => { document.documentElement.style.outline = '0 solid transparent'; }).catch(() => {});
     fs.writeFileSync(path.join(dir, name + '.recording'), String(process.pid) + '\n');

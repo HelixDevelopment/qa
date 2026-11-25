@@ -389,5 +389,14 @@ func CloseBridge(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bridge close: %w", err)
 	}
+	var ans struct {
+		Video *struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"video"`
+	}
+	if json.Unmarshal(out, &ans) == nil && ans.Video != nil && ans.Video.Status != "ok" {
+		return out, fmt.Errorf("bridge close: the page recording failed (%s): %s", ans.Video.Status, ans.Video.Error)
+	}
 	return out, nil
 }

@@ -1083,11 +1083,21 @@ func cmdAutonomous(args []string) {
 	}
 
 	fmt.Println()
+	if os.Getenv("HELIX_WEB_VIDEO_DIR") != "" {
+		// an interrupted session must not leave the recorder and browser running: close the bridge, then exit as a signal would
+		sigc := make(chan os.Signal, 1)
+		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigc
+			_, _ = navigator.CloseBridge(context.Background())
+			os.Exit(130)
+		}()
+	}
 	result, err := pipeline.Run(context.Background())
 	if os.Getenv("HELIX_WEB_VIDEO_DIR") != "" {
 		// nothing else closes the web bridge's browser: close it so the page recorder finalizes its video
 		if out, cerr := navigator.CloseBridge(context.Background()); cerr != nil {
-			fmt.Fprintf(os.Stderr, "warning: web video not finalized: %v\n", cerr)
+			fmt.Fprintf(os.Stderr, "warning: web video not finalized: %v %s\n", cerr, strings.TrimSpace(string(out)))
 		} else {
 			fmt.Printf("Web video:        %s\n", strings.TrimSpace(string(out)))
 		}

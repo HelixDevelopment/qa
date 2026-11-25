@@ -347,8 +347,14 @@ async function handleClose() {
   // Stop the page recorder FIRST (it finalizes the video from the frames it holds), wait for its .done, then the browser.
   let video = null;
   if (state.videoPid && state.videoDir && state.videoName) {
-    try { process.kill(state.videoPid, 'SIGTERM'); } catch (_) {}
     const done = path.join(state.videoDir, state.videoName + '.done');
+    // signal the recorder only while it is provably still ours: no .done yet AND the pid's command line is the recorder with our name
+    // (it exits by itself when the browser goes away, and its pid may then belong to another process)
+    let ours = false;
+    if (!fs.existsSync(done)) {
+      try { ours = fs.readFileSync('/proc/' + state.videoPid + '/cmdline', 'utf8').split('\0').some(a => a === state.videoName); } catch (_) {}
+    }
+    if (ours) { try { process.kill(state.videoPid, 'SIGTERM'); } catch (_) {} }
     for (let i = 0; i < 6000 && !fs.existsSync(done); i++) await new Promise(r => setTimeout(r, 100));
     try { video = JSON.parse(fs.readFileSync(done, 'utf-8')); } catch (_) { video = { status: 'error', error: 'recorder wrote no .done' }; }
   }
