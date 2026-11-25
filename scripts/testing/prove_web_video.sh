@@ -28,7 +28,7 @@ J=scripts/playwright-bridge.js; V=scripts/playwright-bridge-video.js; T=./pkg/na
 mutate 1 $J "s|const videoDir = process.env.HELIX_WEB_VIDEO_DIR;|const videoDir = '';|" $T 'TestBridge_VideoDir_RecordsThePageAsWebm'
 mutate 2 $J "s|try { process.kill(state.videoPid, 'SIGTERM'); } catch (_) {}|void 0;|" $T 'TestBridge_VideoDir_RecordsThePageAsWebm'
 mutate 3 $J "s|failLaunch(proc, 'HELIX_WEB_VIDEO_DIR: could not start|void 0; (\"HELIX_WEB_VIDEO_DIR: could not start|; s|the page recorder (' + (e \&\& e.message \|\| e) + ')');|the page recorder\");|" $T 'TestBridge_VideoDir_UnstartableRecorderAbortsLaunch'
-mutate 4 $V "s|await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, everyNthFrame: 1 });|void 0;|" $T 'TestBridge_VideoDir_RecordsThePageAsWebm'
+mutate 4 $V "s|await cdp.send('Page.startScreencast'.*|void 0;|" $T 'TestBridge_VideoDir_RecordsThePageAsWebm'
 mutate 5 $V "s|'-c:v', 'libvpx'|'-frames:v', '1', '-c:v', 'libvpx'|" $T 'TestBridge_VideoDir_RecordsThePageAsWebm'
 [ $fail -eq 0 ] && echo "ALL MUTATIONS CAUGHT" || echo "FAIL=$fail"
 exit $fail

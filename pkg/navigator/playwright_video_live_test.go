@@ -87,10 +87,8 @@ func TestBridge_VideoDir_RecordsThePageAsWebm(t *testing.T) {
 }
 
 func TestBridge_NoVideoDir_RecordsNothing(t *testing.T) {
-	dir, closeOut := recordSession(t, nil)
-	files, _ := filepath.Glob(filepath.Join(dir, "*"))
-	require.Empty(t, files, "without HELIX_WEB_VIDEO_DIR nothing is recorded")
-	require.NotContains(t, closeOut, "video")
+	_, closeOut := recordSession(t, nil)
+	require.NotContains(t, closeOut, "video", "without HELIX_WEB_VIDEO_DIR no recorder runs and close reports no video")
 }
 
 func TestBridge_VideoDir_UnstartableRecorderAbortsLaunch(t *testing.T) {

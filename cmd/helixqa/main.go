@@ -1083,17 +1083,19 @@ func cmdAutonomous(args []string) {
 	}
 
 	fmt.Println()
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 	if os.Getenv("HELIX_WEB_VIDEO_DIR") != "" {
-		// an interrupted session must not leave the recorder and browser running: close the bridge, then exit as a signal would
+		// an interrupt cancels the pipeline (it returns, and the close below finalizes the video); a second interrupt kills as usual
 		sigc := make(chan os.Signal, 1)
 		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 		go func() {
 			<-sigc
-			_, _ = navigator.CloseBridge(context.Background())
-			os.Exit(130)
+			signal.Stop(sigc)
+			cancelRun()
 		}()
 	}
-	result, err := pipeline.Run(context.Background())
+	result, err := pipeline.Run(runCtx)
 	if os.Getenv("HELIX_WEB_VIDEO_DIR") != "" {
 		// nothing else closes the web bridge's browser: close it so the page recorder finalizes its video
 		if out, cerr := navigator.CloseBridge(context.Background()); cerr != nil {

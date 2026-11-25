@@ -45,14 +45,19 @@ function assemble(frames, outFile) {
   fs.mkdirSync(dir, { recursive: true });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'helix-video-'));
   const frames = [];
+  const MAX_FRAMES = 6000;
+  let n = 0;
+  let truncated = false;
+  let flushPending = () => {};
   let finishing = false;
   async function finish(reason) {
     if (finishing) return;
     finishing = true;
     const out = path.join(dir, name + '.webm');
     try {
+      flushPending();
       assemble(frames, out);
-      writeDone({ status: 'ok', reason, frames: frames.length, bytes: fs.statSync(out).size });
+      writeDone({ status: truncated ? 'truncated' : 'ok', reason, frames: frames.length, bytes: fs.statSync(out).size });
     } catch (e) {
       writeDone({ status: 'error', reason, frames: frames.length, error: String((e && e.message) || e).slice(0, 300) });
     }
@@ -66,18 +71,23 @@ function assemble(frames, outFile) {
     browser.on('disconnected', () => finish('browser-gone'));
     const page = browser.contexts()[0].pages()[0];
     const cdp = await browser.contexts()[0].newCDPSession(page);
-    let n = 0;
-    // bounded capture: frames closer than 100 ms are acked and dropped, and the recording finalizes by itself at MAX_FRAMES
-    const MAX_FRAMES = 6000;
+    // bounded capture: frames closer than 100 ms are held (only the newest is kept) and written once 100 ms have passed, so the
+    // settled state of a change burst is never lost; at MAX_FRAMES the recording stops and is reported as truncated, not ok
     let lastT = 0;
-    cdp.on('Page.screencastFrame', async (ev) => {
-      const t0 = ev.metadata && ev.metadata.timestamp ? ev.metadata.timestamp : Date.now() / 1000;
-      if (t0 - lastT < 0.1) { try { await cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch (_) {} return; }
-      lastT = t0;
-      if (frames.length >= MAX_FRAMES) { finish('frame-cap'); return; }
+    let pending = null;
+    function keep(buf, t) {
+      if (frames.length >= MAX_FRAMES) { truncated = true; finish('frame-cap'); return; }
       const file = path.join(tmp, 'f' + String(n++).padStart(6, '0') + '.jpg');
-      fs.writeFileSync(file, Buffer.from(ev.data, 'base64'));
-      frames.push({ file, t: ev.metadata && ev.metadata.timestamp ? ev.metadata.timestamp : Date.now() / 1000 });
+      fs.writeFileSync(file, buf);
+      frames.push({ file, t });
+      lastT = t;
+    }
+    flushPending = () => { if (pending) { const p = pending; pending = null; keep(p.buf, p.t); } };
+    setInterval(() => { if (pending && Date.now() / 1000 - lastT >= 0.1) flushPending(); }, 100);
+    cdp.on('Page.screencastFrame', async (ev) => {
+      const t = ev.metadata && ev.metadata.timestamp ? ev.metadata.timestamp : Date.now() / 1000;
+      const buf = Buffer.from(ev.data, 'base64');
+      if (t - lastT < 0.1) pending = { buf, t }; else { pending = null; keep(buf, t); }
       try { await cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch (_) {}
     });
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 70, everyNthFrame: 1, maxWidth: 1280, maxHeight: 720 });
