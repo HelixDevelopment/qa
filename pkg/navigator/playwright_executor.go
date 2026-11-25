@@ -373,3 +373,30 @@ func playwrightKeyName(k string) (string, bool) {
 	}
 	return k, true
 }
+
+// CloseBridge closes the bridge's browser, if one is running, WITHOUT launching one: it stops the page recorder (so a
+// HELIX_WEB_VIDEO_DIR video is finalized) and then the browser. It returns the bridge's one-line JSON answer. A session
+// that recorded video must call it before it exits; nothing else closes the bridge browser.
+func CloseBridge(ctx context.Context) ([]byte, error) {
+	p := &PlaywrightExecutor{}
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Minute) // the recorder assembles its video before the browser is closed
+	defer cancel()
+	cmdJSON, _ := json.Marshal(map[string]interface{}{"action": "close"})
+	proc := osexec.CommandContext(ctx, "node", p.findBridge())
+	proc.Stdin = bytes.NewReader(cmdJSON)
+	proc.Env = append(os.Environ(), "HELIX_OUTPUT_DIR=/tmp", "NODE_PATH="+nodePath())
+	out, err := proc.Output()
+	if err != nil {
+		return nil, fmt.Errorf("bridge close: %w", err)
+	}
+	var ans struct {
+		Video *struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"video"`
+	}
+	if json.Unmarshal(out, &ans) == nil && ans.Video != nil && ans.Video.Status != "ok" {
+		return out, fmt.Errorf("bridge close: the page recording failed (%s): %s", ans.Video.Status, ans.Video.Error)
+	}
+	return out, nil
+}

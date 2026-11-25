@@ -178,6 +178,7 @@ function apiLogin(baseUrl, username, password) {
 }
 
 async function handleLaunch(cmd) {
+  let videoName = '';
   // Kill any existing browser silently.
   killExisting();
 
@@ -249,6 +250,28 @@ async function handleLaunch(cmd) {
     }
   }
 
+  // Window-scoped video of this one page (HELIX_WEB_VIDEO_DIR): a detached recorder takes the page's own
+  // screencast over CDP; close waits for it to write <name>.done. A refused start aborts the launch.
+  let videoPid = 0;
+  const videoDir = process.env.HELIX_WEB_VIDEO_DIR;
+  if (videoDir) {
+    try {
+      const name = 'web-' + new Date().toISOString().replace(/[:.]/g, '-');
+      const rec = spawn(process.execPath, [path.join(__dirname, 'playwright-bridge-video.js'), cdpURL, videoDir, name], {
+        stdio: 'ignore', detached: true, env: process.env });
+      rec.unref();
+      videoPid = rec.pid;
+      for (let i = 0; i < 100 && !fs.existsSync(path.join(videoDir, name + '.recording')); i++) {
+        if (fs.existsSync(path.join(videoDir, name + '.done'))) throw new Error('recorder refused to start');
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (!fs.existsSync(path.join(videoDir, name + '.recording'))) throw new Error('recorder did not start');
+      videoName = name;
+    } catch (e) {
+      failLaunch(proc, 'HELIX_WEB_VIDEO_DIR: could not start the page recorder (' + (e && e.message || e) + ')');
+    }
+  }
+
   // Pre-login: authenticate via API and inject token into browser.
   // This bypasses coordinate-based form interaction which is unreliable
   // in headless mode. The React app reads auth_token from localStorage.
@@ -300,6 +323,9 @@ async function handleLaunch(cmd) {
     pid: proc.pid,
     cdpURL,
     url: cmd.url,
+    videoPid,
+    videoDir: videoDir || '',
+    videoName,
   }));
 
   process.stdout.write(JSON.stringify({
@@ -318,13 +344,27 @@ async function handleClose() {
     return;
   }
   const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+  // Stop the page recorder FIRST (it finalizes the video from the frames it holds), wait for its .done, then the browser.
+  let video = null;
+  if (state.videoPid && state.videoDir && state.videoName) {
+    const done = path.join(state.videoDir, state.videoName + '.done');
+    // signal the recorder only while it is provably still ours: no .done yet AND the pid's command line is the recorder with our name
+    // (it exits by itself when the browser goes away, and its pid may then belong to another process)
+    let ours = false;
+    if (!fs.existsSync(done)) {
+      try { ours = fs.readFileSync('/proc/' + state.videoPid + '/cmdline', 'utf8').split('\0').some(a => a === state.videoName); } catch (_) {}
+    }
+    if (ours) { try { process.kill(state.videoPid, 'SIGTERM'); } catch (_) {} }
+    for (let i = 0; i < 6000 && !fs.existsSync(done); i++) await new Promise(r => setTimeout(r, 100));
+    try { video = JSON.parse(fs.readFileSync(done, 'utf-8')); } catch (_) { video = { status: 'error', error: 'recorder wrote no .done' }; }
+  }
   try {
     process.kill(state.pid, 'SIGTERM');
   } catch (_) {}
   try {
     fs.unlinkSync(STATE_FILE);
   } catch (_) {}
-  process.stdout.write(JSON.stringify({ status: 'closed' }));
+  process.stdout.write(JSON.stringify(video ? { status: 'closed', video } : { status: 'closed' }));
 }
 
 async function handleAction(cmd) {
