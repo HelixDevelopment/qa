@@ -16,8 +16,8 @@ Before installing HelixQA, ensure the following tools are available on your syst
 
 ```bash
 # Clone the repository
-git clone https://github.com/HelixDevelopment/HelixQA.git
-cd HelixQA
+git clone https://github.com/HelixDevelopment/qa.git
+cd qa
 
 # Build the binary
 go build -o bin/helixqa ./cmd/helixqa
