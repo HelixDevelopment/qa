@@ -9,7 +9,7 @@ The recommended method for development and customization.
 ```bash
 # Clone the repository
 git clone https://github.com/HelixDevelopment/qa.git
-cd HelixQA
+cd qa
 
 # Initialize submodules (Challenges, Containers)
 git submodule init && git submodule update --recursive
